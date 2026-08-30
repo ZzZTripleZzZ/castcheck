@@ -1,0 +1,44 @@
+name: verify-and-publish
+on:
+  schedule:
+    - cron: "0 11 * * *"    # after truth-daily
+  workflow_dispatch:
+concurrency: { group: data-writes, cancel-in-progress: false }
+permissions: { contents: write }
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+      BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 && uv pip install -e ".[publish]"
+      - run: .venv/bin/castcheck daily
+      - name: status (non-blocking)
+        run: .venv/bin/castcheck status --no-fail-on-gaps
+      - name: deploy site to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 3efa563a628218e49a3c2c13075cd788
+          command: pages deploy public --project-name castcheck --branch main --commit-dirty=true
+      - name: push dataset to Hugging Face
+        if: env.HF_TOKEN != ''
+        run: .venv/bin/castcheck publish hf
+      - name: mirror to Kaggle
+        if: env.KAGGLE_API_TOKEN != ''
+        run: .venv/bin/castcheck publish kaggle || true
+      - name: Bluesky
+        if: env.BSKY_APP_PASSWORD != ''
+        run: .venv/bin/castcheck publish bluesky || true
+      - name: commit derived data
+        run: |
+          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
+          git add data && (git diff --cached --quiet || git commit -m "[data] scores $(date -u +%Y-%m-%d)") && git pull --rebase && git push

@@ -1,0 +1,22 @@
+name: backfill
+on:
+  workflow_dispatch:
+    inputs:
+      model: { description: "model_id", required: true }
+      start: { description: "YYYY-MM-DD", required: true }
+      end:   { description: "YYYY-MM-DD", required: true }
+concurrency: { group: data-writes, cancel-in-progress: false }
+permissions: { contents: write }
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/castcheck backfill ${{ inputs.model }} ${{ inputs.start }} ${{ inputs.end }} --workers 2
+      - name: commit data
+        run: |
+          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
+          git add data && (git diff --cached --quiet || git commit -m "[data] backfill ${{ inputs.model }} ${{ inputs.start }}..${{ inputs.end }}") && git pull --rebase && git push

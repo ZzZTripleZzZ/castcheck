@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}CastCheck{% endblock %}</title>
+<meta name="description" content="{% block description %}Independent, automated, station-level verification of public weather forecasts.{% endblock %}">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<p class="fairness" role="note">{{ fairness }}</p>
+<header class="site">
+  <a class="brand" href="/">CastCheck</a>
+  <nav>
+    <a href="/">Overview</a>
+    <a href="/methodology/">Methodology</a>
+    <a href="/status/">Status</a>
+    <a href="/data/">Data</a>
+  </nav>
+  <span class="asof">methodology v{{ methodology_version }} · data as of {{ as_of }}</span>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  <p><strong>Raw model output.</strong> Values are interpolated straight from each model's native
+  0.25° grid with no MOS, bias correction, downscaling or other post-processing, and are sampled
+  only at 00/06/12/18 UTC, which under-samples the true diurnal cycle
+  (<a href="/methodology/#23-sampled-daily-extremes-headline">methodology §2.3</a>).</p>
+  <p>Data licences: ECMWF open data <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a> ·
+  NOAA/NCEP GFS and AIWP: public domain · NWS CLI/CF6/observations: public domain ·
+  CastCheck derived tables: CC-BY-4.0.</p>
+  <p>CastCheck {{ castcheck_version }} · schema v{{ schema_version }} · built {{ built_at }} ·
+  <a href="/api/v1/scores/latest.json">JSON API</a></p>
+</footer>
+<script src="/assets/chart.js" defer></script>
+</body>
+</html>

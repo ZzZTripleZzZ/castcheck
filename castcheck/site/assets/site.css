@@ -1,0 +1,103 @@
+/* CastCheck — light, system font, one accent colour. Tables first; charts are an enhancement. */
+:root {
+  --accent: #1a5fb4;
+  --ink: #14181d;
+  --muted: #5c6570;
+  --line: #d9dee4;
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --ok: #1a7f4b;
+  --bad: #b3261e;
+  --warn: #b06d00;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+h1 { font-size: 1.7rem; line-height: 1.2; margin: 28px 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 1.15rem; margin: 34px 0 10px; }
+h3 { font-size: 1rem; margin: 22px 0 6px; }
+p { margin: 8px 0; }
+section { margin-top: 8px; }
+
+.fairness {
+  margin: 0;
+  padding: 8px 20px;
+  background: #fff8e6;
+  border-bottom: 1px solid #f0dfae;
+  color: #5b4708;
+  font-size: 13px;
+}
+header.site {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px;
+  max-width: 1180px; margin: 0 auto; padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+header.site .brand { font-weight: 700; color: var(--ink); text-decoration: none; letter-spacing: -0.02em; }
+header.site nav { display: flex; gap: 14px; }
+header.site .asof { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+.lede { max-width: 68ch; color: #2a3138; }
+.switch { font-size: 13px; color: var(--muted); margin: 12px 0 18px; }
+.switch a.current { font-weight: 600; color: var(--ink); text-decoration: none; }
+.note, .sub, .period, .tiny { color: var(--muted); font-size: 12px; }
+.empty { padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+.ok { color: var(--ok); font-weight: 600; }
+.bad { color: var(--bad); font-weight: 600; }
+
+.scroll { overflow-x: auto; }
+table.scores { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+table.scores th, table.scores td { padding: 5px 9px; border-bottom: 1px solid var(--line); text-align: left; }
+table.scores thead th { border-bottom: 2px solid var(--line); font-weight: 600; white-space: nowrap; }
+table.scores td.num, table.scores th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.scores tbody tr:hover { background: var(--panel); }
+table.scores .ci { color: var(--muted); white-space: nowrap; }
+table.scores tr.low-n td, table.scores tr.low-n td a { color: #97a0aa; }
+table.scores td.low-n, table.scores td.low-n a { color: #97a0aa; }
+table.scores tr.baseline { background: #fbfbfc; font-style: italic; }
+table.grid th[scope="row"] { white-space: nowrap; }
+table.grid td .sub { display: block; }
+
+.barcell { width: 40%; min-width: 160px; }
+.bar { display: inline-block; height: 9px; background: var(--accent); border-radius: 5px; }
+
+.avail-grid td.cellbox { width: 15px; min-width: 15px; padding: 5px 2px; }
+.cellbox { position: relative; }
+.cellbox::after { content: ""; display: block; height: 15px; border-radius: 3px; background: var(--line); }
+.cellbox.yes::after { background: var(--ok); }
+.cellbox.part::after { background: var(--warn); }
+.cellbox.no::after { background: #e6a9a5; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+figure.chart { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+figure.chart svg { display: block; width: 100%; height: auto; }
+figure.chart figcaption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+blockquote.citation {
+  margin: 10px 0; padding: 10px 14px; background: var(--panel);
+  border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+}
+blockquote.citation p { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-word; }
+.jsonlink { font-size: 13px; }
+
+ul.cols { columns: 3 200px; padding-left: 18px; }
+.cols-list { color: var(--muted); word-break: break-word; }
+
+.prose { max-width: 76ch; }
+.prose table { border-collapse: collapse; font-size: 13.5px; }
+.prose th, .prose td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.prose h2 { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.prose code { background: var(--panel); padding: 1px 4px; border-radius: 3px; }
+
+footer {
+  max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px;
+}
+footer p { max-width: 92ch; }

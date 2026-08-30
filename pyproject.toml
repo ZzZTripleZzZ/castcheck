@@ -1,0 +1,49 @@
+[project]
+name = "castcheck"
+version = "0.1.0"
+description = "Independent, daily, station-level verification of public weather forecasts (NWP + AI models)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+  "requests>=2.32",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyarrow>=17",
+  "xarray>=2024.6",
+  "cfgrib>=0.9.14",
+  "eccodes>=2.38",
+  "h5netcdf>=1.3",
+  "h5py>=3.11",           # h5netcdf's backend for file-like objects (AIWP remote NetCDF)
+  "fsspec>=2024.6",
+  "aiohttp>=3.9",
+  "pyyaml>=6",
+  "typer>=0.12",
+  "jinja2>=3.1",
+  "markdown>=3.6",
+  "python-dateutil>=2.9",
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+publish = ["huggingface_hub>=0.24", "kaggle>=1.6", "atproto>=0.0.55", "matplotlib>=3.9"]
+
+[project.scripts]
+castcheck = "castcheck.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["castcheck"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.pytest.ini_options]
+markers = [
+  "network: hits a live upstream service (deselect with -m 'not network')",
+]

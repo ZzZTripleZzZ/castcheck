@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Status — CastCheck{% endblock %}
+{% block content %}
+<h1>Pipeline status</h1>
+{% if not report %}
+<p class="empty">No status report has been generated yet.</p>
+{% else %}
+<p class="lede">As of {{ report.as_of }} (report generated {{ report.generated_at }}).
+{% if report.ok %}<span class="ok">No gaps for the current day.</span>{% else %}
+<span class="bad">{{ report.n_current_gaps }} gap(s) for the current day.</span>{% endif %}
+{{ report.n_gaps }} gap(s) over the last {{ report.days }} days in total.
+A model run counts as complete only when every station has a value at every expected forecast step;
+nothing is silently skipped (methodology §6).</p>
+
+<section>
+<h2 id="runs">Model runs — last {{ report.days }} days</h2>
+<div class="scroll">
+<table class="scores avail-grid">
+<thead><tr><th scope="col">Model</th><th scope="col">Init</th><th scope="col">Latest init held</th>
+{% for d in report.dates %}<th scope="col" class="tiny">{{ d[5:] }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for m in report.models %}
+<tr><th scope="row">{{ m.model_id }}</th><td class="num">{{ m.init_hour }}Z</td>
+<td class="tiny">{{ m.latest_init or '—' }}</td>
+{% for d in m.days %}<td class="cellbox {{ 'yes' if d.complete else ('part' if d.stations_any else 'no') }}"
+title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations complete, {{ d.values }} values">
+<span class="sr">{{ 'complete' if d.complete else ('partial' if d.stations_any else 'missing') }}</span></td>{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+
+<section>
+<h2 id="truth">Truth (first-final NWS CLI) — last {{ report.days }} days</h2>
+<div class="scroll">
+<table class="scores avail-grid">
+<thead><tr><th scope="col">Station</th><th scope="col">Missing</th>
+{% for d in report.dates %}<th scope="col" class="tiny">{{ d[5:] }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for t in report.truth %}
+<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a></th>
+<td class="num">{{ t.n_missing }}</td>
+{% for d in t.days %}<td class="cellbox {{ 'yes' if d.cli_final else ('part' if d.any_source else 'no') }}"
+title="{{ d.date }}"><span class="sr">{{ 'final' if d.cli_final else ('other source' if d.any_source else 'missing') }}</span></td>{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+
+{% if report.current_gaps %}
+<section>
+<h2 id="gaps">Current gaps</h2>
+<ul>{% for g in report.current_gaps %}<li>{{ g.type }} · {{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ g.init_hour }}Z{% endif %} · {{ g.date }} — {{ g.detail }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+<p class="jsonlink"><a href="/api/v1/status.json">status.json</a></p>
+{% endif %}
+{% endblock %}

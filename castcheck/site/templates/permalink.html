@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ station_id }} · {{ model_id }} · lead {{ lead }} — CastCheck{% endblock %}
+{% block description %}CastCheck score card: {{ model_id }} 2 m temperature at {{ station_id }}, lead day {{ lead }}.{% endblock %}
+{% block content %}
+<h1>{{ station_id }} · {{ model_id }} · lead day {{ lead }}</h1>
+<p class="lede">{{ station_name }} · {{ model_family }} · target day = initialization date + {{ lead }} day{{ '' if lead == 1 else 's' }}.
+This page is a permanent link; the numbers change as history accumulates, the methodology version does not.</p>
+
+<section>
+<h2 id="scores">Scores</h2>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Variable</th><th scope="col">Init</th><th scope="col">Method</th>
+<th scope="col">Window</th><th scope="col">n</th><th scope="col">MAE (°F)</th><th scope="col">95 % CI</th>
+<th scope="col">Bias (°F)</th><th scope="col">95 % CI</th><th scope="col">RMSE (°F)</th>
+<th scope="col">±1 °F</th><th scope="col">±2 °F</th><th scope="col">±3 °F</th>
+<th scope="col">Skill vs persistence</th><th scope="col">Period</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="{{ 'low-n' if r.low_n else '' }}">
+<td>{{ r.variable }}</td><td class="num">{{ r.init_hour }}Z</td><td>{{ r.method }}</td>
+<td>{{ r.window }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.mae }}</td>
+<td class="num ci">{{ r.mae_ci }}</td><td class="num">{{ r.bias }}</td><td class="num ci">{{ r.bias_ci }}</td>
+<td class="num">{{ r.rmse }}</td><td class="num">{{ r.hit1f }}</td><td class="num">{{ r.hit2f }}</td>
+<td class="num">{{ r.hit3f }}</td><td class="num">{{ r.skill }}</td><td class="period">{{ r.period }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="note">Greyed rows have n &lt; {{ min_n }} and are excluded from rankings (methodology §4).</p>
+</section>
+
+<section>
+<h2 id="series">Daily error, last {{ series_days }} days</h2>
+<figure class="chart" data-chart="{{ json_url }}" data-init="{{ chart_init }}" data-method="{{ chart_method }}" data-variable="{{ chart_variable }}">
+<figcaption>Forecast &minus; observed, °F, {{ chart_init }}Z {{ chart_method }} {{ chart_variable }}.
+The table above is the full record; this chart needs JavaScript and is only an aid.</figcaption>
+</figure>
+</section>
+
+{% if pairwise %}
+<section>
+<h2 id="pairwise">Compared with other models</h2>
+<p>Paired bootstrap on the days both models cover ({{ pairwise_window }}, {{ chart_init }}Z, {{ chart_method }}, {{ chart_variable }}).
+Negative means <strong>{{ model_id }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval excludes zero.</p>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Other model</th><th scope="col">Common days</th>
+<th scope="col">MAE difference (°F)</th><th scope="col">95 % CI</th><th scope="col">Distinguishable</th></tr></thead>
+<tbody>
+{% for p in pairwise %}
+<tr><td><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/">{{ p.other }}</a></td>
+<td class="num">{{ p.n_common }}</td><td class="num">{{ p.diff }}</td><td class="num ci">{{ p.ci }}</td>
+<td>{{ 'yes' if p.significant else 'no' }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
+
+<section>
+<h2 id="cite">Cite this page</h2>
+<blockquote class="citation"><p>{{ citation }}</p></blockquote>
+<p class="jsonlink">Machine-readable: <a href="{{ json_url }}">{{ json_url }}</a> ·
+<a href="/api/v1/scores/latest.json">all scores</a> · <a href="/methodology/">methodology v{{ methodology_version }}</a></p>
+</section>
+{% endblock %}

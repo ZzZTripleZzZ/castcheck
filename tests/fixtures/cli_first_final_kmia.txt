@@ -1,0 +1,103 @@
+884 
+CDUS42 KMFL 300824
+CLIMIA
+
+CLIMATE REPORT 
+NATIONAL WEATHER SERVICE MIAMI,FL
+424 AM EDT SUN AUG 30 2026
+
+...................................
+
+...THE MIAMI CLIMATE SUMMARY FOR AUGUST 29 2026...
+
+CLIMATE NORMAL PERIOD: 1991 TO 2020
+CLIMATE RECORD PERIOD: 1895 TO 2026
+
+
+WEATHER ITEM   OBSERVED TIME   RECORD YEAR NORMAL DEPARTURE LAST      
+                VALUE   (LST)  VALUE       VALUE  FROM      YEAR     
+                                                  NORMAL           
+...................................................................
+TEMPERATURE (F)                                                          
+ YESTERDAY                                                           
+  MAXIMUM         90   3:25 PM  95    1952  90      0       93        
+  MINIMUM         76   8:12 AM  69    1912  77     -1       77        
+  AVERAGE         83                        84     -1       85     
+
+PRECIPITATION (IN)                                                    
+  YESTERDAY        0.62          7.26 1932   0.34   0.28     0.07     
+  MONTH TO DATE    4.89                      8.89  -4.00     5.48     
+  SINCE MAY 1     18.23                     33.08 -14.85    30.79     
+  SINCE JAN 1     27.66                     42.88 -15.22    35.02     
+
+SNOWFALL (IN)                                                              
+  YESTERDAY        0.0                                                
+  MONTH TO DATE    0.0                                                
+  SINCE JUN 1      0.0                                                
+  SINCE JUL 1      0.0                                                
+  SNOW DEPTH       0                                                 
+
+DEGREE DAYS                                                           
+ HEATING                                                              
+  YESTERDAY        0                         0      0        0        
+  MONTH TO DATE    0                         0      0        0        
+  SINCE JUN 1      0                         0      0        0        
+  SINCE JUL 1      0                         0      0        0        
+
+ COOLING                                                              
+  YESTERDAY       18                        19     -1       20        
+  MONTH TO DATE  615                       555     60      593        
+  SINCE JUN 1   1855                      1679    176     1758        
+  SINCE JAN 1   3386                      3095    291     3331        
+...................................................................
+
+
+WIND (MPH)                                                            
+  HIGHEST WIND SPEED    16   HIGHEST WIND DIRECTION    NE (50)        
+  HIGHEST GUST SPEED    24   HIGHEST GUST DIRECTION    NE (50)        
+  AVERAGE WIND SPEED     5.3                                        
+
+
+SKY COVER                                                             
+  POSSIBLE SUNSHINE  MM                                                 
+  AVERAGE SKY COVER 0.8                                                 
+
+
+WEATHER CONDITIONS                                                    
+THE FOLLOWING WEATHER WAS RECORDED YESTERDAY.                         
+  THUNDERSTORM                                                        
+  HEAVY RAIN                                                          
+  LIGHT RAIN                                                          
+  FOG                                                                 
+  HAZE                                                                
+
+
+RELATIVE HUMIDITY (PERCENT)
+ HIGHEST    94                                                        
+ LOWEST     75                                                        
+ AVERAGE    85                                                        
+
+..........................................................
+
+
+THE MIAMI CLIMATE NORMALS FOR TODAY
+                         NORMAL    RECORD    YEAR                     
+ MAXIMUM TEMPERATURE (F)   90        95      1951                      
+                                             1981                     
+ MINIMUM TEMPERATURE (F)   77        68      1942                      
+
+
+SUNRISE AND SUNSET                                                    
+AUGUST 30 2026........SUNRISE   7:01 AM EDT   SUNSET   7:42 PM EDT     
+AUGUST 31 2026........SUNRISE   7:01 AM EDT   SUNSET   7:41 PM EDT     
+
+
+-  INDICATES NEGATIVE NUMBERS.
+R  INDICATES RECORD WAS SET OR TIED.
+MM INDICATES DATA IS MISSING.
+T  INDICATES TRACE AMOUNT.
+
+
+
+
+$$

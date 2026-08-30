@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ station.id }} — CastCheck{% endblock %}
+{% block content %}
+<h1>{{ station.id }} — {{ station.name }}</h1>
+<p class="lede">
+{% if station.lat is not none %}{{ '%.4f'|format(station.lat) }}, {{ '%.4f'|format(station.lon) }}
+{% if station.elev_m is not none %}· {{ '%.0f'|format(station.elev_m) }} m{% endif %}
+· standard offset UTC{{ '%+d'|format(station.std_offset_h) }} h · truth product {{ station.cli_pil }}{% else %}
+Cross-station aggregate: the daily error series is first averaged over the stations that have a
+value that day, then scored and bootstrapped over days exactly like a single station.{% endif %}
+</p>
+<p class="switch">View: {% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+{% for b in blocks %}
+<section>
+<h2 id="{{ b.variable }}">Daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature — MAE (°F), {{ window_label }}, {{ init_hour }}Z, {{ method }}</h2>
+<div class="scroll">
+<table class="scores grid">
+<thead><tr><th scope="col">Model</th>{% for l in leads %}<th scope="col">lead {{ l }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in b.rows %}
+<tr class="{{ 'baseline' if row.baseline else '' }}"><th scope="row">{{ row.model_id }}</th>
+{% for c in row.cells %}
+<td class="num {{ 'low-n' if c.low_n else '' }}">{% if c.mae %}<a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub">n={{ c.n }}</span>{% else %}<span class="sub">—</span>{% endif %}</td>
+{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endfor %}
+{% if not blocks %}<p class="empty">No scores yet for this station.</p>{% endif %}
+
+{% if recent %}
+<section>
+<h2 id="recent">Observed truth — last {{ recent|length }} days</h2>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Climatological day</th><th scope="col">Tmax (°F)</th><th scope="col">Tmin (°F)</th><th scope="col">Source</th><th scope="col">Flag</th></tr></thead>
+<tbody>
+{% for r in recent %}<tr><td>{{ r.date }}</td><td class="num">{{ r.tmax }}</td><td class="num">{{ r.tmin }}</td><td>{{ r.source }}</td><td>{{ r.flag }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
+
+<p class="jsonlink"><a href="/api/v1/scores/latest.json">All scores as JSON</a></p>
+{% endblock %}

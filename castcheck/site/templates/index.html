@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}CastCheck — how far off was each weather model?{% endblock %}
+{% block content %}
+<h1>Model leaderboard</h1>
+<p class="lede">2 m temperature at {{ n_stations }} U.S. stations, scored against the NWS Daily
+Climate Report. Ranking below: <strong>all stations</strong>, <strong>{{ window_label }}</strong>,
+<strong>{{ init_hour }}Z</strong> initialization, <strong>{{ method }}</strong> interpolation.
+Lower MAE is better. Every number carries its sample size <em>n</em> and a 95&nbsp;% bootstrap
+interval; groups with n&nbsp;&lt;&nbsp;{{ min_n }} are greyed and excluded from the ranking.</p>
+
+<p class="switch">Other views:
+{% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+</p>
+
+{% if not boards %}
+<p class="empty">No scores yet for this combination.</p>
+{% endif %}
+
+{% for b in boards %}
+<section>
+<h2 id="lead{{ b.lead }}-{{ b.variable }}">Lead day {{ b.lead }} — daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature</h2>
+<table class="scores">
+<thead><tr><th scope="col">#</th><th scope="col">Model</th><th scope="col">MAE (°F)</th>
+<th scope="col">95 % CI</th><th scope="col">Bias (°F)</th><th scope="col">±3 °F</th>
+<th scope="col">Skill vs persistence</th><th scope="col">n</th><th scope="col">Period</th></tr></thead>
+<tbody>
+{% for r in b.rows %}
+<tr class="{{ 'low-n' if r.low_n else '' }}{{ ' baseline' if r.baseline else '' }}">
+<td>{{ '—' if r.low_n or r.baseline else loop.index }}</td>
+<td><a href="{{ r.permalink }}">{{ r.model_id }}</a></td>
+<td class="num">{{ r.mae }}</td>
+<td class="num ci">{{ r.mae_ci }}</td>
+<td class="num">{{ r.bias }}</td>
+<td class="num">{{ r.hit3f }}</td>
+<td class="num">{{ r.skill }}</td>
+<td class="num">{{ r.n }}</td>
+<td class="period">{{ r.period }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+{% endfor %}
+
+{% if availability %}
+<section>
+<h2 id="availability">Data availability</h2>
+<p>Each model is scored only over its own available period ({{ avail_start }} → {{ avail_end }}).</p>
+<table class="avail">
+<thead><tr><th scope="col">Model</th><th scope="col">Period</th><th scope="col">Scored days</th><th scope="col"></th></tr></thead>
+<tbody>
+{% for a in availability %}
+<tr><td><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></td>
+<td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
+<td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+{% endif %}
+
+<section>
+<h2 id="stations">Stations</h2>
+<ul class="cols">
+{% for s in station_links %}<li><a href="/station/{{ s.id }}/">{{ s.id }}</a> — {{ s.name }}</li>{% endfor %}
+</ul>
+</section>
+{% endblock %}

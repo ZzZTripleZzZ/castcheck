@@ -1,0 +1,103 @@
+155 
+CDUS43 KMPX 292131
+CLIMSP
+
+CLIMATE REPORT 
+NATIONAL WEATHER SERVICE TWIN CITIES/CHANHASSEN MN
+431 PM CDT SAT AUG 29 2026
+
+...................................
+
+...THE TWIN CITIES MN CLIMATE SUMMARY FOR AUGUST 29 2026...
+VALID AS OF 0400 PM LOCAL TIME.
+
+CLIMATE NORMAL PERIOD 1991 TO 2020
+CLIMATE RECORD PERIOD 1871 TO 2026
+
+
+WEATHER ITEM   OBSERVED TIME   RECORD YEAR NORMAL DEPARTURE LAST      
+                VALUE   (LST)  VALUE       VALUE  FROM      YEAR     
+                                                  NORMAL           
+...................................................................
+TEMPERATURE (F)                                                          
+ TODAY                                                               
+  MAXIMUM         82    252 PM  96    1969  79      3       79       
+  MINIMUM         67    427 AM  45    1911  61      6       61       
+                                      1946                           
+  AVERAGE         75                        70      5       70     
+
+PRECIPITATION (IN)                                                    
+  TODAY            0.26          2.05 1964   0.12   0.14     0.00     
+  MONTH TO DATE    0.46                      4.10  -3.64     3.57     
+  SINCE JUN 1      7.36                     12.74  -5.38    14.55     
+  SINCE JAN 1     16.29                     23.00  -6.71    23.30     
+
+SNOWFALL (IN)                                                              
+  TODAY            0.0           0.0    MM   0.0    0.0      0.0      
+  MONTH TO DATE    0.0                       0.0    0.0       T       
+  SINCE JUN 1      0.0                       0.0    0.0       T       
+  SINCE JUL 1      0.0                       0.0    0.0       T       
+  SNOW DEPTH       0                                                 
+
+DEGREE DAYS                                                           
+ HEATING                                                              
+  TODAY            0                         1     -1        0        
+  MONTH TO DATE    0                         3     -3        6        
+  SINCE JUN 1      5                        41    -36       33        
+  SINCE JUL 1      0                         7     -7        8        
+
+ COOLING                                                              
+  TODAY           10                         5      5        5        
+  MONTH TO DATE  263                       210     53      246        
+  SINCE JUN 1    890                       679    211      788        
+  SINCE JAN 1    979                       728    251      847        
+...................................................................
+
+
+WIND (MPH)                                                            
+  HIGHEST WIND SPEED    17   HIGHEST WIND DIRECTION    SE (140)       
+  HIGHEST GUST SPEED    27   HIGHEST GUST DIRECTION    SE (150)       
+  AVERAGE WIND SPEED     9.9                                        
+
+
+SKY COVER                                                             
+  POSSIBLE SUNSHINE  MM                                                 
+  AVERAGE SKY COVER 0.9                                                 
+
+
+WEATHER CONDITIONS                                                    
+THE FOLLOWING WEATHER WAS RECORDED TODAY.                             
+  RAIN                                                                
+  LIGHT RAIN                                                          
+  FOG                                                                 
+
+
+RELATIVE HUMIDITY (PERCENT)
+ HIGHEST    90           500 AM                                      
+ LOWEST     54           200 PM                                      
+ AVERAGE    72                                                        
+
+..........................................................
+
+
+THE TWIN CITIES MN CLIMATE NORMALS FOR TOMORROW
+                         NORMAL    RECORD    YEAR                     
+ MAXIMUM TEMPERATURE (F)   78        96      1941                      
+ MINIMUM TEMPERATURE (F)   60        45      1935                      
+                                             1974                     
+
+
+SUNRISE AND SUNSET                                                    
+AUGUST 29 2026........SUNRISE   632 AM CDT   SUNSET   755 PM CDT     
+AUGUST 30 2026........SUNRISE   633 AM CDT   SUNSET   753 PM CDT     
+
+
+-  INDICATES NEGATIVE NUMBERS.
+R  INDICATES RECORD WAS SET OR TIED.
+MM INDICATES DATA IS MISSING.
+T  INDICATES TRACE AMOUNT.
+
+
+
+
+$$

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ model.model_id }} — CastCheck{% endblock %}
+{% block content %}
+<h1>{{ model.family }} <span class="mono">({{ model.model_id }})</span></h1>
+<p class="lede">source {{ model.source }} · product {{ model.product }}{% if model.init_field %} ·
+initial conditions from {{ model.init_field }}{% endif %} · steps every {{ model.step_h }} h to
+{{ model.max_h }} h · initializations {{ model.inits|join(', ') }} UTC{% if model.native_extremes %} ·
+native extreme fields {{ model.native_extremes|join(', ') }} (diagnostic only){% endif %}.</p>
+<p class="switch">View: {% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+{% for b in blocks %}
+<section>
+<h2 id="{{ b.variable }}">Daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature — MAE (°F), {{ window_label }}, {{ init_hour }}Z, {{ method }}</h2>
+<div class="scroll">
+<table class="scores grid">
+<thead><tr><th scope="col">Station</th>{% for l in leads %}<th scope="col">lead {{ l }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in b.rows %}
+<tr><th scope="row"><a href="/station/{{ row.station_id }}/">{{ row.station_id }}</a></th>
+{% for c in row.cells %}
+<td class="num {{ 'low-n' if c.low_n else '' }}">{% if c.mae %}<a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub">n={{ c.n }}</span>{% else %}<span class="sub">—</span>{% endif %}</td>
+{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endfor %}
+{% if not blocks %}<p class="empty">No scores yet for this model.</p>{% endif %}
+{% endblock %}

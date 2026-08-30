@@ -1,0 +1,25 @@
+name: fetch-forecasts
+on:
+  schedule:
+    - cron: "0 5 * * *"     # 05:00Z GFS 00Z
+    - cron: "0 6 * * *"     # 06:00Z AIWP GFS-init 00Z
+    - cron: "0 8 * * *"     # 08:00Z ECMWF IFS/AIFS 00Z
+    - cron: "30 9 * * *"    # 09:30Z AIWP IFS-init 00Z
+    - cron: "0 21 * * *"    # 21:00Z 12Z runs
+  workflow_dispatch:
+concurrency: { group: data-writes, cancel-in-progress: false }
+permissions: { contents: write }
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/castcheck fetch-latest --workers 3
+      - name: commit data
+        run: |
+          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
+          git add data && (git diff --cached --quiet || git commit -m "[data] fetch $(date -u +%Y-%m-%dT%H:%MZ)") && git pull --rebase && git push

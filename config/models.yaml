@@ -1,0 +1,17 @@
+# Model registry. `model_id` is the stable public identifier (never reuse for a different config).
+# `family` groups variants for display. `native_extremes` lists native max/min fields (diagnostic only).
+models:
+  - {model_id: ifs_hres,        family: "ECMWF IFS HRES",   source: ecmwf, product: oper,        inits: [0, 12], step_h: 6, max_h: 240, native_extremes: [mx2t3, mn2t3, mx2t6, mn2t6]}
+  - {model_id: aifs_single,     family: "ECMWF AIFS Single", source: ecmwf, product: aifs-single, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: gfs,             family: "NCEP GFS",         source: gfs,   product: pgrb2.0p25,  inits: [0, 12], step_h: 6, max_h: 240, native_extremes: [TMAX, TMIN]}
+  - {model_id: graphcast_ifs,   family: "GraphCast",        source: aiwp,  product: GRAP, init_field: IFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: graphcast_gfs,   family: "GraphCast",        source: aiwp,  product: GRAP, init_field: GFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: pangu_ifs,       family: "Pangu-Weather",    source: aiwp,  product: PANG, init_field: IFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: pangu_gfs,       family: "Pangu-Weather",    source: aiwp,  product: PANG, init_field: GFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: fourcastnet_ifs, family: "FourCastNet v2",   source: aiwp,  product: FOUR, init_field: IFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: fourcastnet_gfs, family: "FourCastNet v2",   source: aiwp,  product: FOUR, init_field: GFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: aurora_ifs,      family: "Aurora",           source: aiwp,  product: AURO, init_field: IFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+  - {model_id: aurora_gfs,      family: "Aurora",           source: aiwp,  product: AURO, init_field: GFS, inits: [0, 12], step_h: 6, max_h: 240, native_extremes: []}
+# Baselines computed from truth only (no fetch): persistence (yesterday's observed value) and, later, climatology.
+baselines:
+  - {model_id: persistence, family: "Persistence (baseline)"}

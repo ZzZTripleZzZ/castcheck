@@ -1,0 +1,213 @@
+# CastCheck station list (MVP). Chosen to overlap Kalshi daily high/low temperature markets.
+# `cli_pil` is the NWS AFOS product id (CLIxxx) whose YESTERDAY block is the daily climate truth.
+# lat/lon/elev_m are filled by `scripts/build_stations.py` from api.weather.gov/stations/{icao}
+# and then frozen here (do not hand-edit coordinates after freezing).
+# Kalshi mapping is informational only; no market data is ever fetched or stored.
+stations:
+- id: KNYC
+  name: New York Central Park
+  cli_pil: CLINYC
+  tz: America/New_York
+  kalshi: NYC
+  std_offset_h: -5
+  lat: 40.78333
+  lon: -73.96667
+  elev_m: 46.9
+- id: KEWR
+  name: Newark Liberty
+  cli_pil: CLIEWR
+  tz: America/New_York
+  kalshi: EWR
+  std_offset_h: -5
+  lat: 40.6825
+  lon: -74.16944
+  elev_m: 4.9
+- id: KPHL
+  name: Philadelphia Intl
+  cli_pil: CLIPHL
+  tz: America/New_York
+  kalshi: PHIL
+  std_offset_h: -5
+  lat: 39.87327
+  lon: -75.22678
+  elev_m: 2.1
+- id: KTTN
+  name: Trenton Mercer
+  cli_pil: CLITTN
+  tz: America/New_York
+  kalshi: TTN
+  std_offset_h: -5
+  lat: 40.27639
+  lon: -74.81639
+  elev_m: 64.0
+- id: KBOS
+  name: Boston Logan
+  cli_pil: CLIBOS
+  tz: America/New_York
+  kalshi: BOS
+  std_offset_h: -5
+  lat: 42.36056
+  lon: -71.01056
+  elev_m: 6.1
+- id: KDCA
+  name: Washington Reagan
+  cli_pil: CLIDCA
+  tz: America/New_York
+  kalshi: DCA
+  std_offset_h: -5
+  lat: 38.84833
+  lon: -77.03417
+  elev_m: 4.0
+- id: KATL
+  name: Atlanta Hartsfield
+  cli_pil: CLIATL
+  tz: America/New_York
+  kalshi: ATL
+  std_offset_h: -5
+  lat: 33.64028
+  lon: -84.42694
+  elev_m: 313.0
+- id: KMIA
+  name: Miami Intl
+  cli_pil: CLIMIA
+  tz: America/New_York
+  kalshi: MIA
+  std_offset_h: -5
+  lat: 25.79056
+  lon: -80.31639
+  elev_m: 3.0
+- id: KORD
+  name: Chicago O'Hare
+  cli_pil: CLIORD
+  tz: America/Chicago
+  kalshi: CHI
+  std_offset_h: -6
+  lat: 41.97972
+  lon: -87.90444
+  elev_m: 203.0
+- id: KMSP
+  name: Minneapolis-St Paul
+  cli_pil: CLIMSP
+  tz: America/Chicago
+  kalshi: MSP
+  std_offset_h: -6
+  lat: 44.88306
+  lon: -93.22889
+  elev_m: 256.0
+- id: KDFW
+  name: Dallas-Fort Worth
+  cli_pil: CLIDFW
+  tz: America/Chicago
+  kalshi: DFW
+  std_offset_h: -6
+  lat: 32.89743
+  lon: -97.02196
+  elev_m: 164.9
+- id: KIAH
+  name: Houston Bush
+  cli_pil: CLIIAH
+  tz: America/Chicago
+  kalshi: HOU
+  std_offset_h: -6
+  lat: 29.9844
+  lon: -95.36074
+  elev_m: 27.1
+- id: KAUS
+  name: Austin Bergstrom
+  cli_pil: CLIAUS
+  tz: America/Chicago
+  kalshi: AUS
+  std_offset_h: -6
+  lat: 30.18304
+  lon: -97.67987
+  elev_m: 148.1
+- id: KSAT
+  name: San Antonio Intl
+  cli_pil: CLISAT
+  tz: America/Chicago
+  kalshi: SAT
+  std_offset_h: -6
+  lat: 29.53278
+  lon: -98.46361
+  elev_m: 246.0
+- id: KMSY
+  name: New Orleans Intl
+  cli_pil: CLIMSY
+  tz: America/Chicago
+  kalshi: MSY
+  std_offset_h: -6
+  lat: 29.99278
+  lon: -90.25083
+  elev_m: 0.9
+- id: KOKC
+  name: Oklahoma City
+  cli_pil: CLIOKC
+  tz: America/Chicago
+  kalshi: OKC
+  std_offset_h: -6
+  lat: 35.38861
+  lon: -97.60028
+  elev_m: 394.1
+- id: KDEN
+  name: Denver Intl
+  cli_pil: CLIDEN
+  tz: America/Denver
+  kalshi: DEN
+  std_offset_h: -7
+  lat: 39.84658
+  lon: -104.65622
+  elev_m: 1647.1
+- id: KPHX
+  name: Phoenix Sky Harbor
+  cli_pil: CLIPHX
+  tz: America/Phoenix
+  kalshi: PHX
+  std_offset_h: -7
+  lat: 33.4278
+  lon: -112.00347
+  elev_m: 339.9
+- id: KLAS
+  name: Las Vegas Harry Reid
+  cli_pil: CLILAS
+  tz: America/Los_Angeles
+  kalshi: LAS
+  std_offset_h: -8
+  lat: 36.07188
+  lon: -115.1634
+  elev_m: 664.5
+- id: KLAX
+  name: Los Angeles Intl
+  cli_pil: CLILAX
+  tz: America/Los_Angeles
+  kalshi: LAX
+  std_offset_h: -8
+  lat: 33.93806
+  lon: -118.38889
+  elev_m: 38.1
+- id: KSAN
+  name: San Diego Lindbergh
+  cli_pil: CLISAN
+  tz: America/Los_Angeles
+  kalshi: SAN
+  std_offset_h: -8
+  lat: 32.73361
+  lon: -117.18306
+  elev_m: 4.0
+- id: KSFO
+  name: San Francisco Intl
+  cli_pil: CLISFO
+  tz: America/Los_Angeles
+  kalshi: SFO
+  std_offset_h: -8
+  lat: 37.61961
+  lon: -122.36558
+  elev_m: 3.0
+- id: KSEA
+  name: Seattle-Tacoma
+  cli_pil: CLISEA
+  tz: America/Los_Angeles
+  kalshi: SEA
+  std_offset_h: -8
+  lat: 47.44472
+  lon: -122.31361
+  elev_m: 130.1

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Data — CastCheck{% endblock %}
+{% block content %}
+<h1>Data</h1>
+<p class="lede">Everything published here is recomputable from the archived station values, the truth
+table and this repository at a given commit. Nothing is hand-edited.</p>
+
+<section>
+<h2 id="api">JSON API (v1)</h2>
+<table class="scores">
+<thead><tr><th scope="col">Endpoint</th><th scope="col">Contents</th><th scope="col">Rows/files</th></tr></thead>
+<tbody>
+{% for e in endpoints %}<tr><td><a href="{{ e.href }}"><code>{{ e.path }}</code></a></td><td>{{ e.what }}</td><td class="num">{{ e.n }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</section>
+
+<section>
+<h2 id="schema">Table schemas</h2>
+{% for t in schemas %}
+<h3 id="schema-{{ t.name }}">{{ t.name }}</h3>
+<p>{{ t.what }}</p>
+<p class="mono cols-list">{{ t.columns|join(' · ') }}</p>
+{% endfor %}
+</section>
+
+<section>
+<h2 id="licence">Licences and attribution</h2>
+<ul>
+<li>ECMWF IFS HRES and AIFS Single open data — <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a>, © ECMWF.</li>
+<li>NCEP GFS (AWS <code>noaa-gfs-bdp-pds</code>) — U.S. Government work, public domain.</li>
+<li>NOAA/CIRA AIWP model output (AWS <code>noaa-oar-mlwp-data</code>) — U.S. Government work, public domain.</li>
+<li>NWS Daily Climate Report (CLI), CF6 and station observations — U.S. Government work, public domain.</li>
+<li>CastCheck derived tables and this site — CC-BY-4.0. Please cite the permanent link of the page you used.</li>
+</ul>
+<p><strong>Raw model output.</strong> These are values interpolated from each model's native grid,
+without MOS, bias correction, downscaling or any other post-processing, and they are not the
+products that ECMWF, NOAA, the NWS or any app vendor issue to end users.</p>
+</section>
+{% endblock %}

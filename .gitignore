@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+public/
+data/raw/
+*.grib2
+*.nc
+*.log
+.env
+.DS_Store
+
+# internal planning docs (Chinese, contain personal context) stay local
+docs/
+.hf_README.md
+.kaggle_stage/
