@@ -40,18 +40,23 @@ if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)
 <footer>
   <p><strong>Raw model output, no post-processing.</strong> Values are interpolated straight from
   each model's native 0.25° grid with no MOS, bias correction, downscaling or other
-  post-processing, and are sampled only at 00/06/12/18 UTC, which under-samples the true diurnal
-  cycle (<a href="/methodology/#23-sampled-daily-extremes-headline">methodology §2.3</a>).</p>
+  post-processing, and are sampled only at 00/06/12/18 UTC. The headline scores the forecast at
+  those instants against the observation at the same instants; the comparison against the true
+  NWS daily extremes is published separately and carries a sampling penalty
+  (<a href="/methodology/#23-what-is-scored-v03">methodology §2.3</a>).</p>
   <p>Data licences: CastCheck derived tables and this site
   <a href="https://creativecommons.org/licenses/by/4.0/">CC&nbsp;BY&nbsp;4.0</a>, code MIT ·
   ECMWF open data CC&nbsp;BY&nbsp;4.0 · NOAA/NCEP GFS, NOAA/CIRA AIWP and NWS CLI/CF6/observations
   public domain · see <a href="/data/#licence">/data/</a> for the full list and citations.</p>
-  <p><a href="https://github.com/zifanzhang/castcheck">GitHub</a> ·
-  <a href="https://huggingface.co/datasets/castcheck/temperature-verification">Hugging Face dataset</a> ·
+  <p><a href="{{ repo_url }}">GitHub</a> ·
+  <a href="{{ hf_url }}">Hugging Face dataset</a> ·
   <a href="/feed.xml">Atom feed</a> ·
   <a href="/api/v1/">JSON API</a> ·
   <a href="/methodology/">methodology v{{ methodology_version }}</a> ·
-  CastCheck {{ castcheck_version }} · schema v{{ schema_version }} · built {{ built_at }}</p>
+  <a href="/data/#cite">Cite this</a> ·
+  CastCheck {{ castcheck_version }} · schema v{{ schema_version }} ·
+  source <a href="{{ repo_url }}/commit/{{ commit }}"><code>{{ commit }}</code></a> ·
+  built {{ built_at }}</p>
 </footer>
 <script src="{{ asset_chart }}" defer></script>
 </body>

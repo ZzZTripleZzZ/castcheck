@@ -7,7 +7,7 @@
 00/06/12/18 UTC, interpolated to the station from the native 0.25° grid, with no post-processing.
 Scores cover only the newest model-version segment, so an upgrade upstream starts a new record
 rather than being averaged into the old one
-(<a href="/methodology/#9-versioning">methodology §9</a>).</p>
+(<a href="/methodology/#7-fairness-statement">methodology §7</a>).</p>
 <ul class="meta">
   <li>systems <b>{{ rows|length }}</b></li>
   <li>data through <b>{{ data_through }}</b></li>
@@ -17,7 +17,7 @@ rather than being averaged into the old one
 <div class="scroll tall">
 <table class="scores">
 <caption>Scored days are for lead day 1, all stations pooled, {{ window_label }}, {{ init_hour }}Z,
-{{ method }}, daily maximum.</caption>
+{{ method }}, {{ variable_label }}.</caption>
 <thead><tr><th scope="col">Model</th><th scope="col">Source</th><th scope="col">Initial conditions</th>
 <th scope="col">Version segment</th><th scope="col">Period of record</th>
 <th scope="col" class="num">Scored days</th></tr></thead>

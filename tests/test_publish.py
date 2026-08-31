@@ -15,7 +15,7 @@ from castcheck.verify import MIN_N, PERSISTENCE_ID
 
 def _score_row(model_id: str, mae_c: float, n: int, window: str = "90d", **over) -> dict:
     row = {
-        "station_id": "ALL", "model_id": model_id, "init_hour": 0, "lead_day": 1, "variable": "tmax",
+        "station_id": "ALL", "model_id": model_id, "init_hour": 0, "lead_day": 1, "variable": "t2",
         "method": "bilinear", "window": window, "n": n, "mae": mae_c, "bias": 0.0, "rmse": mae_c * 1.2,
         "hit1f": 0.3, "hit2f": 0.6, "hit3f": 0.8, "skill_persistence": 0.2,
         "mae_ci_low": mae_c * 0.9, "mae_ci_high": mae_c * 1.1, "bias_ci_low": -0.2, "bias_ci_high": 0.2,
@@ -42,12 +42,12 @@ LEADERBOARD = _scores([
 # --------------------------------------------------------------------------- selection
 
 
-def test_selection_is_all_stations_lead1_00z_tmax_bilinear():
+def test_selection_is_all_stations_lead1_00z_t2_bilinear():
     noise = _scores([
         _score_row("ifs_hres", 0.1, 88, station_id="KNYC"),
         _score_row("ifs_hres", 0.2, 88, lead_day=3),
         _score_row("ifs_hres", 0.3, 88, init_hour=12),
-        _score_row("ifs_hres", 0.4, 88, variable="tmin"),
+        _score_row("ifs_hres", 0.4, 88, variable="tmin_cli"),
         _score_row("ifs_hres", 0.5, 88, method="nearest"),
         *LEADERBOARD.to_dict("records"),
     ])
@@ -85,7 +85,7 @@ def test_post_text_leads_with_the_result_and_fits_bluesky():
     text = bluesky.post_text(sel, window)
     assert len(text) <= bluesky.MAX_POST_CHARS
     first = text.splitlines()[0]
-    assert first.startswith("Best raw Tmax forecast at lead day 1 over the last 90 days:")
+    assert first.startswith("Best raw 2 m temperature forecast at lead day 1 over the last 90 days:")
     assert "ECMWF IFS HRES" in first        # display name, not the model_id
     assert "2.7 °F MAE" in first            # 1.5 °C -> 2.7 °F
     assert "n=88" in first

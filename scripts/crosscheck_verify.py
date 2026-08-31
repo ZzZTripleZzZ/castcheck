@@ -1,9 +1,20 @@
 """Independent recomputation of published scores, in the most naive pandas possible.
 
 Part 1 — pick a few ``(station, model, init_hour, lead_day, variable, method, window)`` groups from
-``data/scores/latest.parquet`` and recompute ``n``, ``MAE``, ``bias``, ``RMSE`` and the hit rates
-from ``daily_forecasts`` + ``truth_daily`` with plain ``for``-loop-free pandas that shares no code
-with :mod:`castcheck.verify` beyond reading the tables.  Everything must agree to 1e-6.
+``data/scores/latest.parquet`` — deliberately one of each *kind* the v0.3 schema has: a pooled ``t2``
+station row, a per-instant ``t2_*`` row, a like-for-like ``tmax_s`` row, an ``ALL`` row and a
+``persistence`` row — and recompute ``n``, ``MAE``, ``bias``, ``RMSE`` and the ±1 °F hit rate from
+``forecast_values`` + ``truth_instant`` + ``daily_forecasts`` + ``truth_daily`` with plain pandas
+that shares no code with :mod:`castcheck.verify` beyond reading the tables.  Everything must agree
+to 1e-6.
+
+The independent implementation reproduces, from the methodology text alone:
+
+* the four common instants of a climatological day (station standard offset, §2.2), and the rule
+  that only a day with all four is scored;
+* the pooled ``t2`` unit — a day's score is the mean over its four instants, not over station-days;
+* the ``ALL`` row — the cross-station mean of each functional within a day, then the mean over days;
+* the lagged-persistence baseline of the *same functional* (§4 / DESIGN §10.3).
 
 Part 2 — compare one station-day of ``ifs_hres`` against Open-Meteo's Previous Runs API
 (``previous-runs-api.open-meteo.com``, development-time sanity check only, non-commercial).  This is
@@ -24,40 +35,149 @@ import numpy as np
 import pandas as pd
 
 from castcheck import store
-from castcheck.config import station_by_id
-from castcheck.verify import HIT_THRESHOLDS_C, PERSISTENCE_ID, persistence_daily
+from castcheck.config import load_stations, station_by_id
+from castcheck.verify import HIT_THRESHOLDS_C, PERSISTENCE_ID
 
 KEY = ["station_id", "model_id", "init_hour", "lead_day", "variable", "method", "window"]
 TOL = 1e-6
+INSTANT_HOURS = (0, 6, 12, 18)
+HOUR_VARIABLE = {h: f"t2_{h:02d}z" for h in INSTANT_HOURS}
 
 
-def naive_error_rows(daily: pd.DataFrame, truth: pd.DataFrame) -> pd.DataFrame:
-    """One row per scored (group, day) built with the dumbest possible joins."""
-    t = truth[truth["source"] == "CLI"].copy()
-    t = t[t["is_final"].fillna(False).astype(bool)]
-    t["climo_date"] = pd.to_datetime(t["climo_date"])
-    obs = []
-    for var in ("tmax", "tmin"):
-        part = t[["station_id", "climo_date"]].copy()
-        part["variable"] = var
-        part["obs_c"] = pd.to_numeric(t[f"{var}_c"], errors="coerce")
-        obs.append(part.dropna(subset=["obs_c"]))
-    obs = pd.concat(obs, ignore_index=True)
+# ------------------------------------------------------------------ naive scored-row builders
 
-    d = daily.copy()
+def _offsets() -> dict[str, int]:
+    return {s.id: int(s.std_offset_h) for s in load_stations()}
+
+
+def naive_instant_rows() -> pd.DataFrame:
+    """`t2` and `t2_*` rows: the forecast at 00/06/12/18 UTC against the observation at that instant."""
+    off = _offsets()
+    v = store.read_forecast_values(
+        columns=["model_id", "init_time", "valid_time", "station_id", "variable", "bucket_h",
+                 "method", "value_c", "missing_reason"])
+    v = v[(v["variable"] == "t2") & (v["bucket_h"] == 0) & (v["missing_reason"] == "")
+          & v["value_c"].notna()]
+    v = v.copy()
+    v["init_time"] = pd.to_datetime(v["init_time"], utc=True)
+    v["valid_time"] = pd.to_datetime(v["valid_time"], utc=True)
+    v = v[v["valid_time"].dt.hour.isin(INSTANT_HOURS)]
+    v["init_hour"] = v["init_time"].dt.hour
+    v["_hour"] = v["valid_time"].dt.hour
+    hours = pd.to_timedelta(v["station_id"].map(off).astype(int), unit="h")
+    v["climo_date"] = (v["valid_time"] + hours).dt.floor("D").dt.tz_localize(None)
+    v["lead_day"] = (v["climo_date"] - v["init_time"].dt.floor("D").dt.tz_localize(None)).dt.days
+    grp = ["station_id", "model_id", "init_hour", "lead_day", "method", "climo_date"]
+    # a climatological day is scored only when the run covers all four of its instants (§2.5)
+    v = v[v.groupby(grp, observed=True)["_hour"].transform("nunique") == 4]
+
+    ti = store.read_truth_instant()
+    ti = ti[ti["temp_c"].notna()][["station_id", "valid_time", "temp_c"]]
+    m = v.merge(ti, on=["station_id", "valid_time"], how="inner")
+    if m.empty:
+        return m.assign(variable=[], err=[])
+    m["err"] = m["value_c"] - m["temp_c"]
+    # the *pooled* t2 additionally needs all four observations (§2.3); the per-hour variables do not
+    pooled = m[m.groupby(grp, observed=True)["_hour"].transform("nunique") == 4].assign(variable="t2")
+    hourly = m.assign(variable=m["_hour"].map(HOUR_VARIABLE))
+    return pd.concat([pooled, hourly], ignore_index=True)[
+        [*grp, "variable", "_hour", "valid_time", "init_time", "err", "temp_c"]]
+
+
+def naive_daily_rows() -> pd.DataFrame:
+    """`tmax_s/tmin_s` (vs the observed sampled extreme) and `*_cli` (vs the NWS CLI extreme)."""
+    d = store.read_daily()
+    d["init_time"] = pd.to_datetime(d["init_time"], utc=True)
+    d["init_hour"] = d["init_time"].dt.hour
     d["climo_date"] = pd.to_datetime(d["climo_date"])
-    d["init_hour"] = pd.to_datetime(d["init_time"], utc=True).dt.hour
-    fc = []
-    for var in ("tmax", "tmin"):
-        part = d[["station_id", "model_id", "init_hour", "lead_day", "method", "climo_date"]].copy()
-        part["variable"] = var
-        part["fcst_c"] = pd.to_numeric(d[f"{var}_sampled_c"], errors="coerce")
-        fc.append(part.dropna(subset=["fcst_c"]))
-    fc = pd.concat(fc, ignore_index=True)
+    t = store.read_truth()
+    t = t[(t["source"] == "CLI") & t["is_final"].fillna(False).astype(bool)].copy()
+    t["climo_date"] = pd.to_datetime(t["climo_date"])
+    grp = ["station_id", "model_id", "init_hour", "lead_day", "method", "climo_date"]
+    out = []
+    spec = [("tmax_s", "tmax_sampled_c", "tmax_obs_s_c", None),
+            ("tmin_s", "tmin_sampled_c", "tmin_obs_s_c", None),
+            ("tmax_cli", "tmax_sampled_c", None, "tmax_c"),
+            ("tmin_cli", "tmin_sampled_c", None, "tmin_c"),
+            ("tmax_native_cli", "tmax_native_c", None, "tmax_c"),
+            ("tmin_native_cli", "tmin_native_c", None, "tmin_c")]
+    for variable, fcol, ocol, tcol in spec:
+        part = d[[*grp, "init_time"]].copy()
+        part["fcst"] = pd.to_numeric(d[fcol], errors="coerce")
+        if ocol is not None:
+            part["obs"] = pd.to_numeric(d[ocol], errors="coerce")
+        else:
+            obs = t[["station_id", "climo_date"]].copy()
+            obs["obs"] = pd.to_numeric(t[tcol], errors="coerce")
+            part = part.merge(obs, on=["station_id", "climo_date"], how="inner")
+        part = part.dropna(subset=["fcst", "obs"])
+        part["variable"] = variable
+        part["err"] = part["fcst"] - part["obs"]
+        part["_hour"] = 0
+        part["valid_time"] = pd.NaT
+        out.append(part[[*grp, "variable", "_hour", "valid_time", "init_time", "err", "obs"]]
+                   .rename(columns={"obs": "temp_c"}))
+    return pd.concat(out, ignore_index=True)
 
-    m = fc.merge(obs, on=["station_id", "climo_date", "variable"], how="inner")
-    m["err"] = m["fcst_c"] - m["obs_c"]
-    return m
+
+def naive_persistence_rows(inst: pd.DataFrame, dly: pd.DataFrame) -> pd.DataFrame:
+    """The observation `lead_day` days earlier — of the same functional (DESIGN §10.3)."""
+    out = []
+    leads = sorted({int(x) for x in pd.concat([inst["lead_day"], dly["lead_day"]]).unique()
+                    if int(x) >= 1})
+    init_hours = sorted(set(inst["init_hour"]) | set(dly["init_hour"]))
+    methods = sorted(set(inst["method"]) | set(dly["method"]))
+
+    ti = store.read_truth_instant()
+    ti = ti[ti["temp_c"].notna()].drop_duplicates(subset=["station_id", "valid_time"])
+    if len(inst) and len(ti):
+        tgt = inst[["station_id", "climo_date", "_hour", "valid_time", "temp_c"]].drop_duplicates(
+            subset=["station_id", "valid_time"])
+        for lead in leads:
+            src = ti[["station_id", "valid_time", "temp_c"]].rename(columns={"temp_c": "fcst"})
+            src = src.copy()
+            src["valid_time"] = src["valid_time"] + pd.Timedelta(days=lead)
+            m = tgt.merge(src, on=["station_id", "valid_time"], how="inner")
+            if m.empty:
+                continue
+            m["lead_day"] = lead
+            m["err"] = m["fcst"] - m["temp_c"]
+            # the pooled t2 baseline obeys the same four-instant completeness rule (§2.3)
+            full = m.groupby(["station_id", "climo_date"], observed=True)["_hour"].transform(
+                "nunique") == 4
+            out.append(pd.concat([m[full].assign(variable="t2"),
+                                  m.assign(variable=m["_hour"].map(HOUR_VARIABLE))],
+                                 ignore_index=True))
+    if len(dly):
+        rec = dly[["station_id", "climo_date", "variable", "temp_c"]].drop_duplicates(
+            subset=["station_id", "climo_date", "variable"])
+        for lead in leads:
+            src = rec.rename(columns={"temp_c": "fcst"}).copy()
+            src["climo_date"] = src["climo_date"] + pd.Timedelta(days=lead)
+            m = rec.merge(src, on=["station_id", "climo_date", "variable"], how="inner")
+            if m.empty:
+                continue
+            m["lead_day"] = lead
+            m["_hour"] = 0
+            m["err"] = m["fcst"] - m["temp_c"]
+            out.append(m)
+    cols = ["station_id", "model_id", "init_hour", "lead_day", "method", "climo_date", "variable",
+            "_hour", "valid_time", "init_time", "err", "temp_c"]
+    if not out:
+        return pd.DataFrame(columns=cols)
+    base = pd.concat(out, ignore_index=True)
+    base["model_id"] = PERSISTENCE_ID
+    base["init_time"] = pd.NaT
+    if "valid_time" not in base:
+        base["valid_time"] = pd.NaT
+    parts = []
+    for ih in init_hours:
+        for meth in methods:
+            p = base.copy()
+            p["init_hour"] = ih
+            p["method"] = meth
+            parts.append(p)
+    return pd.concat(parts, ignore_index=True)[cols]
 
 
 def window_slice(rows: pd.DataFrame, window: str, as_of: pd.Timestamp) -> pd.DataFrame:
@@ -67,49 +187,61 @@ def window_slice(rows: pd.DataFrame, window: str, as_of: pd.Timestamp) -> pd.Dat
     return rows[rows["climo_date"] >= as_of - pd.Timedelta(days=days - 1)]
 
 
+def _unit_days(sub: pd.DataFrame, is_all: bool) -> pd.DataFrame:
+    """Collapse to one row per scored day: mean over instants, then (for ALL) over stations."""
+    per = (
+        sub.groupby(["station_id", "climo_date"], observed=True)["err"]
+        .agg(a=lambda s: s.abs().mean(), s="mean",
+             q=lambda s: (s ** 2).mean(),
+             h1=lambda s: (s.abs() <= HIT_THRESHOLDS_C[0] + 1e-9).mean())
+        .reset_index()
+    )
+    if is_all:
+        per = per.groupby("climo_date", observed=True)[["a", "s", "q", "h1"]].mean().reset_index()
+    return per
+
+
 def part1() -> int:
     scores, _ = store.read_scores()
-    daily = store.read_daily()
-    truth = store.read_truth()
-    if scores.empty or daily.empty:
-        print("no scores/daily in data/ — run `castcheck derive && castcheck verify` first")
+    if scores.empty:
+        print("no scores in data/ — run `castcheck derive && castcheck verify` first")
         return 1
-    daily = pd.concat([daily, persistence_daily(truth)], ignore_index=True)
-    rows = naive_error_rows(daily, truth)
-    as_of = pd.to_datetime(truth["climo_date"]).max().normalize()
+    inst = naive_instant_rows()
+    dly = naive_daily_rows()
+    pers = naive_persistence_rows(inst, dly)
+    rows = pd.concat([r for r in (inst, dly, pers) if len(r)], ignore_index=True)
+    as_of = rows["climo_date"].max()
 
-    # a real single-station model group, an ALL row, and a persistence row
-    cand = scores[(scores["n"] >= 10)]
+    cand = scores[scores["n"] >= 5]
     picks = pd.concat([
-        cand[(cand["station_id"] != "ALL") & (cand["model_id"] != PERSISTENCE_ID)].head(2),
-        cand[cand["station_id"] == "ALL"].head(1),
-        cand[cand["model_id"] == PERSISTENCE_ID].head(1),
+        cand[(cand["station_id"] != "ALL") & (cand["variable"] == "t2")
+             & (cand["model_id"] != PERSISTENCE_ID)].head(1),
+        cand[(cand["station_id"] != "ALL") & (cand["variable"] == "t2_18z")
+             & (cand["model_id"] != PERSISTENCE_ID)].head(1),
+        cand[(cand["station_id"] != "ALL") & (cand["variable"] == "tmax_s")
+             & (cand["model_id"] != PERSISTENCE_ID)].head(1),
+        cand[(cand["station_id"] == "ALL") & (cand["variable"] == "t2")].head(1),
+        cand[(cand["model_id"] == PERSISTENCE_ID) & (cand["variable"] == "t2")].head(1),
     ])
+    if picks.empty:
+        print("no comparable score rows found")
+        return 1
     bad = 0
-    print(f"{'group':<74} {'stat':<6} {'published':>12} {'naive':>12} {'Δ':>10}")
-    print("-" * 120)
+    print(f"{'group':<80} {'stat':<6} {'published':>12} {'naive':>12} {'Δ':>10}")
+    print("-" * 126)
     for _, r in picks.iterrows():
         sub = rows[(rows["model_id"] == r["model_id"])
                    & (rows["init_hour"] == r["init_hour"])
                    & (rows["lead_day"] == r["lead_day"])
                    & (rows["variable"] == r["variable"])
                    & (rows["method"] == r["method"])]
-        if r["station_id"] == "ALL":
-            # METHODOLOGY §4: average across stations within a day, then over days
-            per_day = sub.groupby("climo_date").agg(
-                a=("err", lambda s: s.abs().mean()),
-                s=("err", "mean"),
-                q=("err", lambda s: (s ** 2).mean()),
-                h1=("err", lambda s: (s.abs() <= HIT_THRESHOLDS_C[0] + 1e-9).mean()),
-            ).reset_index()
-        else:
+        if r["station_id"] != "ALL":
             sub = sub[sub["station_id"] == r["station_id"]]
-            per_day = pd.DataFrame({
-                "climo_date": sub["climo_date"],
-                "a": sub["err"].abs(), "s": sub["err"], "q": sub["err"] ** 2,
-                "h1": (sub["err"].abs() <= HIT_THRESHOLDS_C[0] + 1e-9).astype(float),
-            })
-        per_day = window_slice(per_day, r["window"], as_of)
+        # METHODOLOGY §7: scores stop at the latest model_version segment, which the row publishes
+        seg = pd.to_datetime(r["segment_start"], utc=True, errors="coerce")
+        if pd.notna(seg) and r["model_id"] != PERSISTENCE_ID:
+            sub = sub[pd.to_datetime(sub["init_time"], utc=True) >= seg]
+        per_day = window_slice(_unit_days(sub, r["station_id"] == "ALL"), r["window"], as_of)
         got = {
             "n": float(len(per_day)),
             "mae": float(per_day["a"].mean()),
@@ -124,7 +256,7 @@ def part1() -> int:
             flag = "" if delta <= TOL * max(1.0, abs(pub)) else "  <-- MISMATCH"
             if flag:
                 bad += 1
-            print(f"{label:<74} {stat:<6} {pub:12.6f} {val:12.6f} {delta:10.2e}{flag}")
+            print(f"{label:<80} {stat:<6} {pub:12.6f} {val:12.6f} {delta:10.2e}{flag}")
     print(f"\n{'FAILED' if bad else 'OK'}: {bad} mismatch(es) beyond {TOL:g}")
     return 1 if bad else 0
 
@@ -172,7 +304,7 @@ def part2() -> int:
     # the same four common samples of the same LST day (METHODOLOGY §2.2)
     start = pd.Timestamp(day, tz="UTC") - pd.Timedelta(hours=st.std_offset_h)
     win = ser[(ser.index >= start) & (ser.index < start + pd.Timedelta(hours=24))]
-    win = win[win.index.hour.isin((0, 6, 12, 18))]
+    win = win[win.index.hour.isin(INSTANT_HOURS)]
     if len(win) < 4:
         print(f"  only {len(win)} of the 4 common samples returned; skipping")
         return 0

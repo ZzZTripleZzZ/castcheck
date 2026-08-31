@@ -1,14 +1,24 @@
 {
   "commands": {
+    "backfill": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.053,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:05:29+00:00",
+      "last_success_at": "2026-08-31T04:05:29+00:00",
+      "started_at": "2026-08-31T04:05:29+00:00",
+      "status": "ok",
+      "summary": "gfs 2026-08-01..2026-08-30: 0/0 runs with data"
+    },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 32.756,
+      "duration_s": 240.968,
       "exit_code": 0,
-      "finished_at": "2026-08-31T01:00:05+00:00",
-      "last_success_at": "2026-08-31T01:00:05+00:00",
-      "started_at": "2026-08-31T00:59:32+00:00",
+      "finished_at": "2026-08-31T04:33:33+00:00",
+      "last_success_at": "2026-08-31T04:33:33+00:00",
+      "started_at": "2026-08-31T04:29:32+00:00",
       "status": "ok",
-      "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
+      "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.1.0",
@@ -22,13 +32,13 @@
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 1.287,
+      "duration_s": 5.258,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:16+00:00",
-      "last_success_at": "2026-08-31T00:42:16+00:00",
-      "started_at": "2026-08-31T00:42:15+00:00",
+      "finished_at": "2026-08-31T04:37:44+00:00",
+      "last_success_at": "2026-08-31T04:37:44+00:00",
+      "started_at": "2026-08-31T04:37:39+00:00",
       "status": "ok",
-      "summary": "402040 values -> 40548 daily rows"
+      "summary": "1465422 values (full) -> 205126 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -70,16 +80,36 @@
       "status": "ok",
       "summary": "2026-01-01..2026-08-28: 5526 rows, 23 station(s)"
     },
+    "truth-instant": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.898,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:15:18+00:00",
+      "last_success_at": "2026-08-31T04:15:18+00:00",
+      "started_at": "2026-08-31T04:15:17+00:00",
+      "status": "ok",
+      "summary": "2026-08-28: 12 instants, 12 with a value (100.0%)"
+    },
+    "truth-instant-backfill": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 1336.972,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:33:20+00:00",
+      "last_success_at": "2026-08-31T04:33:20+00:00",
+      "started_at": "2026-08-31T04:11:03+00:00",
+      "status": "ok",
+      "summary": "2024-01-01..2026-08-30: 89516 instants, 89345 with a value (99.8%), gap_gt35min=155 no_report=16 suspect=69, 23 station(s)"
+    },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 12.284,
+      "duration_s": 36.473,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:29+00:00",
-      "last_success_at": "2026-08-31T00:42:29+00:00",
-      "started_at": "2026-08-31T00:42:16+00:00",
+      "finished_at": "2026-08-31T04:38:21+00:00",
+      "last_success_at": "2026-08-31T04:38:21+00:00",
+      "started_at": "2026-08-31T04:37:45+00:00",
       "status": "ok",
-      "summary": "scores=24624 pairwise=30432 as_of=2026-08-31"
+      "summary": "scores=269520 pairwise=1023120 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T03:40:58+00:00"
+  "updated_at": "2026-08-31T04:38:21+00:00"
 }

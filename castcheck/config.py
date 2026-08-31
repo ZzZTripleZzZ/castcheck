@@ -28,12 +28,36 @@ class Station:
     lat: float | None
     lon: float | None
     elev_m: float | None
-    kalshi: str | None = None
+    #: city label of the daily temperature market this station settles (selection rule, METHODOLOGY
+    #: §1). Informational: no market data is ever fetched or stored.
+    market_city: str | None = None
+    #: IEM ASOS archive id — the ICAO without its leading ``K`` at every CONUS site, but frozen per
+    #: station rather than derived, so a site that breaks the rule fails loudly (DESIGN §10.1).
+    iem_id: str | None = None
+    #: mean surface elevation of the 0.25° model cell containing the station (ETOPO 2022 60″)
+    grid_elev_m: float | None = None
 
     @property
     def cli_location(self) -> str:
         """api.weather.gov location code for the CLI product (pil without the CLI prefix)."""
         return self.cli_pil[3:]
+
+    @property
+    def dz_m(self) -> float | None:
+        """Station elevation minus model-cell elevation (DESIGN §10.4).
+
+        The first-order temperature effect is ``|dz_m| × 6.5 K/km``: it is what a model cannot get
+        right about a station no matter how good the forecast is, which is why the review (B7)
+        asked for it beside every score.
+        """
+        if self.elev_m is None or self.grid_elev_m is None:
+            return None
+        return round(float(self.elev_m) - float(self.grid_elev_m), 1)
+
+    @property
+    def kalshi(self) -> str | None:
+        """Deprecated alias for :attr:`market_city` (renamed in v0.3, DESIGN §10.4)."""
+        return self.market_city
 
 
 @dataclass(frozen=True)
@@ -85,7 +109,11 @@ def load_stations() -> list[Station]:
                 lat=s.get("lat"),
                 lon=s.get("lon"),
                 elev_m=s.get("elev_m"),
-                kalshi=s.get("kalshi"),
+                # `kalshi` is the pre-v0.3 spelling; still accepted so an older stations.yaml (or a
+                # branch that has not rebased) loads instead of silently losing the column.
+                market_city=s.get("market_city", s.get("kalshi")),
+                iem_id=s.get("iem_id"),
+                grid_elev_m=s.get("grid_elev_m"),
             )
         )
     ids = [s.id for s in out]

@@ -32,6 +32,8 @@ git pull --rebase --quiet || true
 
 step fetch-latest .venv/bin/castcheck fetch-latest --workers 2
 step truth        .venv/bin/castcheck truth
+step truth-instant .venv/bin/castcheck truth-instant
+step truth-instant-iem .venv/bin/castcheck truth-instant-backfill "$(date -u -v-10d +%F)" "$(date -u -v-2d +%F)"
 step daily        .venv/bin/castcheck daily
 step deploy       npx --yes wrangler pages deploy public --project-name castcheck --branch main --commit-dirty=true
 step commit       scripts/commit_data.sh "[data] local $STAMP"

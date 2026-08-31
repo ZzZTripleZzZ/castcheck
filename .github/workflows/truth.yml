@@ -18,5 +18,7 @@ jobs:
       - run: uv sync --frozen
       - run: .venv/bin/castcheck truth
       - run: .venv/bin/castcheck truth --date $(date -u -d '2 days ago' +%F)   # late/corrected reports
+      - run: .venv/bin/castcheck truth-instant                                    # observed T at 00/06/12/18Z, UTC yesterday (NWS API)
+      - run: .venv/bin/castcheck truth-instant-backfill $(date -u -d '10 days ago' +%F) $(date -u -d '2 days ago' +%F)   # IEM archive overrides provisional NWS values
       - name: commit data
         run: scripts/commit_data.sh "[data] truth $(date -u +%Y-%m-%d)"

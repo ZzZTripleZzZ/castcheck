@@ -9,7 +9,13 @@ Endpoints
 ---------
 ``stations.json``                              station metadata
 ``models.json``                                model metadata (incl. the persistence baseline)
-``scores/latest.json``                         the full ``scores`` table
+``scores/index.json``                          the index of the sharded scores export: which
+                                               stations, models, leads and views exist, and the
+                                               path of every shard.  ``scores/latest.json`` serves
+                                               the same document (the whole table was a single
+                                               21 MB file, past what a CDN edge will serve well and
+                                               close to the 25 MiB Cloudflare Pages limit)
+``scores/by-station/{station}.json``           every score for one station, compact encoding
 ``scores/leaderboard.json``                    the ``station_id="ALL"`` slice only (small; used by ``/``)
 ``scores/{station}/{model}/{lead}.json``        one permanent-link card: every window/init/method/
                                                variable for that combination, its pairwise
@@ -71,23 +77,37 @@ UNITS = {
     "mae_ci_low": "degC", "mae_ci_high": "degC",
     "bias_ci_low": "degC", "bias_ci_high": "degC",
     "mae_diff": "degC", "ci_low": "degC", "ci_high": "degC",
-    "n": "days", "n_common": "days",
+    "n": "days", "n_common": "days", "n_debiased": "days",
     "hit1f": "fraction", "hit2f": "fraction", "hit3f": "fraction",
-    "skill_persistence": "fraction",
+    "hit1f_ci_low": "fraction", "hit1f_ci_high": "fraction",
+    "skill_persistence": "fraction", "skill_persistence_debiased": "fraction",
+    "skill_ci_low": "fraction", "skill_ci_high": "fraction",
+    "mae_persistence_common": "degC", "mae_debiased": "degC",
+    "p_boot": "probability",
     "init_hour": "UTC hour", "lead_day": "days",
 }
 
 METHOD_BLOCK = {
-    "ci": "circular moving-block bootstrap over climatological days",
+    "ci": "circular moving-block bootstrap on each group's own realized date axis",
     "resamples": N_BOOT,
     "level": CI_LEVEL,
     "block": f"{BLOCK_DAYS} days",
     "min_n": MIN_N,
+    "ci_min_n": 28,
+    "ci_min_blocks": 4,
+    "ci_absent": "null when n < ci_min_n or fewer than ci_min_blocks blocks",
+    "proportions": "Wilson score intervals (hit rates), not bootstrapped",
+    "skill_denominator": "mae_persistence_common on n_common days",
+    "debiasing": "out-of-sample: bias of the trailing 30 scored days before each day, min 15",
+    "multiplicity": "pairwise carries distinguishable_uncorrected, p_boot and "
+                    "distinguishable_holm; only the Holm flag is marked on the site",
     "ref": "https://castcheck.zifanzhang.com/methodology/",
 }
 
 TRUTH_BLOCK = {
-    "source": "NWS Daily Climate Report (CLI), first final issuance after local midnight",
+    "source": "observed 2 m temperature at 00/06/12/18 UTC (routine METAR within +/-35 min) for "
+              "t2* and for tmax_s/tmin_s; NWS Daily Climate Report (CLI), first final issuance "
+              "after local midnight, for tmax_cli/tmin_cli",
     "fallback": ["CF6 monthly summary", "hourly station observations (flagged)"],
     "policy": "first-final; later corrections are stored but never change a published score",
 }
@@ -95,7 +115,9 @@ TRUTH_BLOCK = {
 WINDOWS = ("30d", "90d", "365d", "all")
 INITS = (0, 12)
 METHODS = ("bilinear", "nearest")
-VARIABLES = ("tmax", "tmin")
+#: The variables that get their own leaderboard file: the instantaneous headline and the two
+#: like-for-like sampled extremes.  The secondary ``*_cli`` variables are in the score shards.
+VARIABLES = ("t2", "tmax_s", "tmin_s")
 #: every pre-built leaderboard file, mirroring the site's ``/v/…/`` pages
 LEADERBOARD_VIEWS = tuple(
     (w, i, m, v) for w in WINDOWS for i in INITS for m in METHODS for v in VARIABLES
@@ -235,12 +257,19 @@ def _with_permalink(df: pd.DataFrame) -> pd.DataFrame:
 
 def _station_payload(stations: list[Station]) -> list[dict]:
     out = [{
-        "id": s.id, "name": s.name, "cli_pil": s.cli_pil, "tz": s.tz,
+        "id": s.id, "name": s.name, "cli_pil": s.cli_pil,
+        "iem_id": getattr(s, "iem_id", None), "tz": s.tz,
         "std_offset_h": s.std_offset_h, "lat": s.lat, "lon": s.lon, "elev_m": s.elev_m,
+        # DESIGN §10.4: the grid cell's own elevation and the station's height above it, so a
+        # representativeness error can be told apart from a forecast error.
+        "grid_elev_m": getattr(s, "grid_elev_m", None),
+        "dz_m": getattr(s, "dz_m", None),
+        "market_city": getattr(s, "market_city", None),
     } for s in stations]
     out.append({"id": ALL_STATIONS, "name": "All stations (mean of daily station errors)",
-                "cli_pil": None, "tz": None, "std_offset_h": None,
-                "lat": None, "lon": None, "elev_m": None})
+                "cli_pil": None, "iem_id": None, "tz": None, "std_offset_h": None,
+                "lat": None, "lon": None, "elev_m": None, "grid_elev_m": None, "dz_m": None,
+                "market_city": None})
     return out
 
 
@@ -275,6 +304,10 @@ def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[di
     e = e[e["climo_date"] >= cutoff]
     out: dict[tuple, list[dict]] = {}
     keys = ["station_id", "model_id", "lead_day", "init_hour", "method", "variable"]
+    # The pooled t2 variable carries four rows per day (one per common instant); a *series* needs
+    # one point per calendar day, so those four are averaged. The per-instant values are in
+    # /data/daily_errors.csv.gz.
+    e = (e.groupby([*keys, "climo_date"], observed=True, as_index=False)["err"].mean())
     for key, grp in e.sort_values("climo_date").groupby(keys, observed=True):
         st, mid, lead, init_hour, method, variable = key
         # Only the signed error: this is a score card, and repeating the forecast and the
@@ -296,6 +329,7 @@ def export_api(
     out: str | Path | None = None,
     daily: pd.DataFrame | None = None,
     truth: pd.DataFrame | None = None,
+    instant: pd.DataFrame | None = None,
     errors: pd.DataFrame | None = None,
     status: dict | None = None,
     series_days: int = SERIES_DAYS,
@@ -315,9 +349,12 @@ def export_api(
     written["stations.json"] = len(stations) + 1
     written["models.json"] = len(models) + 1
 
-    write_json(base / "scores" / "latest.json",
-               {**_envelope(scores), **compact_table(_with_permalink(scores))})
-    written["scores/latest.json"] = len(scores)
+    n_shards, index = _write_score_shards(base, scores)
+    written["scores/index.json"] = 1
+    written["scores/by-station/{station}.json"] = n_shards
+    # Kept as an alias so an old link resolves; it is the index, not the whole table.
+    write_json(base / "scores" / "latest.json", index)
+    written["scores/latest.json"] = n_shards
 
     if len(scores):
         board = scores[scores["station_id"] == ALL_STATIONS]
@@ -353,8 +390,19 @@ def export_api(
             daily, truth = store.read_daily(), store.read_truth()
         except Exception:  # noqa: BLE001  # pragma: no cover - a missing data/ must not break the export
             daily = truth = None
+    if errors is None and instant is None and len(scores):
+        # the t2 series lives in the instantaneous errors, which are derived, not stored
+        try:
+            from . import store
+            from .derive import instant_errors
+
+            ti = store.read_truth_instant()
+            if ti is not None and len(ti):
+                instant = instant_errors(store.read_forecast_values(), ti, stations, models)
+        except Exception:  # noqa: BLE001  # pragma: no cover - the series is not worth failing on
+            instant = None
     if errors is None and daily is not None and truth is not None and len(daily) and len(truth):
-        errors = error_table(daily, truth)
+        errors = error_table(daily, truth, instant)
     series = _daily_series(errors, series_days)
 
     n_cards = 0
@@ -410,6 +458,72 @@ def export_api(
         write_json(base / "status.json", status)
         written["status.json"] = 1
     return written
+
+
+# ------------------------------------------------------------------------------------------
+# sharded scores export
+# ------------------------------------------------------------------------------------------
+
+def _write_score_shards(base: Path, scores: pd.DataFrame) -> tuple[int, dict]:
+    """One file per station plus an index, instead of one 21 MB table.
+
+    The whole ``scores`` table crossed 20 MB in August 2026 with eleven models and two variables;
+    the v0.3 variable set multiplies it again, and Cloudflare Pages refuses a single file above
+    25 MiB — a deployment would simply have started failing.  Sharding by ``station_id`` is the
+    natural cut: it is the first key of every question anyone asks of this table, each shard is a
+    few hundred kB, and the index says exactly which shards exist so nothing has to be guessed.
+    """
+    shard_dir = base / "scores" / "by-station"
+    for stale in shard_dir.glob("*.json"):
+        stale.unlink()
+    shards = []
+    columns: list[str] = []
+    if scores is not None and len(scores):
+        with_links = _with_permalink(scores)
+        columns = [c for c in with_links.columns if c not in _ENVELOPE_CONSTANTS]
+        for station_id, grp in with_links.groupby("station_id", observed=True):
+            payload = {**_envelope(scores, scope=f"station_id={station_id}"),
+                       "station_id": str(station_id),
+                       **compact_table(grp.drop(columns=["station_id"]))}
+            write_json(shard_dir / f"{station_id}.json", payload)
+            shards.append({"station_id": str(station_id),
+                           "path": f"scores/by-station/{station_id}.json",
+                           "href": f"/api/v1/scores/by-station/{station_id}.json",
+                           "rows": int(len(grp))})
+    index = {
+        **_envelope(scores),
+        "index_of": "scores",
+        "note": "the scores table is published one file per station; station_id is dropped from "
+                "each shard's rows and carried in its envelope",
+        "columns": columns,
+        "rows": [],
+        "n_rows": int(len(scores)) if scores is not None else 0,
+        "shards": shards,
+        "available": _available(scores),
+        "leaderboards": [f"leaderboard/{w}-{int(i):02d}z-{m}-{v}.json"
+                         for w, i, m, v in LEADERBOARD_VIEWS],
+    }
+    write_json(base / "scores" / "index.json", index)
+    return len(shards), index
+
+
+def _available(scores: pd.DataFrame) -> dict:
+    """Which combinations actually exist, so a consumer does not have to fetch to find out."""
+    if scores is None or len(scores) == 0:
+        return {}
+    def uniq(col, cast=str):
+        if col not in scores.columns:
+            return []
+        return sorted({cast(v) for v in scores[col].dropna().unique()})
+    return {
+        "stations": uniq("station_id"),
+        "models": uniq("model_id"),
+        "variables": uniq("variable"),
+        "methods": uniq("method"),
+        "windows": uniq("window"),
+        "init_hours": uniq("init_hour", int),
+        "lead_days": uniq("lead_day", int),
+    }
 
 
 # ------------------------------------------------------------------------------------------
@@ -540,9 +654,20 @@ def openapi_document() -> dict:
         },
         "servers": [{"url": f"{SITE}/api/v1"}],
         "paths": {
-            "/scores/latest.json": get(
-                "Every published aggregate, compact {columns, rows} encoding.",
+            "/scores/index.json": get(
+                "Index of the sharded scores export: the shard of every station, the column "
+                "list, and which stations, models, variables, windows and leads exist.",
                 "#/components/schemas/Table"),
+            "/scores/latest.json": get(
+                "Alias of /scores/index.json. Before methodology v0.3 this served the whole "
+                "scores table in one file; it is now the index of the per-station shards.",
+                "#/components/schemas/Table"),
+            "/scores/by-station/{station}.json": get(
+                "Every published aggregate for one station, compact {columns, rows} encoding "
+                "with station_id lifted into the envelope.",
+                "#/components/schemas/Table",
+                [path_param("station", "KNYC",
+                            "ICAO identifier, or ALL for the aggregate")]),
             "/scores/leaderboard.json": get(
                 "The station_id=ALL slice of the scores table.",
                 "#/components/schemas/Table"),

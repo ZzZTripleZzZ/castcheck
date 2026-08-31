@@ -143,22 +143,50 @@ dated snapshot `data/scores/history/<YYYY-MM-DD>.parquet`.
 The authoritative column list is `castcheck.verify.SCORE_COLUMNS`; this table must be edited in the
 same change as that constant.
 
-`station_id, model_id, init_hour, lead_day, variable(tmax|tmin), method, window(30d|90d|365d|all),
-n, n_stations, n_flagged, mae, bias, rmse, hit1f, hit2f, hit3f, mae_debiased, skill_persistence,
-skill_persistence_debiased, mae_ci_low, mae_ci_high, bias_ci_low, bias_ci_high, rmse_ci_low,
+`station_id, model_id, init_hour, lead_day, variable, method, window(30d|90d|365d|all),
+n, n_stations, n_flagged, mae, bias, rmse, hit1f, hit2f, hit3f, mae_debiased, n_debiased,
+n_common, mae_persistence_common, skill_persistence, skill_persistence_debiased,
+skill_ci_low, skill_ci_high, mae_ci_low, mae_ci_high, bias_ci_low, bias_ci_high, rmse_ci_low,
 rmse_ci_high, hit1f_ci_low, hit1f_ci_high, model_version, segment_start, period_start, period_end,
 computed_at, methodology_version, schema_version`.
 
-Plus `station_id='ALL'` rows aggregating over all stations (mean over stations of daily errors, same bootstrap).
+`variable` is one of `castcheck.verify.VARIABLES` (§10.2): `t2`, `t2_00z`, `t2_06z`, `t2_12z`,
+`t2_18z`, `tmax_s`, `tmin_s`, `tmax_cli`, `tmin_cli`, `tmax_native_cli`, `tmin_native_cli`. The v0.2
+names `tmax`/`tmin` no longer exist — the closest equivalent is `tmax_cli`/`tmin_cli`, and the
+headline is `t2`.
+
+v0.3 columns and their meaning:
+
+| column | meaning |
+|---|---|
+| `n_debiased` | scored days that had ≥ 15 of the previous 30 scored days available, i.e. the days `mae_debiased` is computed over. `mae_debiased` is **out of sample**: the bias is estimated on the trailing days *before* each day and applied forward. |
+| `n_common` | days on which both this model and the persistence baseline have a value — the denominator `skill_persistence` is actually computed on. 0 for the baseline's own rows. |
+| `mae_persistence_common` | the baseline MAE over exactly those `n_common` days. `skill_persistence == 1 − mae_over_common / mae_persistence_common`; the site must show this number next to the skill column instead of the baseline row's own `mae` (review item A1). |
+| `skill_ci_low/high` | percentile CI of `skill_persistence` from the paired bootstrap on the common days. |
+| `hit1f_ci_low/high` | **Wilson** score interval (not bootstrap), so a 0 % hit rate reports `[0, 0.12]` rather than `[0, 0]`. |
+
+`mae_ci_*`, `bias_ci_*`, `rmse_ci_*`, `skill_ci_*` are `NaN` when the group has `n < 28` days or
+fewer than 4 blocks (§10.3); the site shows "—".
+
+Plus `station_id='ALL'` rows aggregating over all stations (per-day cross-station mean of each
+functional separately, then the same statistics and bootstrap over days).
 
 ### 3.5 `pairwise` — model-vs-model
 Column list: `castcheck.verify.PAIRWISE_COLUMNS`.
 
 `station_id, init_hour, lead_day, variable, window, model_a, model_b, n_common, mae_diff, ci_low,
-ci_high, significant(bool), method, computed_at, methodology_version, schema_version`.
+ci_high, p_boot, distinguishable_uncorrected(bool), distinguishable_holm(bool), method,
+computed_at, methodology_version, schema_version`.
 
 `method` is part of the key: a bilinear comparison and a nearest-neighbour comparison are different
 comparisons, and mixing them would pair rows that were never computed against each other.
+
+`significant` was renamed `distinguishable_uncorrected` in v0.3 (review item B2) and must not be used
+to mark ▼/▲ anywhere on the site. `p_boot` is the two-sided bootstrap p-value of the paired MAE
+difference; `distinguishable_holm` is the Holm-corrected verdict over the family of comparisons
+**against the leading model within one displayed table** (same `station_id, init_hour, lead_day,
+variable, method, window`). Pairs outside that family are `False` by construction, so the site marks
+▼/▲ only on the leader column.
 
 ## 4. Module contracts
 
@@ -184,12 +212,15 @@ class Source(Protocol):
     def fetch_run(self, req: FetchRequest) -> FetchResult    # must never raise on partial failure
 
 # derive.py
-def daily_from_values(values: pd.DataFrame, stations, models) -> pd.DataFrame   # daily_forecasts
+def daily_from_values(values, stations, models, truth_instant=None) -> pd.DataFrame  # daily_forecasts
+def derive_window(start_date, end_date, stations=None, models=None, ...) -> pd.DataFrame  # incremental, by *init* date
+def instant_errors(values, truth_instant, stations=None, models=None) -> pd.DataFrame     # §10.2
+def observed_sampled_extremes(truth_instant, stations=None) -> pd.DataFrame               # obs max/min of the 4 instants
 # truth.py
 def assemble_truth(cli_rows, cf6_rows, obs_rows) -> pd.DataFrame                # truth_daily with first-final + qc
 # verify.py
-def score(daily: pd.DataFrame, truth: pd.DataFrame, windows=(30,90,365,None), n_boot=1000, seed=0) -> tuple[pd.DataFrame, pd.DataFrame]  # scores, pairwise
-def persistence_daily(truth: pd.DataFrame) -> pd.DataFrame                      # baseline in daily_forecasts schema
+def score(daily, truth, instant=None, windows=(30,90,365,None), n_boot=1000, seed=0, truth_instant=None) -> tuple[pd.DataFrame, pd.DataFrame]  # scores, pairwise
+def persistence_daily(truth: pd.DataFrame) -> pd.DataFrame     # legacy CLI-truth baseline; `score` builds its own per variable
 ```
 
 Source-specific notes (from measured behaviour, 2026-08-30):

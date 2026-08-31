@@ -263,3 +263,40 @@ def test_json_log_format(monkeypatch, capsys):
     cli.log.info("hello %s", "world")
     line = capsys.readouterr().err.strip().splitlines()[-1]
     assert json.loads(line)["msg"] == "hello world"
+
+
+# --------------------------------------------------------------------------- journal redaction
+
+
+def test_redaction_removes_query_strings_tokens_and_absolute_paths():
+    """`data/raw/last_run.json` is committed publicly, and exception text is not curated."""
+    from castcheck.cli import redact
+    from castcheck.config import REPO_ROOT
+
+    out = redact("failed GET https://example.com/o.grib2?X-Amz-Signature=abc123&k=v")
+    assert "X-Amz-Signature" not in out and "abc123" not in out
+    assert "https://example.com/o.grib2" in out
+
+    assert "sk-" not in redact("api_key=sk-0123456789abcdefghijklmno")
+    assert "hunter2" not in redact("token: hunter2")
+
+    assert redact(f"site written to {REPO_ROOT}/public") == "site written to public"
+    assert "/Users/" not in redact("no such file: /Users/someone/secret/place/x.parquet")
+
+    assert redact("  present=40   missing=0\n") == "present=40 missing=0"
+
+
+def test_a_failing_command_journals_the_exception_type_not_its_raw_text(_journal_to_tmp, monkeypatch):
+    from castcheck import cli, store
+
+    def boom():
+        raise RuntimeError("GET https://host/x?token=SUPERSECRETVALUE0123456789 failed")
+
+    monkeypatch.setattr(cli, "setup_logging", lambda *a, **k: None)
+    with pytest.raises(RuntimeError), cli._journal("fetch"):
+        boom()
+
+    entry = store.read_last_run()["commands"]["fetch"]
+    assert entry["status"] == "error"
+    assert entry["summary"].startswith("RuntimeError")
+    assert "SUPERSECRETVALUE" not in entry["summary"]

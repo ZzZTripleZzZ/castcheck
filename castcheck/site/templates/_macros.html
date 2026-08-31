@@ -13,6 +13,9 @@
 {% macro meta_list(as_of, data_through, built_at, next_update, extra) -%}
 <ul class="meta">
   <li>window <b>{{ extra.window_label }}</b></li>
+{% if extra.variable_label %}
+  <li>variable <b>{{ extra.variable_label }}</b></li>
+{% endif %}
   <li>init <b>{{ extra.init_hour }}Z</b></li>
   <li>interpolation <b>{{ extra.method }}</b></li>
   <li>data through <b>{{ data_through }}</b></li>
@@ -25,12 +28,60 @@
 <td class="num bias{{ ' low-n' if cell.low_n else '' }}"><i class="c {{ cell.bias_class }}"></i>{{ cell.bias }}</td>
 {%- endmacro %}
 
-{% macro legend(min_n) -%}
+{% macro legend(min_n, holm=true) -%}
 <p class="legend">
 <i class="swatch b-warm-2"></i>+ model too warm ·
 <i class="swatch b-cool-2"></i>− model too cold ·
 <i class="swatch b-flat"></i> bias interval includes zero ·
-★ lowest MAE · = not distinguishable from the leader · ▼ significantly worse ·
-n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked · CI is a 95 % moving-block bootstrap interval.
+★ lowest MAE ·
+{% if holm %}= not distinguishable from the leader · ▼ worse than the leader · ▲ better than the
+leader — all three <strong>Holm-corrected within this table</strong>, over the family of
+comparisons against the leader; the uncorrected verdict for every pair is published in the
+pairwise table of each permanent link and in
+<a href="/data/#download">pairwise_latest.csv.gz</a>{% else %}· no Holm-corrected comparison is
+available in this build, so no model is marked as distinguishable from the leader{% endif %} ·
+n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked · CI is a 95 % moving-block bootstrap interval on
+the group's own days, and reads — when it could not be computed.
 </p>
+{%- endmacro %}
+
+{# One MAE-by-lead-day grid. `kind` is what the rows are: "model" (a station page) or
+   "station" (a model page); everything else about the table is identical. #}
+{% macro grid_table(b, leads, spark_leads, window_label, init_hour, method, kind) -%}
+<div class="scroll">
+<table class="scores grid">
+<caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
+every cell links to its permanent page. The sparkline shows the same row across lead days
+{{ spark_leads[0] }}&ndash;{{ spark_leads[-1] }} on a scale shared within this table.</caption>
+<thead><tr><th scope="col">{{ 'Model' if kind == 'model' else 'Station' }}</th>
+{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
+<th scope="col">lead {{ spark_leads[0] }}&ndash;{{ spark_leads[-1] }}</th></tr></thead>
+<tbody>
+{% for row in b.rows %}
+<tr class="{{ 'baseline' if row.baseline }}"><th scope="row">
+{% if kind == 'model' %}<a href="/model/{{ row.key }}/" title="{{ row.key }}">{{ row.name }}</a><span class="sub mono">{{ row.key }}</span>
+{% else %}<a href="/station/{{ row.key }}/">{{ row.key }}</a>{% endif %}</th>
+{% for c in row.cells %}
+{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
+{% else %}<td class="low-n">—</td>{% endif %}
+{% endfor %}
+<td class="sparkcell">{{ row.spark_svg }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{# The secondary block: the four forecast samples against the true NWS daily extremes. #}
+{% macro cli_section(blocks, leads, spark_leads, window_label, init_hour, method, kind, caveat) -%}
+{% if blocks %}
+<section class="secondary">
+<h2 id="vs-cli">Against the NWS daily extremes (secondary)</h2>
+<p class="note">{{ caveat }}</p>
+{% for b in blocks %}
+<h3 id="{{ b.variable }}">{{ b.label }}</h3>
+{{ grid_table(b, leads, spark_leads, window_label, init_hour, method, kind) }}
+{% endfor %}
+</section>
+{% endif %}
 {%- endmacro %}

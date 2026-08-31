@@ -3,8 +3,11 @@
 {% block description %}The {{ rows|length }} U.S. first-order stations CastCheck verifies against, with their truth product, standard time offset, elevation and current sample size.{% endblock %}
 {% block content %}
 <h1>Stations</h1>
-<p class="lede">Every station is a first-order NWS site that issues a Daily Climate Report (CLI),
-which is the truth for that station. The climatological day is local <em>standard</em> time all
+<p class="lede">Every station is a first-order NWS site that issues a Daily Climate Report (CLI)
+and reports routine hourly METARs. The stations are not a random sample: all 23 are major city
+airports chosen because a daily temperature contract settles on them, which biases the set towards
+the dry south-west and the north-east corridor
+(<a href="/methodology/#1-scope">methodology §1</a>). The climatological day is local <em>standard</em> time all
 year, so each station carries a fixed UTC offset and daylight saving is never applied
 (<a href="/methodology/#21-climatological-day">methodology §2.1</a>).</p>
 <ul class="meta">
@@ -15,11 +18,20 @@ year, so each station carries a fixed UTC offset and daylight saving is never ap
 </ul>
 <div class="scroll tall">
 <table class="scores">
-<caption>Scored days are for lead day 1, {{ window_label }}, {{ init_hour }}Z, {{ method }}, daily
-maximum — the default view. A station with no number has no scored day in that view yet.</caption>
+<caption>Scored days are for lead day 1, {{ window_label }}, {{ init_hour }}Z, {{ method }},
+{{ variable_label }} — the default view, counting forecast systems only (the persistence baseline
+is not one). A station with no number has no scored day in that view yet.
+<em>&Delta;z</em> is the station elevation minus the mean elevation of the 0.25° cell it sits in;
+<em>|&Delta;z|&times;6.5&nbsp;K/km</em> is the first-order temperature offset that difference
+implies — a representativeness error charged to the model that no forecast can remove.</caption>
 <thead><tr><th scope="col">ICAO</th><th scope="col">Name</th><th scope="col">Truth product</th>
 <th scope="col">Time zone</th><th scope="col" class="num">Std offset</th>
-<th scope="col" class="num">Elevation</th><th scope="col" class="num">Scored days</th>
+<th scope="col" class="num">Elevation</th>
+<th scope="col" class="num"><abbr title="Mean elevation of the 0.25° grid cell containing the station (ETOPO 2022, public domain)">Grid elev.</abbr></th>
+<th scope="col" class="num">&Delta;z</th>
+<th scope="col" class="num">|&Delta;z|&times;6.5&nbsp;K/km</th>
+<th scope="col">Market city</th>
+<th scope="col" class="num">Scored days</th>
 <th scope="col" class="num">Models</th></tr></thead>
 <tbody>
 {% for r in rows %}
@@ -27,6 +39,8 @@ maximum — the default view. A station with no number has no scored day in that
 <th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a></th>
 <td>{{ r.name }}</td><td class="mono">{{ r.cli_pil }}</td><td class="tiny">{{ r.tz }}</td>
 <td class="num">UTC{{ r.offset }}</td><td class="num">{{ r.elev }}</td>
+<td class="num">{{ r.grid_elev }}</td><td class="num">{{ r.dz }}</td>
+<td class="num">{{ r.lapse }}</td><td class="tiny">{{ r.market_city }}</td>
 <td class="num">{{ r.n }}</td><td class="num">{{ r.n_models }}</td></tr>
 {% endfor %}
 </tbody>

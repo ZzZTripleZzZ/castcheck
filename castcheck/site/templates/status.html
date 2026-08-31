@@ -18,8 +18,15 @@
   <li>gaps in window <b>{{ report.n_gaps }}</b></li>
 </ul>
 <p class="note">A model run counts as complete only when every station has a value at every
-expected forecast step; nothing is silently skipped (methodology §6). Truth is the first final NWS
-Daily Climate Report, which can only exist from the day after the climatological day.</p>
+expected forecast step (the analysis step f000 is not one); nothing is silently skipped
+(methodology §6). Truth is the first final NWS Daily Climate Report, which can only exist from the
+day after the climatological day.</p>
+<p class="note">Completeness is counted <strong>from each model's own period start</strong> — the
+first initialization CastCheck ever held for it — and only over initializations the upstream
+archive actually produced. The NOAA/CIRA 0.25° AIWP bucket publishes the GFS-initialized models on
+alternating cycles, so about half of their nominal 00Z/12Z slots were never produced upstream;
+those are drawn as empty slots, marked <em>not produced upstream</em>, and are not counted as
+downtime. Days before a model entered the record are treated the same way.</p>
 </div>
 
 <section>
@@ -28,13 +35,14 @@ Daily Climate Report, which can only exist from the day after the climatological
 <table class="scores">
 <thead><tr><th scope="col">Model</th><th scope="col">Init</th>
 <th scope="col" class="num">Complete</th><th scope="col">Last {{ report.days }} days</th>
-<th scope="col">Latest init held</th></tr></thead>
+<th scope="col">Since</th><th scope="col">Latest init held</th></tr></thead>
 <tbody>
 {% for m in model_bars %}
 <tr><th scope="row"><a href="/model/{{ m.model_id }}/" title="{{ m.model_id }}">{{ m.display }}</a></th>
 <td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
 <td class="num">{{ m.uptime }}</td>
-<td>{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete</span></td>
+<td>{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete, {{ m.n_na }} not expected</span></td>
+<td class="tiny">{{ m.period_start or '—' }}{% if m.n_na %}<span class="sub">{{ m.n_counted }} of {{ report.days }} slots expected</span>{% endif %}</td>
 <td class="tiny">{{ m.latest_init or '—' }}</td></tr>
 {% endfor %}
 </tbody>
@@ -42,7 +50,10 @@ Daily Climate Report, which can only exist from the day after the climatological
 </div>
 <p class="legend"><span class="swatch" style="background:var(--ok)"></span> complete ·
 <span class="swatch" style="background:var(--warn)"></span> partial ·
-<span class="swatch" style="background:var(--bad)"></span> missing. Oldest day on the left.</p>
+<span class="swatch" style="background:var(--bad)"></span> missing ·
+<span class="swatch" style="background:var(--grid)"></span> not expected (before this model's
+period start, or an initialization the upstream archive never produced — excluded from the
+percentage). Oldest day on the left.</p>
 <details class="data-behind">
 <summary>Day-by-day grid</summary>
 <div class="scroll tall">
@@ -52,8 +63,8 @@ Daily Climate Report, which can only exist from the day after the climatological
 <tbody>
 {% for m in report.models %}
 <tr><th scope="row">{{ m.model_id }}</th><td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
-{% for d in m.days %}<td class="cellbox {{ 'yes' if d.complete else ('part' if d.stations_any else 'no') }}"
-title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values"><span class="sr">{{ d.date }} {{ 'complete' if d.complete else ('partial' if d.stations_any else 'missing') }}</span></td>{% endfor %}
+{% for d in m.days %}<td class="cellbox {{ 'na' if d.expected is defined and not d.expected else ('yes' if d.complete else ('part' if d.stations_any else 'no')) }}"
+title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values{% if d.reason == 'not_produced_upstream' %} — not produced upstream{% elif d.reason == 'before_start' %} — before this model entered the record{% endif %}"><span class="sr">{{ d.date }} {{ 'not expected' if d.expected is defined and not d.expected else ('complete' if d.complete else ('partial' if d.stations_any else 'missing')) }}</span></td>{% endfor %}
 </tr>
 {% endfor %}
 </tbody>

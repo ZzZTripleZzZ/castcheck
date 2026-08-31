@@ -30,7 +30,25 @@ displayed in °F on the site; the downloads below are in °C.</p>
 </div>
 <p>The parquet shards behind these CSVs are mirrored as a Hugging Face dataset:
 <a href="{{ hf_url }}">{{ hf_url }}</a>. The code that produces them is at
-<a href="{{ repo_url }}">{{ repo_url }}</a> (MIT).</p>
+<a href="{{ repo_url }}">{{ repo_url }}</a> (MIT); this page was built from commit
+<a href="{{ repo_url }}/commit/{{ commit }}"><code>{{ commit }}</code></a>.</p>
+
+<h3 id="instantaneous">The 6-hourly instantaneous layer</h3>
+<p>Everything on this site is derived from two tables that are published in full, because a daily
+extreme is a <em>definition</em> and someone checking a claim should not have to accept ours:</p>
+<ul>
+<li><code>forecast_values</code> — one row per model run, valid time, station, variable and
+interpolation method: the raw 2 m temperature at 00/06/12/18 UTC, before any extreme is taken.
+Parquet shards at <a href="{{ hf_files_url }}">{{ hf_files_url }}</a> under
+<code>forecast_values/year=YYYY/</code>; the signed daily errors derived from them are in
+<a href="/data/daily_errors.csv.gz"><code>daily_errors.csv.gz</code></a> above, one row per
+station, model, initialization, lead day, method, variable and day.</li>
+<li><code>truth_instant</code> — the observed 2 m temperature at those same four instants: the
+routine METAR nearest the synoptic hour within &plusmn;35 minutes, from the IEM ASOS archive
+(<code>truth_instant/year=YYYY/</code> in the same dataset). This is the truth for the headline
+<code>t2</code> variables and for <code>tmax_s</code>/<code>tmin_s</code>; the NWS Daily Climate
+Report in <code>truth_daily</code> is the truth for the secondary <code>*_cli</code> variables.</li>
+</ul>
 </section>
 
 <section>
@@ -84,21 +102,67 @@ they are not the products that ECMWF, NOAA, the NWS or any app vendor issue to e
 <blockquote class="citation"><p>{{ data_citation }}</p></blockquote>
 <p class="note">For a specific number, cite its permanent link instead — every score card carries a
 short and a long citation with the access date.</p>
+<p>Machine-readable citation metadata is in
+<a href="{{ repo_url }}/blob/main/CITATION.cff"><code>CITATION.cff</code></a> at the repository
+root. Every build stamps the commit it came from — this one is
+<a href="{{ repo_url }}/commit/{{ commit }}"><code>{{ commit }}</code></a>, also in the footer of
+every page — so a citation can name the exact code that produced the number. There is no DOI yet.</p>
 </section>
 
 <section>
 <h2 id="changelog">Changelog</h2>
+<p class="note">Rendered from the <code>Changelog</code> section of
+<a href="/methodology/#changelog">METHODOLOGY.md</a>, so the two cannot diverge.</p>
 <div class="scroll">
 <table class="scores">
 <thead><tr><th scope="col">Methodology</th><th scope="col">Date</th><th scope="col">Change</th></tr></thead>
 <tbody>
-{% for v, d, what in changelog %}<tr><td class="num">v{{ v }}</td><td>{{ d }}</td><td>{{ what }}</td></tr>{% endfor %}
+{% for c in changelog %}
+<tr><td class="num">v{{ c.version }}</td><td>{{ c.date }}</td>
+<td>{{ c.summary }}
+{% if c.details %}<ul class="tight">{% for d in c.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</td></tr>
+{% endfor %}
 </tbody>
 </table>
 </div>
 <p class="note">Data events (a source outage, a corrected observation, a model version change) are
 recorded in <a href="/status/">status</a> and in the <code>gaps</code> list of
 <a href="/api/v1/status.json">status.json</a>.</p>
+</section>
+
+<section>
+<h2 id="revisions">What the first-final policy costs</h2>
+<p>A score is computed from the <strong>first final</strong> NWS Daily Climate Report and is never
+rewritten when a corrected report arrives later. That keeps a published number stable and citable,
+at the price of a permanent, documented discrepancy wherever a correction happened. This is how
+often, and how large:</p>
+{% if revisions.any %}
+<div class="scroll">
+<table class="scores">
+<caption>Station-days with a first-final CLI in the archive: <b>{{ revisions.n_days }}</b>, of
+which <b>{{ revisions.n_revised }}</b> carry a later corrected report. The rows below count only
+the days on which the corrected value actually differs, and measure corrected &minus; first in
+whole °F.</caption>
+<thead><tr><th scope="col">Variable</th><th scope="col" class="num">Days changed</th>
+<th scope="col" class="num">Share of days</th><th scope="col" class="num">Mean change °F</th>
+<th scope="col" class="num">Median °F</th><th scope="col" class="num">Largest |change| °F</th></tr></thead>
+<tbody>
+{% for r in revisions.rows %}
+<tr><th scope="row">{{ r.variable }}</th><td class="num">{{ r.n }}</td><td class="num">{{ r.share }}</td>
+<td class="num">{{ r.mean }}</td><td class="num">{{ r.p50 }}</td><td class="num">{{ r.max }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="note">Read the largest column as the upper bound on how far any single published score
+can be from the currently accepted observation. The corrected values are published in
+<code>truth_daily</code> as <code>revised_tmax_f</code>/<code>revised_tmin_f</code>, so anyone can
+recompute the scores on corrected truth and compare.</p>
+{% else %}
+<p class="note">No corrected report in the archive has changed a value so far
+({{ revisions.n_days }} station-days with a first-final CLI, {{ revisions.n_revised }} with a
+later report). This table fills in automatically when one does.</p>
+{% endif %}
 </section>
 
 <section>

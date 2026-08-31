@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from castcheck.config import ModelSpec, Station
-from castcheck.derive import daily_from_values, extreme_kind, native_overhang_hours
+from castcheck.derive import (
+    INSTANT_ERROR_COLUMNS,
+    daily_columns,
+    daily_from_values,
+    extreme_kind,
+    instant_errors,
+    native_overhang_hours,
+    observed_sampled_extremes,
+)
 from castcheck.sources.base import FORECAST_VALUE_COLUMNS, make_rows
 from castcheck.store import DAILY_COLUMNS
 
@@ -183,3 +191,99 @@ def test_empty_input_returns_empty_table():
     out = daily_from_values(empty, [CHI], [IFS])
     assert list(out.columns) == DAILY_COLUMNS
     assert out.empty
+
+
+# ------------------------------------------------------------------ v0.3: observed instants
+
+
+def truth_instant_rows(station: Station, *, skip: set[datetime] | None = None,
+                       offset: float = 0.0) -> pd.DataFrame:
+    """Observed 2 m temperature at every 6-hourly instant the fixture forecasts cover."""
+    skip = skip or set()
+    rows = []
+    t = INIT - timedelta(days=1)
+    while t <= INIT + timedelta(hours=96):
+        if t.hour % 6 == 0 and t not in skip:
+            rows.append({"station_id": station.id, "valid_time": t,
+                         "temp_c": t2_curve(t) + offset, "obs_time": t, "source": "ASOS_IEM",
+                         "n_reports": 1, "qc_flag": "", "schema_version": "0.3",
+                         "methodology_version": "0.3"})
+        t += timedelta(hours=1)
+    return pd.DataFrame(rows)
+
+
+def test_observed_sampled_extremes_are_the_four_instants_of_the_day():
+    ti = truth_instant_rows(CHI)
+    obs = observed_sampled_extremes(ti, [CHI])
+    row = obs[obs["climo_date"] == date(2026, 8, 2)].iloc[0]
+    samples = [t2_curve(datetime(2026, 8, 2, h, tzinfo=UTC)) for h in (6, 12, 18)]
+    samples.append(t2_curve(datetime(2026, 8, 3, 0, tzinfo=UTC)))
+    assert row["n_obs_samples"] == 4
+    assert row["tmax_obs_s_c"] == pytest.approx(max(samples), abs=1e-5)
+    assert row["tmin_obs_s_c"] == pytest.approx(min(samples), abs=1e-5)
+
+
+def test_observed_sampled_extremes_need_all_four_instants():
+    ti = truth_instant_rows(CHI, skip={datetime(2026, 8, 2, 18, tzinfo=UTC)})
+    obs = observed_sampled_extremes(ti, [CHI])
+    row = obs[obs["climo_date"] == date(2026, 8, 2)].iloc[0]
+    assert row["n_obs_samples"] == 3
+    assert np.isnan(row["tmax_obs_s_c"]) and np.isnan(row["tmin_obs_s_c"])
+
+
+def test_daily_carries_the_observed_sampled_extremes_and_the_native_overhang():
+    ti = truth_instant_rows(CHI)
+    daily = daily_from_values(build_values(CHI, IFS), [CHI], [IFS], truth_instant=ti)
+    assert list(daily.columns) == daily_columns()
+    row = daily[(daily["method"] == "bilinear") & (daily["lead_day"] == 1)].iloc[0]
+    assert row["n_obs_samples"] == 4
+    # the fixture's forecast is the same curve as the observation, so the extremes coincide
+    assert row["tmax_obs_s_c"] == pytest.approx(row["tmax_sampled_c"], abs=1e-5)
+    # −6 h station with 3 h buckets: the native run tiles the day exactly
+    assert row["native_overhang_h"] == pytest.approx(0.0)
+    nyc = daily_from_values(build_values(NYC, IFS), [NYC], [IFS],
+                            truth_instant=truth_instant_rows(NYC))
+    nrow = nyc[(nyc["method"] == "bilinear") & (nyc["lead_day"] == 1)].iloc[0]
+    assert nrow["native_overhang_h"] == pytest.approx(native_overhang_hours(-5, 3))
+
+
+def test_daily_without_truth_instant_leaves_the_observed_columns_empty():
+    daily = daily_from_values(build_values(CHI, IFS), [CHI], [IFS])
+    assert daily["tmax_obs_s_c"].isna().all()
+    assert (daily["n_obs_samples"] == 0).all()
+
+
+# --------------------------------------------------------------------- v0.3: instant errors
+
+
+def test_instant_errors_are_one_row_per_common_instant():
+    ti = truth_instant_rows(CHI, offset=-1.0)   # the observation is 1 °C below the forecast
+    inst = instant_errors(build_values(CHI, IFS), ti, [CHI], [IFS])
+    assert list(inst.columns) == INSTANT_ERROR_COLUMNS
+    assert set(inst["valid_hour_utc"]) == {0, 6, 12, 18}
+    bil = inst[inst["method"] == "bilinear"]
+    assert bil["err_c"].round(4).eq(1.0).all()           # forecast − observation
+    # the `nearest` variant carries the +0.5 offset the fixture puts on it
+    assert inst[inst["method"] == "nearest"]["err_c"].round(4).eq(1.5).all()
+    # every covered climatological day contributes exactly four instants
+    per_day = bil.groupby(["lead_day", "climo_date"]).size()
+    assert set(per_day) == {4}
+    assert sorted(bil["lead_day"].unique()) == [0, 1, 2]
+    row = bil.iloc[0]
+    assert row["lead_h"] == int((row["valid_time"] - row["init_time"]).total_seconds() // 3600)
+    assert row["model_version"] == "ifs-cy50r1"
+
+
+def test_instant_errors_drop_instants_without_an_observation():
+    ti = truth_instant_rows(CHI, skip={datetime(2026, 8, 2, 18, tzinfo=UTC)})
+    inst = instant_errors(build_values(CHI, IFS), ti, [CHI], [IFS])
+    bil = inst[(inst["method"] == "bilinear") & (inst["climo_date"] == date(2026, 8, 2))]
+    assert len(bil) == 3
+    assert 18 not in set(bil["valid_hour_utc"])
+
+
+def test_instant_errors_are_empty_without_truth():
+    empty = pd.DataFrame(columns=["station_id", "valid_time", "temp_c", "qc_flag"])
+    out = instant_errors(build_values(CHI, IFS), empty, [CHI], [IFS])
+    assert out.empty
+    assert list(out.columns) == INSTANT_ERROR_COLUMNS

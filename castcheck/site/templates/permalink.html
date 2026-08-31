@@ -28,11 +28,16 @@ model and are excluded rather than silently pooled.{% if n_flagged %} Of the sco
 
 <section>
 <h2 id="scores">Every number for this combination</h2>
-<p class="note">All four windows × both initializations × both interpolations × both variables.
-Errors are computed in °C and shown in °F; CI is a 95 % moving-block bootstrap interval.
-<em>MAE debiased</em> and <em>skill, debiased</em> remove the constant offset of the window first,
-so a station that the model always reads a degree too warm is not scored as if it had no skill —
-compare the two skill columns to see how much of the error is a fixed offset.
+<p class="note">All four windows × both initializations × both interpolations × every variable.
+Errors are computed in °C and shown in °F; CI is a 95 % moving-block bootstrap interval on this
+group's own days, and reads <strong>—</strong> when it could not be computed (fewer than
+{{ ci_min_n }} scored days or fewer than {{ ci_min_blocks }} blocks). The ±1 °F interval is a
+Wilson score interval, not a bootstrap.
+<em>Skill</em> divides by the persistence MAE on the days both have a value; that denominator and
+the size of the intersection are printed under the number, so the score can be checked rather than
+taken on trust. <em>MAE debiased</em> and <em>skill, debiased</em> remove a bias estimated on the
+30 scored days <em>before</em> each day and applied forward — out of sample, never fitted on the
+day being scored; <em>n debiased</em> is how many days had enough history to qualify.
 <span class="ci">n QC</span> next to <em>n</em> counts days whose observation carries a QC flag.</p>
 <div class="scroll tall">
 <table class="scores card">
@@ -43,18 +48,40 @@ compare the two skill columns to see how much of the error is a fixed offset.
 <th scope="col" class="num">Bias °F</th>
 <th scope="col" class="num">RMSE °F</th>
 <th scope="col" class="num">±1 °F</th><th scope="col" class="num">±2 °F</th><th scope="col" class="num">±3 °F</th>
-<th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence).">Skill</abbr></th>
-<th scope="col" class="num"><abbr title="The same skill score on the debiased errors, so a steady offset is not counted as lack of skill.">Skill, debiased</abbr></th>
+<th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence), both on the same common days.">Skill</abbr></th>
+<th scope="col" class="num"><abbr title="The same skill score after an out-of-sample bias correction estimated on the previous 30 scored days.">Skill, debiased (out-of-sample)</abbr></th>
 <th scope="col">Period</th></tr></thead>
 <tbody>
 {% for r in rows %}
-<tr class="{{ 'low-n' if r.low_n }}"><td>{{ r.variable }}</td><td>{{ r.init_hour }}Z</td><td>{{ r.method }}</td><td>{{ r.window }}</td><td>{{ r.n }}{% if r.n_flagged %} <span class="ci">{{ r.n_flagged }} QC</span>{% endif %}</td><td>{{ r.mae }} <span class="ci">{{ r.mae_ci }}</span></td><td>{{ r.mae_debiased }}</td><td class="bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }} <span class="ci">{{ r.bias_ci }}</span></td><td>{{ r.rmse }} <span class="ci">{{ r.rmse_ci }}</span></td><td>{{ r.hit1f }} <span class="ci">{{ r.hit1f_ci }}</span></td><td>{{ r.hit2f }}</td><td>{{ r.hit3f }}</td><td>{{ r.skill }}</td><td>{{ r.skill_debiased }}</td><td class="period">{{ r.period }}</td></tr>
+<tr class="{{ 'low-n' if r.low_n }}"><td>{{ r.variable }}<span class="sub">{{ r.variable_label }}</span></td><td>{{ r.init_hour }}Z</td><td>{{ r.method }}</td><td>{{ r.window }}</td><td>{{ r.n }}{% if r.n_flagged %} <span class="ci">{{ r.n_flagged }} QC</span>{% endif %}</td><td>{{ r.mae }} <span class="ci">{{ r.mae_ci }}</span></td><td>{{ r.mae_debiased }}</td><td class="bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }} <span class="ci">{{ r.bias_ci }}</span></td><td>{{ r.rmse }} <span class="ci">{{ r.rmse_ci }}</span></td><td>{{ r.hit1f }} <span class="ci">{{ r.hit1f_ci }}</span></td><td>{{ r.hit2f }}</td><td>{{ r.hit3f }}</td><td>{{ r.skill }} <span class="ci">{{ r.skill_ci }}</span><span class="sub">{{ r.skill_vs }}</span></td><td>{{ r.skill_debiased }}{% if r.n_debiased != '—' %}<span class="sub">n={{ r.n_debiased }}</span>{% endif %}</td><td class="period">{{ r.period }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
-{{ m.legend(min_n) }}
+{{ m.legend(min_n, holm) }}
 </section>
+
+{% if secondary_rows %}
+<section class="secondary">
+<h2 id="vs-cli">Against the NWS daily extremes (secondary)</h2>
+<p class="note">{{ cli_caveat }}</p>
+<div class="scroll tall">
+<table class="scores card">
+<thead><tr><th scope="col">Variable</th><th scope="col">Init</th><th scope="col">Method</th>
+<th scope="col">Window</th><th scope="col" class="num">n</th>
+<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
+<th scope="col" class="num">RMSE °F</th>
+<th scope="col" class="num">±1 °F</th><th scope="col" class="num">±3 °F</th>
+<th scope="col">Period</th></tr></thead>
+<tbody>
+{% for r in secondary_rows %}
+<tr class="{{ 'low-n' if r.low_n }}"><td>{{ r.variable }}<span class="sub">{{ r.variable_label }}</span></td><td>{{ r.init_hour }}Z</td><td>{{ r.method }}</td><td>{{ r.window }}</td><td>{{ r.n }}</td><td>{{ r.mae }} <span class="ci">{{ r.mae_ci }}</span></td><td class="bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }} <span class="ci">{{ r.bias_ci }}</span></td><td>{{ r.rmse }}</td><td>{{ r.hit1f }} <span class="ci">{{ r.hit1f_ci }}</span></td><td>{{ r.hit3f }}</td><td class="period">{{ r.period }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
 
 <section>
 <h2 id="series">Daily error, last {{ series_days }} days</h2>
@@ -144,18 +171,26 @@ mirrored on both sides. <span class="readout">Hover a bar for its bin and count.
 <h2 id="pairwise">Compared with other models</h2>
 <p class="note">Paired bootstrap on the days both models cover ({{ pairwise_window }},
 {{ chart_init }}Z, {{ chart_method }}, {{ chart_variable_label }}). Negative means
-<strong>{{ model_name }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval
-excludes zero.</p>
+<strong>{{ model_name }}</strong> has the lower MAE. Two verdicts are given because they answer
+different questions: <em>Holm</em> corrects for the whole family of comparisons made in one
+displayed table and is the only one the leaderboards mark with ▼ or ▲;
+<em>uncorrected</em> is the single 95 % interval on its own, which over hundreds of thousands of
+published pairs calls about one in twenty apart by chance. Prefer Holm.</p>
 <div class="scroll">
 <table class="scores">
 <thead><tr><th scope="col">Other model</th><th scope="col" class="num">Common days</th>
-<th scope="col" class="num">MAE difference °F</th><th scope="col">Distinguishable</th></tr></thead>
+<th scope="col" class="num">MAE difference °F</th>
+<th scope="col" class="num"><abbr title="Two-sided bootstrap p-value of the paired difference">p</abbr></th>
+<th scope="col">Distinguishable (Holm)</th>
+<th scope="col">Distinguishable (uncorrected)</th></tr></thead>
 <tbody>
 {% for p in pairwise %}
 <tr><td><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/" title="{{ p.other }}">{{ p.other_name }}</a></td>
 <td class="num">{{ p.n_common }}</td>
 <td class="num">{{ p.diff }} <span class="ci">{{ p.ci }}</span></td>
-<td class="sig">{{ 'yes' if p.significant else 'no' }}</td></tr>
+<td class="num">{{ p.p_boot }}</td>
+<td class="sig">{{ p.holm }}</td>
+<td class="sig dim">{{ p.uncorrected }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -171,7 +206,7 @@ excludes zero.</p>
 <p><span class="k">Accessed</span>{{ as_of }} (data through {{ data_through }}; page built {{ built_at }})</p>
 </blockquote>
 <p class="downloads"><a href="{{ json_url }}">JSON</a> <a href="{{ csv_url }}">CSV</a>
-<a href="/api/v1/scores/latest.json">all scores</a>
+<a href="/api/v1/scores/index.json">all scores</a>
 <a href="/methodology/">methodology v{{ methodology_version }}</a>
 <a href="/data/#licence">licence</a></p>
 </section>

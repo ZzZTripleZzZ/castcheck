@@ -270,15 +270,20 @@ i.c {
 .cellbox.yes::after { background: var(--ok); }
 .cellbox.part::after { background: var(--warn); }
 .cellbox.no::after { background: var(--bad); opacity: 0.55; }
+.cellbox.na::after { background: var(--grid); opacity: 0.6; }
 .sr, .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
 
 svg.uptime { display: block; width: 100%; max-width: 340px; height: 16px; }
+svg.map .coast { stroke: var(--ink-3); stroke-width: 0.9; opacity: 0.75; }
 svg.uptime .u-yes { fill: var(--ok); }
 svg.uptime .u-part { fill: var(--warn); }
 svg.uptime .u-no { fill: var(--bad); opacity: 0.5; }
+/* a slot that was never expected: before the model entered the record, or an initialization the
+   upstream archive did not produce. Drawn, but not counted as downtime. */
+svg.uptime .u-na { fill: var(--grid); }
 
 /* ------------------------------------------------------------------ figures */
 
@@ -383,3 +388,7 @@ footer a { color: var(--accent); }
   header.site nav, button.theme, .switch { display: none; }
   a { color: inherit; text-decoration: none; }
 }
+
+ul.tight { margin: 4px 0 0; padding-left: 18px; }
+ul.tight li { font-size: 0.92em; color: var(--ink-2); }
+section.secondary { border-top: 2px solid var(--border); padding-top: 8px; }

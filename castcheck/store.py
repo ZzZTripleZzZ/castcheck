@@ -26,9 +26,22 @@ TRUTH_COLUMNS = [
 ]
 TRUTH_KEY = ["station_id", "climo_date", "source"]
 
+#: Observed 2 m temperature at the four synoptic instants (DESIGN §10.1). Built by
+#: :mod:`castcheck.truth_instant`; ``source`` is ``ASOS_IEM`` (archive) or ``NWS_API`` (last week).
+TRUTH_INSTANT_COLUMNS = [
+    "station_id", "valid_time", "temp_c", "obs_time", "source", "n_reports", "qc_flag",
+    "schema_version", "methodology_version",
+]
+TRUTH_INSTANT_KEY = ["station_id", "valid_time"]
+
 DAILY_COLUMNS = [
     "model_id", "model_version", "init_time", "station_id", "climo_date", "lead_day", "method",
-    "tmax_sampled_c", "tmin_sampled_c", "n_samples", "tmax_native_c", "tmin_native_c", "missing_reason",
+    "tmax_sampled_c", "tmin_sampled_c", "n_samples", "tmax_native_c", "tmin_native_c",
+    "missing_reason",
+    # v0.3 (DESIGN §10.2): the observed sampled extremes that make `tmax_s`/`tmin_s` like-for-like,
+    # and how far past the climatological day a native-extreme accumulation window reaches.
+    # `castcheck.derive.daily_columns()` produces them in exactly this position.
+    "tmax_obs_s_c", "tmin_obs_s_c", "n_obs_samples", "native_overhang_h",
     "schema_version", "methodology_version",
 ]
 DAILY_KEY = ["model_id", "init_time", "station_id", "climo_date", "method"]
@@ -37,8 +50,13 @@ DAILY_KEY = ["model_id", "init_time", "station_id", "climo_date", "method"]
 _FV_DTYPES = {"lead_h": "int16", "bucket_h": "int8", "value_c": "float32"}
 _TRUTH_DTYPES = {"tmax_f": "Int16", "tmin_f": "Int16", "revised_tmax_f": "Int16", "revised_tmin_f": "Int16",
                  "tmax_c": "float32", "tmin_c": "float32", "is_final": "bool", "revised": "bool"}
+# The v0.3 integer columns are *nullable*: rows derived before they existed, and models with no
+# native extremes at all, have no value for them, and plain int8 has no way to say so.
 _DAILY_DTYPES = {"lead_day": "int8", "n_samples": "int8", "tmax_sampled_c": "float32", "tmin_sampled_c": "float32",
-                 "tmax_native_c": "float32", "tmin_native_c": "float32"}
+                 "tmax_native_c": "float32", "tmin_native_c": "float32",
+                 "tmax_obs_s_c": "float32", "tmin_obs_s_c": "float32",
+                 "n_obs_samples": "Int8", "native_overhang_h": "Int8"}
+_TRUTH_INSTANT_DTYPES = {"temp_c": "float32", "n_reports": "int8"}
 
 
 def _cast(df: pd.DataFrame, dtypes: dict[str, str]) -> pd.DataFrame:
@@ -74,10 +92,51 @@ def _ensure(path: Path) -> Path:
     return path
 
 
+def _is_shard(path: Path) -> bool:
+    """Whether a file matched by a shard glob is a real shard.
+
+    :func:`_write` stages every shard next to its destination so that the rename is atomic on the
+    same filesystem. A staging file that a crash or a concurrent writer leaves behind must not be
+    picked up as data: a half-written parquet makes the *reader* fail with ``ArrowInvalid``, which
+    is a failure in a completely unrelated command. Dotfiles are skipped for the same reason (and
+    because macOS drops ``._`` resource forks into synced directories).
+
+    Names containing a space are skipped too. No shard this project writes has one — every name is
+    ``key=value.parquet`` — so a space means a file-sync conflict copy (``year_month=2026-08
+    2.parquet``), which is a *byte-identical duplicate* of a real shard and would silently double
+    every row it holds when the directory is read.
+    """
+    name = path.name
+    return not name.startswith(".") and ".tmp" not in name and " " not in name
+
+
+def _shards(base: Path, pattern: str) -> list[Path]:
+    """Shard files under `base` matching `pattern`, staging files and dotfiles excluded."""
+    if not base.exists():
+        return []
+    return sorted(p for p in base.glob(pattern) if _is_shard(p))
+
+
+def _conform(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Give `df` exactly `columns`, adding any the file predates as all-missing.
+
+    Schema growth is normal here (``native_overhang_h`` arrived in v0.3), and a table written before
+    a column existed must still read back with that column rather than raising a ``KeyError`` three
+    call frames away in whatever wanted it.
+    """
+    missing = [c for c in columns if c not in df.columns]
+    for c in missing:
+        df[c] = np.nan
+    if missing:
+        log.debug("added %d absent column(s) to a stored shard: %s", len(missing), missing)
+    return df[columns]
+
+
 def _read(path: Path, columns: list[str]) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=columns)
-    return pq.read_table(path).to_pandas()
+    df = pq.read_table(path).to_pandas()
+    return _conform(df, columns) if columns else df
 
 
 def _set_where(target: pd.DataFrame, take: np.ndarray, updates: pd.DataFrame, cols: list[str]) -> None:
@@ -99,8 +158,14 @@ def _set_where(target: pd.DataFrame, take: np.ndarray, updates: pd.DataFrame, co
 
 
 def _write(df: pd.DataFrame, path: Path) -> None:
+    """Write `df` to `path` atomically.
+
+    The staging name is a dotfile that does **not** end in ``.parquet``, so no shard glob can match
+    it while it is being written; :func:`_is_shard` skips it even if a crash leaves it behind. The
+    pid keeps two writers of the same shard from staging into the same file.
+    """
     table = pa.Table.from_pandas(df, preserve_index=False)
-    tmp = path.with_suffix(".tmp.parquet")
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
     pq.write_table(table, _ensure(tmp), compression="zstd")
     tmp.replace(path)
 
@@ -155,11 +220,11 @@ def forecast_value_shards(model_ids: list[str] | None = None, start: str | None 
     if not base.exists():
         return []
     out: list[Path] = []
-    for mdir in sorted(base.glob("model_id=*")):
+    for mdir in sorted(p for p in base.glob("model_id=*") if p.is_dir()):
         mid = mdir.name.split("=", 1)[1]
         if model_ids and mid not in model_ids:
             continue
-        for f in sorted(mdir.glob("year_month=*.parquet")):
+        for f in _shards(mdir, "year_month=*.parquet"):
             ym = f.stem.split("=", 1)[1]
             if start and ym < start[:7]:
                 continue
@@ -193,14 +258,20 @@ def read_forecast_values(model_ids: list[str] | None = None, start: str | None =
 
 
 #: columns `existing_inits` needs; everything else stays on disk.
-_COMPLETENESS_COLUMNS = ["init_time", "valid_time", "variable", "missing_reason"]
+_COMPLETENESS_COLUMNS = ["init_time", "valid_time", "variable", "missing_reason", "lead_h"]
 
 
 def existing_inits(model_id: str, min_valid: int | None = None, start: str | None = None,
                    end: str | None = None) -> set[pd.Timestamp]:
-    """Init times whose run is *complete enough* to skip: at least `min_valid` distinct valid times with a
-    present t2 value (default: max_h/step_h from models.yaml, i.e. every 6-hourly step out to 240 h).
-    Partial runs (e.g. a 503 on one step) are therefore retried by later fetch-latest/backfill passes.
+    """Init times whose run is *complete enough* to skip: at least `min_valid` distinct **forecast**
+    valid times with a present t2 value (default: max_h/step_h from models.yaml, i.e. every 6-hourly
+    step out to 240 h). Partial runs (e.g. a 503 on one step) are therefore retried by later
+    fetch-latest/backfill passes.
+
+    The analysis step ``lead_h == 0`` is excluded from the count. AIWP stores f000 and the GRIB
+    sources do not, so counting every stored step made a 41-row AIWP run that was missing f240 tie
+    the 40-step threshold and be declared complete for ever — the one run shape this function exists
+    to catch. Counting forecast steps only makes the threshold mean the same thing for every source.
 
     `start`/`end` (inclusive ``YYYY-MM-DD``) restrict the scan to the months a caller actually cares
     about; callers that plan work over a bounded window (``fetch-latest``, ``backfill``) must pass
@@ -211,13 +282,17 @@ def existing_inits(model_id: str, min_valid: int | None = None, start: str | Non
     df = read_forecast_values([model_id], start=start, end=end, columns=_COMPLETENESS_COLUMNS)
     if df.empty:
         return set()
+    step_h = 6
     if min_valid is None:
         try:
             m = model_by_id(model_id)
-            min_valid = m.max_h // m.step_h
+            step_h = max(int(m.step_h), 1)
+            min_valid = m.max_h // step_h
         except KeyError:
             min_valid = 1
     ok = df[(df["variable"] == "t2") & (df["missing_reason"] == "")]
+    if "lead_h" in ok.columns:
+        ok = ok[pd.to_numeric(ok["lead_h"], errors="coerce").fillna(step_h) >= step_h]
     if ok.empty:
         return set()
     n_valid = ok.groupby("init_time")["valid_time"].nunique()
@@ -293,12 +368,76 @@ def upsert_truth(df: pd.DataFrame) -> dict[str, int]:
 
 
 def read_truth(years: list[int] | None = None) -> pd.DataFrame:
-    base = DATA_DIR / "truth_daily"
-    if not base.exists():
-        return pd.DataFrame(columns=TRUTH_COLUMNS)
-    frames = [pq.read_table(f).to_pandas() for f in sorted(base.glob("year=*.parquet"))
+    frames = [_read(f, TRUTH_COLUMNS) for f in _shards(DATA_DIR / "truth_daily", "year=*.parquet")
               if not years or int(f.stem.split("=")[1]) in years]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=TRUTH_COLUMNS)
+
+
+# ---------------- truth_instant (DESIGN §10.1) ----------------
+
+def truth_instant_path(year: int) -> Path:
+    return DATA_DIR / "truth_instant" / f"year={year}.parquet"
+
+
+#: source ranking for :func:`resolve_truth_instant` — higher wins among rows that both carry a value
+_INSTANT_SOURCE_RANK = {"NWS_API": 0, "ASOS_IEM": 1}
+
+
+def resolve_truth_instant(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per ``(station_id, valid_time)``: a value beats a gap, the archive beats the API.
+
+    Shared by :func:`upsert_truth_instant` and :func:`castcheck.merge.merge_frames` so that a shard
+    resolved on disk and a shard resolved during a git conflict cannot disagree.
+    """
+    if df.empty:
+        return df
+    df = df.copy()
+    df["_has_value"] = df["temp_c"].notna().astype(int)
+    df["_src"] = df["source"].map(lambda s: _INSTANT_SOURCE_RANK.get(str(s), -1))
+    df = (df.sort_values(TRUTH_INSTANT_KEY + ["_has_value", "_src"], kind="stable")
+          .drop_duplicates(subset=TRUTH_INSTANT_KEY, keep="last")
+          .drop(columns=["_has_value", "_src"]))
+    return df.sort_values(TRUTH_INSTANT_KEY).reset_index(drop=True)[TRUTH_INSTANT_COLUMNS]
+
+
+def upsert_truth_instant(df: pd.DataFrame) -> dict[str, int]:
+    """Upsert ``truth_instant`` rows into yearly shards, keyed by ``(station_id, valid_time)``.
+
+    Two sources write the same instants: api.weather.gov covers the last week so that the daily
+    pipeline can score yesterday, and the IEM ASOS archive arrives later and is authoritative (it is
+    the raw METAR stream rather than a re-served subset, and it does not expire). The resolution
+    order is therefore *a value beats a gap, and among values the archive beats the API* — never the
+    other way round, because letting an archive row with no observation replace a good API value
+    would turn a recovered day back into a hole.
+    """
+    if df.empty:
+        return {}
+    df = df[TRUTH_INSTANT_COLUMNS].copy()
+    df["valid_time"] = pd.to_datetime(df["valid_time"], utc=True)
+    df["obs_time"] = pd.to_datetime(df["obs_time"], utc=True)
+    out: dict[str, int] = {}
+    for year, part in df.groupby(df["valid_time"].dt.year):
+        path = truth_instant_path(int(year))
+        existing = _read(path, TRUTH_INSTANT_COLUMNS)
+        if not existing.empty:
+            existing["valid_time"] = pd.to_datetime(existing["valid_time"], utc=True)
+            existing["obs_time"] = pd.to_datetime(existing["obs_time"], utc=True)
+        merged = resolve_truth_instant(pd.concat([existing, part], ignore_index=True))
+        _write(_cast(merged, _TRUTH_INSTANT_DTYPES), path)
+        out[str(path.relative_to(DATA_DIR))] = len(merged)
+    return out
+
+
+def read_truth_instant(years: list[int] | None = None) -> pd.DataFrame:
+    frames = [_read(f, TRUTH_INSTANT_COLUMNS)
+              for f in _shards(DATA_DIR / "truth_instant", "year=*.parquet")
+              if not years or int(f.stem.split("=")[1]) in years]
+    if not frames:
+        return pd.DataFrame(columns=TRUTH_INSTANT_COLUMNS)
+    df = pd.concat(frames, ignore_index=True)
+    df["valid_time"] = pd.to_datetime(df["valid_time"], utc=True)
+    df["obs_time"] = pd.to_datetime(df["obs_time"], utc=True)
+    return df
 
 
 # ---------------- daily_forecasts ----------------
@@ -308,16 +447,33 @@ def daily_path(model_id: str, year: int) -> Path:
 
 
 def write_daily(df: pd.DataFrame) -> dict[str, int]:
-    """Daily tables are fully re-derived; overwrite per (model, year)."""
+    """Upsert derived daily rows into the ``(model_id, year)`` shard, keyed by :data:`DAILY_KEY`.
+
+    This used to overwrite each shard outright, which is correct only while ``derive`` always
+    re-derives the whole archive. Once ``derive`` takes a date window — and it has to, because
+    re-deriving three years of values on every daily run is minutes of work to change one day —
+    an overwrite would delete every row of that year outside the window. Merging on the key keeps
+    a windowed re-derivation idempotent (a re-derived row replaces its older self) without it
+    being destructive.
+    """
     if df.empty:
         return {}
-    df = df[DAILY_COLUMNS].copy()
+    df = _conform(df.copy(), DAILY_COLUMNS)
     out = {}
     years = pd.to_datetime(df["climo_date"]).dt.year
     for (model_id, year), part in df.groupby([df["model_id"], years]):
         path = daily_path(model_id, int(year))
-        _write(_cast(part.reset_index(drop=True), _DAILY_DTYPES), path)
-        out[str(path.relative_to(DATA_DIR))] = len(part)
+        existing = _read(path, DAILY_COLUMNS)
+        merged = part.reset_index(drop=True)
+        if not existing.empty:
+            for frame in (existing, merged):
+                frame["climo_date"] = pd.to_datetime(frame["climo_date"]).dt.date
+                frame["init_time"] = pd.to_datetime(frame["init_time"], utc=True)
+            merged = (pd.concat([existing, merged], ignore_index=True)
+                      .drop_duplicates(subset=DAILY_KEY, keep="last"))
+        merged = merged.sort_values(DAILY_KEY).reset_index(drop=True)
+        _write(_cast(merged, _DAILY_DTYPES), path)
+        out[str(path.relative_to(DATA_DIR))] = len(merged)
     return out
 
 
@@ -326,11 +482,11 @@ def read_daily(model_ids: list[str] | None = None) -> pd.DataFrame:
     if not base.exists():
         return pd.DataFrame(columns=DAILY_COLUMNS)
     frames = []
-    for mdir in sorted(base.glob("model_id=*")):
+    for mdir in sorted(p for p in base.glob("model_id=*") if p.is_dir()):
         mid = mdir.name.split("=", 1)[1]
         if model_ids and mid not in model_ids:
             continue
-        frames += [pq.read_table(f).to_pandas() for f in sorted(mdir.glob("year=*.parquet"))]
+        frames += [_read(f, DAILY_COLUMNS) for f in _shards(mdir, "year=*.parquet")]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=DAILY_COLUMNS)
 
 

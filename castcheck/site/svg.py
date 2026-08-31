@@ -19,6 +19,8 @@ from __future__ import annotations
 import math
 from html import escape
 
+from .assets.us_outline import US_OUTLINE
+
 __all__ = [
     "availability_row",
     "bias_class",
@@ -348,9 +350,10 @@ def us_map(points: list[dict], *, label: str, width: float = 760.0,
            height: float = 430.0) -> str:
     """Stations on an Albers grid, radius = sample size, fill = bias class.
 
-    There is no coastline: CastCheck ships no third-party boundary file, so the frame is an
-    honest latitude/longitude graticule rather than a traced outline.  Every point repeats its
-    numbers in the table underneath.
+    The coastline is the Natural Earth 1:110m United States polygon, simplified once and stored in
+    ``site/assets/us_outline.py``; Natural Earth is public domain, so it carries no attribution or
+    licence obligation.  It is drawn as a thin outline behind a latitude/longitude graticule, and
+    every point repeats its numbers in the table underneath.
     """
     if not points:
         return f'<p class="empty">{escape(label)}: no stations scored yet.</p>'
@@ -374,6 +377,10 @@ def us_map(points: list[dict], *, label: str, width: float = 760.0,
         return ox + (x - x0) * s, oy + (y1 - y) * s
 
     out = _open(width, height, label, cls="fig map")
+    for ring in US_OUTLINE:
+        d = " ".join(("M" if i == 0 else "L") + "%.1f %.1f" % proj(lon, lat)
+                     for i, (lon, lat) in enumerate(ring))
+        out.append(f'<path class="coast" d="{d} Z" fill="none"/>')
     for lo in lons:
         d = " ".join(
             ("M" if i == 0 else "L") + "%.1f %.1f" % proj(lo, la)

@@ -23,7 +23,9 @@ is published on each permanent link below — follow any number.</p>
 
 {% for b in blocks %}
 <section>
-<h2 id="{{ b.variable }}">{{ 'Daily maximum' if b.variable == 'tmax' else 'Daily minimum' }} temperature — MAE °F</h2>
+<h2 id="{{ b.variable }}">{{ b.label }} — MAE °F</h2>
+<p class="note">Scored against {{ b.truth }}.{% if b.headline %} This is the headline variable:
+the same four instants on the forecast and the observation side.{% endif %}</p>
 <div class="scroll">
 <table class="scores grid">
 <caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
@@ -52,6 +54,7 @@ see <a href="/methodology/">methodology</a>.</p>
 {% if loop.first %}{{ m.legend(min_n) }}{% endif %}
 </section>
 {% endfor %}
+{{ m.cli_section(secondary_blocks, leads, spark_leads, window_label, init_hour, method, 'model', cli_caveat) }}
 {% if not blocks %}<p class="empty">No scores yet for this station in this view.</p>{% endif %}
 
 {% if not canonical_view %}
@@ -62,8 +65,8 @@ or interpolation selected here.</p>
 {% if months %}
 <section>
 <h2 id="months">Month by month</h2>
-<p class="note">MAE °F at lead day 1, 00Z, bilinear, daily maximum — the seasonal slice behind the
-window averages. A model that is excellent in one season and poor in another shows up here and
+<p class="note">MAE °F at lead day 1, 00Z, bilinear, {{ chart_variable_label }} — the seasonal slice behind
+the window averages. A model that is excellent in one season and poor in another shows up here and
 nowhere else.</p>
 <div class="scroll">
 <table class="scores">
@@ -114,8 +117,8 @@ nowhere else.</p>
 </section>
 {% endif %}
 
-<p class="downloads"><a href="/api/v1/scores/latest.json">All scores as JSON</a>
-<a href="/data/scores_latest.csv">scores_latest.csv</a>
+<p class="downloads"><a href="/api/v1/scores/index.json">All scores as JSON</a>
+<a href="/data/scores_latest.csv.gz">scores_latest.csv.gz</a>
 <a href="/data/daily_errors.csv.gz">daily_errors.csv.gz</a>
 <a href="/data/">data &amp; licences</a></p>
 {% endblock %}

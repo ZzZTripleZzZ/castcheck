@@ -69,6 +69,8 @@ class _HostState:
     # default_factory, not a plain default: the floor is configurable through the module constant
     # (and patched in tests), and a class-level default would freeze the value seen at import time.
     interval: float = field(default_factory=lambda: MIN_INTERVAL_S)
+    #: per-host floor the interval decays back to; raised by :func:`set_min_interval`
+    floor: float = field(default_factory=lambda: MIN_INTERVAL_S)
     next_start: float = 0.0
     requests: int = 0
     retries: int = 0
@@ -101,9 +103,9 @@ def _acquire(host: str) -> None:
         with _hosts_lock:
             now = time.monotonic()
             quiet = now - st.next_start
-            if quiet > 0 and st.interval > MIN_INTERVAL_S:
+            if quiet > 0 and st.interval > st.floor:
                 # decay the penalty back towards the floor after a calm stretch
-                st.interval = max(MIN_INTERVAL_S, st.interval * (THROTTLE_DECAY_PER_S ** quiet))
+                st.interval = max(st.floor, st.interval * (THROTTLE_DECAY_PER_S ** quiet))
             wait = st.next_start - now
             if wait <= 0:
                 st.next_start = now + st.interval
@@ -117,7 +119,8 @@ def _penalise(host: str) -> None:
     st = _state(host)
     with _hosts_lock:
         st.throttled += 1
-        st.interval = min(THROTTLE_MAX_INTERVAL_S, max(MIN_INTERVAL_S, st.interval) * THROTTLE_GROWTH)
+        st.interval = min(max(THROTTLE_MAX_INTERVAL_S, st.floor),
+                          max(st.floor, st.interval) * THROTTLE_GROWTH)
         st.next_start = max(st.next_start, time.monotonic() + st.interval)
 
 
@@ -125,6 +128,20 @@ def reset_hosts() -> None:
     """Forget all per-host pacing and counters (used by tests and between CLI commands)."""
     with _hosts_lock:
         _hosts.clear()
+
+
+def set_min_interval(url_or_host: str, seconds: float) -> None:
+    """Raise the floor on the gap between requests to one host (never lowers it).
+
+    :data:`MIN_INTERVAL_S` is a global default tuned for object stores that serve byte ranges. A
+    volunteer-run archive such as the Iowa Environmental Mesonet asks for a slower rate than that,
+    and the polite rate is a property of the *host*, not of one call site, so it is recorded here
+    where the pacing actually happens.
+    """
+    st = _state(_host_of(url_or_host))
+    with _hosts_lock:
+        st.floor = max(st.floor, float(seconds))
+        st.interval = max(st.interval, st.floor)
 
 
 def host_stats() -> dict[str, dict[str, int | float]]:

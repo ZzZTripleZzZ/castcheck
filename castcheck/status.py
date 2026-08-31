@@ -9,6 +9,15 @@ uptime window the site draws) days:
 2. for every station, is there a first-final NWS CLI value for each climatological day;
 3. what is the newest initialization we hold per model.
 
+Two kinds of day are **not** downtime and are excluded from the uptime denominator (review B8):
+
+* days before a model's own ``period_start`` — the first initialization CastCheck ever held for it.
+  A model that entered the record three weeks ago cannot have been "down" for the 69 days before;
+* AIWP initializations that the upstream archive never produced.  The NOAA/CIRA 0.25° bucket
+  publishes the GFS-initialized models on alternating cycles (00Z one day, 12Z the next), so the
+  nominal 2 runs/day is not the upstream contract.  ``AiwpSource.available_inits`` is asked what
+  actually exists and the rest are marked ``not produced upstream``.
+
 ``exit_code()`` implements the CLI contract: **non-zero when something that should already exist for
 the current day is missing**, so that the scheduled workflow fails loudly instead of silently
 publishing a hole.
@@ -34,9 +43,43 @@ MAX_LISTED_GAPS = 400  # `gaps` is a convenience list; the per-day grids are the
 
 
 def _expected_steps(model: ModelSpec) -> int:
-    """Forecast steps a complete run must carry (f000 excluded)."""
+    """Forecast steps a complete run must carry (f000 excluded).
+
+    Counted as the number of steps with ``lead_h >= step_h``: ``max_h / step_h``.  The count of
+    *rows* is not usable here because AIWP files carry the analysis step f000 as well, so a run
+    missing f240 would otherwise still reach 41 values and be scored complete.
+    """
     step = max(int(model.step_h), 1)
     return max(int(model.max_h) // step, 0)
+
+
+def _upstream_inits(models: list[ModelSpec], start: date, end: date) -> dict[str, set]:
+    """``model_id -> {init_time}`` actually present upstream, for the sources that publish gaps.
+
+    Only AIWP is asked (its 0.25° archive produces the GFS-initialized models on alternating
+    cycles).  Any failure — no network, no bucket, an import error — returns nothing for that
+    model, which means "no upstream information" and leaves the old behaviour in place.
+    """
+    out: dict[str, set] = {}
+    aiwp = [m for m in models if m.source == "aiwp"]
+    if not aiwp:
+        return out
+    try:
+        from .sources.aiwp import AiwpSource
+
+        src = AiwpSource()
+    except Exception:  # noqa: BLE001 - status must never fail because a source is unavailable
+        return out
+    for m in aiwp:
+        try:
+            inits = src.available_inits(m, start, end)
+        except Exception:  # noqa: BLE001
+            continue
+        if inits:
+            out[m.model_id] = {pd.Timestamp(t).tz_convert("UTC")
+                               if pd.Timestamp(t).tzinfo else pd.Timestamp(t, tz="UTC")
+                               for t in inits}
+    return out
 
 
 def _as_date(value) -> date:
@@ -52,6 +95,7 @@ def build(
     truth: pd.DataFrame | None = None,
     stations: list[Station] | None = None,
     models: list[ModelSpec] | None = None,
+    upstream: bool = True,
 ) -> dict:
     """Build the completeness report.  Reads ``data/`` unless ``values``/``truth`` are supplied."""
     stations = list(stations) if stations is not None else load_stations()
@@ -97,6 +141,15 @@ def build(
             & v["value_c"].notna()
             & (v.get("method", "bilinear") == "bilinear")
         ]
+        # f000 is not a forecast step: AIWP files carry it, ECMWF and GFS do not, so counting rows
+        # would let an AIWP run missing f240 pass as complete (41 rows, 40 expected steps).
+        # Same rule, and the same NaN handling, as ``store.existing_inits`` — the two must agree or
+        # a run the fetcher considers done would show here as a permanent gap.
+        if len(present) and "lead_h" in present.columns:
+            step_by_model = {m.model_id: max(int(m.step_h), 1) for m in models}
+            min_lead = present["model_id"].map(step_by_model).fillna(1)
+            lead_h = pd.to_numeric(present["lead_h"], errors="coerce").fillna(min_lead)
+            present = present[lead_h >= min_lead]
 
     counts = {}
     latest_init: dict[str, str | None] = {}
@@ -109,9 +162,21 @@ def build(
         for model_id, grp in present.groupby("model_id", observed=True):
             latest_init[model_id] = pd.Timestamp(grp["init_time"].max()).isoformat()
 
+    # First initialization CastCheck ever held per (model, init hour): nothing before it is a gap.
+    first_init: dict[tuple[str, int], pd.Timestamp] = {}
+    for (mid, init, _st) in counts:
+        key = (mid, int(pd.Timestamp(init).hour))
+        cur = first_init.get(key)
+        if cur is None or init < cur:
+            first_init[key] = init
+
+    upstream_inits = _upstream_inits(models, window[0], window[-1]) if upstream else {}
+
     for m in models:
         exp = _expected_steps(m)
         for init_hour in m.inits:
+            start_init = first_init.get((m.model_id, int(init_hour)))
+            up = upstream_inits.get(m.model_id)
             day_rows = []
             for d in window:
                 init = pd.Timestamp(d, tz="UTC") + pd.Timedelta(hours=int(init_hour))
@@ -119,16 +184,26 @@ def build(
                 n_complete = sum(1 for c in per_station if c >= exp)
                 n_any = sum(1 for c in per_station if c > 0)
                 complete = n_complete == len(station_ids) and len(station_ids) > 0
+                # Days that were never expected: before this model entered the record, or an
+                # initialization the upstream archive did not produce.
+                reason = ""
+                if start_init is not None and init < start_init:
+                    reason = "before_start"
+                elif up is not None and init not in up and not complete:
+                    reason = "not_produced_upstream"
+                expected = reason == ""
                 day_rows.append({
                     "date": d.isoformat(),
                     "init_time": init.isoformat(),
                     "complete": bool(complete),
+                    "expected": bool(expected),
+                    "reason": reason,
                     "stations_complete": n_complete,
                     "stations_any": n_any,
                     "expected_steps": exp,
                     "values": int(sum(per_station)),
                 })
-                if not complete:
+                if not complete and expected:
                     gap = {
                         "type": "model_run",
                         "model_id": m.model_id,
@@ -139,15 +214,20 @@ def build(
                     report["gaps"].append(gap)
                     if d == as_of_d:
                         report["current_gaps"].append(gap)
+            n_expected = sum(1 for r in day_rows if r["expected"])
             report["models"].append({
                 "model_id": m.model_id,
                 "family": m.family,
                 "init_hour": int(init_hour),
                 "expected_steps": exp,
                 "latest_init": latest_init.get(m.model_id),
+                "period_start": start_init.date().isoformat() if start_init is not None else None,
+                "upstream_known": up is not None,
                 "days": day_rows,
                 "n_complete": sum(1 for r in day_rows if r["complete"]),
-                "n_missing": sum(1 for r in day_rows if not r["complete"]),
+                "n_expected": n_expected,
+                "n_not_expected": len(day_rows) - n_expected,
+                "n_missing": sum(1 for r in day_rows if not r["complete"] and r["expected"]),
             })
 
     # ---- truth ----------------------------------------------------------------------------
@@ -197,8 +277,10 @@ def build(
     report["gaps_today"] = report["current_gaps"]  # alias used by the CLI
     report["ok"] = report["n_current_gaps"] == 0
 
-    # GitHub-Status-style headline: share of model-run slots and truth days that are complete
-    slots = [d for m in report["models"] for d in m["days"]]
+    # GitHub-Status-style headline: share of model-run slots and truth days that are complete.
+    # The denominator is the *expected* slots only — days before a model's period_start and
+    # initializations the upstream archive never produced are not downtime (review B8).
+    slots = [d for m in report["models"] for d in m["days"] if d["expected"]]
     tdays = [d for t in report["truth"] for d in t["days"]]
     report["uptime"] = {
         "model_runs": round(100.0 * sum(1 for d in slots if d["complete"]) / len(slots), 2)
@@ -206,6 +288,8 @@ def build(
         "truth": round(100.0 * sum(1 for d in tdays if d["cli_final"]) / len(tdays), 2)
         if tdays else None,
         "window_days": days,
+        "basis": "expected slots only: from each model's period_start, upstream-produced "
+                 "initializations only",
     }
     return report
 

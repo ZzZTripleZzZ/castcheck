@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: >-
+  If you use CastCheck's scores, tables or figures, please cite it. For a specific number, cite
+  the permanent link of the page it came from — every score card carries a short and a long
+  citation with the access date — and give the methodology version, which is published in the
+  `methodology_version` column of every table and in the footer of every page.
+title: "CastCheck: independent station-level verification of raw weather-model 2 m temperature forecasts"
+abstract: >-
+  CastCheck scores the raw 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES,
+  NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational GraphCast, Pangu-Weather,
+  FourCastNet v2 and Aurora from both GFS and IFS initial conditions) at 23 U.S. first-order
+  airport stations. The headline metric is the instantaneous 2 m temperature at 00/06/12/18 UTC
+  verified against the observation at the same instants; daily extremes are published both
+  like-for-like (forecast samples against observed samples) and, as a secondary comparison,
+  against the NWS Daily Climate Report. No MOS, bias correction, downscaling or other
+  post-processing is applied. Every station x model x lead day has a permanent URL with bootstrap
+  confidence intervals and its sample size, and the full daily record is published as an open
+  dataset.
+type: software
+authors:
+  - family-names: Zhang
+    given-names: Zifan
+version: "0.3"
+date-released: "2026-08-30"
+license: MIT
+repository-code: "https://github.com/ZzZTripleZzZ/castcheck"
+url: "https://castcheck.zifanzhang.com"
+keywords:
+  - weather forecast verification
+  - numerical weather prediction
+  - machine learning weather prediction
+  - 2 m temperature
+  - forecast skill

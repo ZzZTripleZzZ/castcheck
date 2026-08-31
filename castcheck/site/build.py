@@ -5,11 +5,11 @@ content, every figure is server-rendered inline SVG (``site/svg.py``) with an eq
 beside it, and ``assets/chart.js`` only adds the theme toggle and a hover read-out.
 
 Every analysis choice is a URL, not a widget.  The four dimensions — window (30d/90d/365d/all),
-initialization (00Z/12Z), interpolation (bilinear/nearest) and variable (tmax/tmin) — are baked
-into static paths so that any view can be linked, cited and diffed:
+initialization (00Z/12Z), interpolation (bilinear/nearest) and variable (t2/tmax_s/tmin_s) — are
+baked into static paths so that any view can be linked, cited and diffed:
 
-``/``                                           the default view: 90d · 00Z · bilinear · tmax
-``/v/{window}-{init}z-{method}-{variable}/``     each of the 32 leaderboard views (``/`` is a copy)
+``/``                                           the default view: 90d · 00Z · bilinear · t2
+``/v/{window}-{init}z-{method}-{variable}/``     each of the 48 leaderboard views (``/`` is a copy)
 ``/station/{ICAO}/``  ``/station/{ICAO}/v/{window}-{init}z-{method}/``
 ``/model/{model_id}/``  ``/model/{model_id}/v/{window}-{init}z-{method}/``
 ``/station/{ICAO}/model/{model_id}/lead/{d}/``  the permanent link (DESIGN §6, fixed for good)
@@ -17,13 +17,26 @@ into static paths so that any view can be linked, cited and diffed:
 
 ``station_id="ALL"`` is published as a pseudo-station so the cross-station aggregate has permanent
 links too.  Errors are stored in °C (METHODOLOGY §3) and displayed in °F throughout.
+
+Headline variable (METHODOLOGY v0.3, DESIGN §10.2): ``t2`` — the instantaneous 2 m temperature at
+the four common synoptic instants, verified against the observation at the same instant.  The
+like-for-like daily extremes ``tmax_s``/``tmin_s`` (max/min of the four *observed* samples) are the
+second table.  ``tmax_cli``/``tmin_cli`` — the four forecast samples against the NWS daily extremes
+— are secondary only: they carry a sampling penalty whose size depends on each model's own diurnal
+amplitude, so they are published but never ranked.
+
+Every column the templates read is optional: a scores table written by an older methodology version
+simply renders "—" where a column is missing, so the site builds during a methodology transition.
 """
 
 from __future__ import annotations
 
 import gzip
 import hashlib
+import logging
+import re
 import shutil
+import subprocess
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -53,26 +66,44 @@ from ..verify import (
 )
 from . import svg
 
+#: DESIGN §10.1.  Read from the store once M1a publishes it, so the /data/ schema table cannot
+#: drift from the table it documents.
+try:
+    from ..store import TRUTH_INSTANT_COLUMNS as _TRUTH_INSTANT_COLUMNS
+except ImportError:  # pragma: no cover - transitional, until truth_instant lands
+    _TRUTH_INSTANT_COLUMNS = [
+        "station_id", "valid_time", "temp_c", "obs_time", "source", "n_reports", "qc_flag",
+        "schema_version", "methodology_version",
+    ]
+
 __all__ = [
+    "CLI_VARIABLES",
     "COLUMN_DOCS",
     "FAIRNESS",
     "FAIRNESS_BANNER",
+    "HEADLINE_VARIABLE",
+    "SAMPLED_VARIABLES",
     "SITE_URL",
     "VIEWS",
     "build_site",
+    "changelog_entries",
     "citation",
     "citation_long",
     "next_update",
+    "source_commit",
     "view_slug",
 ]
+
+log = logging.getLogger("castcheck.site")
 
 HERE = Path(__file__).resolve().parent
 TEMPLATES = HERE / "templates"
 ASSETS = HERE / "assets"
 
 SITE_URL = "https://castcheck.zifanzhang.com"
-REPO_URL = "https://github.com/zifanzhang/castcheck"
+REPO_URL = "https://github.com/ZzZTripleZzZ/castcheck"
 HF_URL = "https://huggingface.co/datasets/castcheck/temperature-verification"
+HF_FILES_URL = f"{HF_URL}/tree/main"
 
 #: METHODOLOGY §7 in one line — the banner on every page, which must not cost two lines of
 #: screen at desktop width. The full statement is the methodology section it links to.
@@ -93,11 +124,27 @@ SPARK_LEADS = tuple(range(1, 10))
 WINDOWS = ("30d", "90d", "365d", "all")
 INITS = (0, 12)
 METHODS = ("bilinear", "nearest")
-VARIABLES = ("tmax", "tmin")
+
+#: DESIGN §10.2.  ``t2`` is the headline: the instantaneous value at the four common instants,
+#: against the observation at the same instant, so nothing about the metric depends on a model's
+#: own diurnal amplitude.
+HEADLINE_VARIABLE = "t2"
+#: One curve per synoptic hour — diurnal structure, published on the permanent links only.
+HOUR_VARIABLES = ("t2_00z", "t2_06z", "t2_12z", "t2_18z")
+#: Like-for-like daily extremes: forecast samples against the *observed* samples.
+SAMPLED_VARIABLES = ("tmax_s", "tmin_s")
+#: Secondary: the same four forecast samples against the NWS daily extremes.  Never ranked.
+CLI_VARIABLES = ("tmax_cli", "tmin_cli", "tmax_native_cli", "tmin_native_cli")
+#: The variables the switcher offers and the leaderboard views are built for.
+VARIABLES = (HEADLINE_VARIABLE, *SAMPLED_VARIABLES)
+#: Everything a station or model page shows above the secondary block.
+PAGE_VARIABLES = (HEADLINE_VARIABLE, *SAMPLED_VARIABLES)
+#: Scores written before methodology v0.3 used these names for what is now ``*_cli``.
+LEGACY_VARIABLE_ALIAS = {"tmax": "tmax_cli", "tmin": "tmin_cli"}
 DEFAULT_WINDOW = "90d"
 DEFAULT_INIT = 0
 DEFAULT_METHOD = "bilinear"
-DEFAULT_VARIABLE = "tmax"
+DEFAULT_VARIABLE = HEADLINE_VARIABLE
 DEFAULT_VIEW = (DEFAULT_WINDOW, DEFAULT_INIT, DEFAULT_METHOD, DEFAULT_VARIABLE)
 #: every leaderboard combination, each one a static page
 VIEWS = tuple((w, i, m, v) for w in WINDOWS for i in INITS for m in METHODS for v in VARIABLES)
@@ -112,7 +159,54 @@ SERIES_DAYS = 90
 WINDOW_ORDER = {"30d": 0, "90d": 1, "365d": 2, "all": 3}
 WINDOW_DAYS = {"30d": 30, "90d": 90, "365d": 365, "all": None}
 PUBLISH_HOUR_UTC = 11  # verify-publish.yml (DESIGN §7)
-VAR_LABEL = {"tmax": "daily maximum", "tmin": "daily minimum"}
+#: The reference model of the bias map: fixed, never the per-station winner (review A6).
+REFERENCE_MODEL = "ifs_hres"
+#: Below this the bootstrap does not produce an interval (DESIGN §10.3); the site shows "—".
+CI_MIN_N = 28
+CI_MIN_BLOCKS = 4
+
+VAR_LABEL = {
+    "t2": "instantaneous temperature",
+    "t2_00z": "instantaneous temperature, 00Z",
+    "t2_06z": "instantaneous temperature, 06Z",
+    "t2_12z": "instantaneous temperature, 12Z",
+    "t2_18z": "instantaneous temperature, 18Z",
+    "tmax_s": "sampled daily maximum",
+    "tmin_s": "sampled daily minimum",
+    "tmax_cli": "daily maximum vs NWS CLI",
+    "tmin_cli": "daily minimum vs NWS CLI",
+    "tmax_native_cli": "native daily maximum vs NWS CLI",
+    "tmin_native_cli": "native daily minimum vs NWS CLI",
+    # pre-v0.3 names, kept so an old scores table still renders a label
+    "tmax": "daily maximum vs NWS CLI",
+    "tmin": "daily minimum vs NWS CLI",
+}
+VAR_SHORT = {
+    "t2": "t2 (instantaneous)",
+    "tmax_s": "sampled Tmax",
+    "tmin_s": "sampled Tmin",
+    "tmax_cli": "Tmax vs CLI",
+    "tmin_cli": "Tmin vs CLI",
+    "tmax_native_cli": "native Tmax vs CLI",
+    "tmin_native_cli": "native Tmin vs CLI",
+}
+VAR_TRUTH = {
+    "t2": "the observed 2 m temperature at the same instant (ASOS routine METAR)",
+    "tmax_s": "the maximum of the four *observed* samples on the same day",
+    "tmin_s": "the minimum of the four *observed* samples on the same day",
+    "tmax_cli": "the NWS Daily Climate Report maximum",
+    "tmin_cli": "the NWS Daily Climate Report minimum",
+    "tmax_native_cli": "the NWS Daily Climate Report maximum",
+    "tmin_native_cli": "the NWS Daily Climate Report minimum",
+}
+
+#: The fixed sentence that must accompany every CLI-truth number (review A2, DESIGN §10.2).
+CLI_CAVEAT = (
+    "This comparison scores four 6-hourly forecast samples against the true daily extreme, so it "
+    "includes a sampling penalty. The size of that penalty depends on each model's own diurnal "
+    "amplitude, which is one of the things this site measures, so these numbers are published for "
+    "operational relevance and are never used for ranking."
+)
 
 #: /data/ schema table.  column → (type, unit, meaning)
 COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
@@ -124,7 +218,11 @@ COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
     "valid_time": ("timestamp", "UTC", "forecast valid time"),
     "lead_h": ("int16", "hours", "valid_time − init_time"),
     "lead_day": ("int8", "days", "target climatological date − UTC date of the initialization"),
-    "variable": ("string", "—", "tmax or tmin (daily extreme of the four common samples)"),
+    "variable": ("string", "—", "t2 (instantaneous, headline), t2_00z…t2_18z (one synoptic hour), "
+                 "tmax_s/tmin_s (extremes of the four samples vs the extremes of the four observed "
+                 "samples), tmax_cli/tmin_cli (the same forecast samples vs the NWS daily extreme, "
+                 "secondary) or tmax_native_cli/tmin_native_cli (native extreme fields vs the NWS "
+                 "daily extreme, secondary)"),
     "bucket_h": ("int8", "hours", "accumulation window of a native extreme field, 0 if instantaneous"),
     "method": ("string", "—", "grid-to-station interpolation: bilinear (headline) or nearest"),
     "window": ("string", "—", "scoring window: 30d, 90d, 365d or all"),
@@ -132,34 +230,58 @@ COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
     "n_stations": ("float32", "stations", "mean number of stations behind each day of an ALL row "
                    "(1 for a single-station row)"),
     "n_flagged": ("int32", "days", "how many of those days carry a QC flag on the observation"),
-    "n_common": ("int32", "days", "days on which both models of the pair have a forecast"),
+    "n_common": ("int32", "days", "days used as the denominator of the skill score: days on which "
+                 "both the model and the persistence baseline have a value (in the pairwise table, "
+                 "days on which both models of the pair have a forecast)"),
     "n_samples": ("int8", "count", "how many of the four common samples were present (0–4)"),
-    "mae": ("float32", "°C", "mean absolute error, forecast − observed"),
+    "n_debiased": ("int32", "days", "days that had at least 15 of the preceding 30 scored days "
+                   "available to estimate the out-of-sample bias correction"),
+    "mae": ("float32", "°C", "mean absolute error"),
     "bias": ("float32", "°C", "mean signed error; positive = model too warm"),
     "rmse": ("float32", "°C", "root mean squared error"),
     "hit1f": ("float32", "fraction", "share of days with |error| ≤ 1 °F"),
     "hit2f": ("float32", "fraction", "share of days with |error| ≤ 2 °F"),
     "hit3f": ("float32", "fraction", "share of days with |error| ≤ 3 °F"),
-    "mae_debiased": ("float32", "°C", "MAE after removing the per-station constant bias of the "
-                     "window; the part of the error that is not a fixed offset"),
-    "skill_persistence": ("float32", "fraction", "1 − MAE/MAE(persistence); positive is better"),
+    "mae_debiased": ("float32", "°C", "MAE after removing an out-of-sample bias estimate: the bias "
+                     "of the trailing 30 scored days before each day (minimum 15) applied forward "
+                     "to that day. Days without enough history are excluded"),
+    "skill_persistence": ("float32", "fraction",
+                          "1 − MAE ÷ mae_persistence_common, both computed on the same n_common "
+                          "days; positive is better"),
+    "mae_persistence_common": ("float32", "°C", "MAE of the persistence baseline restricted to the "
+                               "n_common days — the denominator of skill_persistence"),
+    "skill_ci_low": ("float32", "fraction", "2.5th percentile of the paired skill bootstrap"),
+    "skill_ci_high": ("float32", "fraction", "97.5th percentile of the paired skill bootstrap"),
     "skill_persistence_debiased": ("float32", "fraction",
-                                   "the same skill score computed on the debiased errors, so a "
-                                   "station with a large constant offset is not scored as skill-less"),
-    "mae_ci_low": ("float32", "°C", "2.5th percentile, moving-block bootstrap"),
-    "mae_ci_high": ("float32", "°C", "97.5th percentile, moving-block bootstrap"),
+                                   "the same skill score computed on the out-of-sample debiased "
+                                   "errors, so a station with a large constant offset is not "
+                                   "scored as skill-less"),
+    "mae_ci_low": ("float32", "°C", "2.5th percentile of the per-group moving-block bootstrap; "
+                   "empty when n < 28 or fewer than 4 blocks"),
+    "mae_ci_high": ("float32", "°C", "97.5th percentile of the per-group moving-block bootstrap; "
+                    "empty when n < 28 or fewer than 4 blocks"),
     "bias_ci_low": ("float32", "°C", "2.5th percentile of the bias bootstrap"),
     "bias_ci_high": ("float32", "°C", "97.5th percentile of the bias bootstrap"),
     "rmse_ci_low": ("float32", "°C", "2.5th percentile of the RMSE bootstrap"),
     "rmse_ci_high": ("float32", "°C", "97.5th percentile of the RMSE bootstrap"),
-    "hit1f_ci_low": ("float32", "fraction", "2.5th percentile of the ±1 °F hit-rate bootstrap"),
-    "hit1f_ci_high": ("float32", "fraction", "97.5th percentile of the ±1 °F hit-rate bootstrap"),
+    "hit1f_ci_low": ("float32", "fraction", "lower bound of the Wilson score 95 % interval of the "
+                     "±1 °F hit rate"),
+    "hit1f_ci_high": ("float32", "fraction", "upper bound of the Wilson score 95 % interval of the "
+                      "±1 °F hit rate"),
     "segment_start": ("date", "LST day", "first day of the current model-version segment; scores "
                       "cover only this segment"),
     "mae_diff": ("float32", "°C", "MAE(model_a) − MAE(model_b) on their common days"),
     "ci_low": ("float32", "°C", "2.5th percentile of the paired bootstrap difference"),
     "ci_high": ("float32", "°C", "97.5th percentile of the paired bootstrap difference"),
-    "significant": ("bool", "—", "true when the 95 % interval of the difference excludes zero"),
+    "distinguishable_uncorrected": ("bool", "—", "true when the single 95 % interval of the "
+                                    "difference excludes zero, with no correction for the number "
+                                    "of comparisons made"),
+    "p_boot": ("float32", "—", "two-sided bootstrap p-value of the paired MAE difference"),
+    "distinguishable_holm": ("bool", "—", "true after a Holm correction over the family of "
+                             "comparisons against the leader within one displayed table (same "
+                             "station, initialization, lead, variable, method and window). This is "
+                             "the only flag the site marks with ▼ or ▲"),
+    "significant": ("bool", "—", "pre-v0.3 name of distinguishable_uncorrected"),
     "model_a": ("string", "—", "first model of the pair"),
     "model_b": ("string", "—", "second model of the pair"),
     "period_start": ("date", "LST day", "first climatological day contributing to the window"),
@@ -186,32 +308,96 @@ COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
     "tmin_sampled_c": ("float32", "°C", "min of the four common samples in the climatological day"),
     "tmax_native_c": ("float32", "°C", "daily max from the model's native extreme field (diagnostic)"),
     "tmin_native_c": ("float32", "°C", "daily min from the model's native extreme field (diagnostic)"),
+    "temp_c": ("float32", "°C", "observed 2 m air temperature at the synoptic instant; empty when "
+               "no usable report was found"),
+    "obs_time": ("timestamp", "UTC", "timestamp of the report actually used"),
+    "n_reports": ("int8", "count", "routine reports found inside the ±35 min window"),
+    "grid_elev_m": ("float32", "m", "mean elevation of the 0.25° cell containing the station "
+                    "(ETOPO 2022, 60 arc-second, public domain)"),
+    "dz_m": ("float32", "m", "elev_m − grid_elev_m: how much higher the station sits than the "
+             "model's idea of the ground under it"),
+    "market_city": ("string", "—", "the temperature-contract city this station is the settlement "
+                    "site for; this is the station-selection rule, not a data source"),
+    "iem_id": ("string", "—", "identifier of the station in the IEM ASOS archive"),
     "schema_version": ("string", "—", "data-model version (DESIGN §3)"),
     "methodology_version": ("string", "—", "METHODOLOGY version that produced the numbers"),
 }
 
-CHANGELOG = [
-    ("0.1", "2026-08-30", "First public build: 2 m temperature, 23 stations, ECMWF IFS HRES, "
-                          "NCEP GFS and the NOAA/CIRA AIWP models, persistence baseline, "
-                          "moving-block bootstrap intervals."),
+#: Used only when ``METHODOLOGY.md`` cannot be read; the real changelog is that document's own
+#: ``## Changelog`` section, rendered by :func:`changelog_entries` so the two can never diverge.
+CHANGELOG_FALLBACK = [
+    {"version": "0.1", "date": "2026-08-30", "summary": "Initial pre-release methodology.",
+     "details": []},
 ]
 
 LIMITATIONS = [
-    "Daily extremes are the max/min of four 6-hourly samples, so they under-state the true "
-    "afternoon peak and over-state the pre-dawn trough. The bias is identical for every model and "
-    "is therefore fair for comparison, but the absolute errors are not what a user of a "
-    "post-processed forecast experiences (METHODOLOGY §2.3).",
+    "The headline variable is the instantaneous temperature at four synoptic instants, so it says "
+    "nothing about the daily maximum a person experiences. The like-for-like daily extremes "
+    "(tmax_s/tmin_s) are the max/min of the same four samples on both sides; the comparison "
+    "against the true NWS daily extremes (tmax_cli/tmin_cli) additionally carries a sampling "
+    "penalty whose size depends on each model's own diurnal amplitude, which is why it is "
+    "published as secondary and never ranked (METHODOLOGY §2.3).",
     "No elevation or lapse-rate correction is applied; stations whose elevation differs sharply "
-    "from the 0.25° grid cell carry a representativeness error that is charged to the model.",
-    "Truth is the first final NWS CLI report. Later corrections are stored but never change a "
-    "published score, so a corrected observation leaves a permanent, documented discrepancy.",
+    "from the 0.25° grid cell carry a representativeness error that is charged to the model. "
+    "The size of the offset is published per station on /stations/ as dz_m and a first-order "
+    "lapse-rate magnitude.",
+    "Truth is the first final NWS CLI report for the CLI variables and the routine METAR nearest "
+    "each synoptic hour for the instantaneous ones. Later corrections are stored but never change "
+    "a published score, so a corrected observation leaves a permanent, documented discrepancy; "
+    "the size of that effect is quantified on /data/.",
     "Models enter the record on different dates, so their windows are not identical. Pairwise "
-    "comparisons are computed on common days only; the leaderboard columns are not.",
+    "comparisons are computed on common days only; the leaderboard columns are not. The skill "
+    "column is the one leaderboard column that is a common-day comparison, and it names its own "
+    "denominator and n.",
     "Groups with fewer than 30 scored days are published but greyed out and excluded from every "
-    "ranking; early in a model's record most windows are in that state.",
-    "The 0.25° AIWP archive is a research product; outages there appear here as gaps, not as bad "
-    "forecasts (see /status/).",
+    "ranking, and no confidence interval is computed below 28 days or 4 bootstrap blocks; early "
+    "in a model's record most windows are in that state.",
+    "The same lead day covers different forecast hours at different longitudes: at a UTC−5 station "
+    "lead day 0 spans F06–F24, at a UTC−8 station F12–F30, so western stations are given about "
+    "three hours more lead time in every pooled row.",
+    "The 0.25° AIWP archive is a research product whose GFS-initialized models are produced on "
+    "alternating cycles; an initialization the archive never produced is marked as such on "
+    "/status/ and is not counted as downtime.",
 ]
+
+_CHANGELOG_HEAD = re.compile(r"^-\s+\*\*(?P<v>[0-9][^ ]*)\s*\((?P<d>[^)]*)\)\*\*\s*[—-]?\s*(?P<s>.*)$")
+
+
+def changelog_entries(text: str | None = None) -> list[dict]:
+    """The ``## Changelog`` section of METHODOLOGY.md, parsed into rows for /data/.
+
+    The changelog is written once, in the document that the version number belongs to; the site
+    renders that section rather than keeping a second copy that can silently fall behind (A5).
+    """
+    if text is None:
+        path = REPO_ROOT / "METHODOLOGY.md"
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+    body = text.split("\n## Changelog", 1)
+    if len(body) < 2:
+        return list(CHANGELOG_FALLBACK)
+    out: list[dict] = []
+    for raw in body[1].splitlines():
+        line = raw.rstrip()
+        if line.startswith("## "):
+            break
+        m = _CHANGELOG_HEAD.match(line.strip()) if not line.startswith((" ", "\t")) else None
+        if m:
+            out.append({"version": m.group("v"), "date": m.group("d").strip(),
+                        "summary": m.group("s").strip(), "details": []})
+        elif out and line.strip().startswith(("-", "*")) and line.startswith((" ", "\t")):
+            out[-1]["details"].append(line.strip().lstrip("-* ").strip())
+    return out or list(CHANGELOG_FALLBACK)
+
+
+def source_commit() -> str:
+    """Short hash of the commit that produced this build, or ``local`` outside a git checkout."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                           capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - defensive
+        return "local"
+    out = (r.stdout or "").strip()
+    return out if r.returncode == 0 and out else "local"
 
 
 # ------------------------------------------------------------------------------------------
@@ -251,6 +437,17 @@ def f_pct(x) -> str:
 
 def f_skill(x) -> str:
     return "—" if _isnan(x) else f"{float(x):+.2f}"
+
+
+def f_skill_ci(lo, hi) -> str:
+    """A skill interval: a ratio, so it stays unitless (no °F conversion)."""
+    if _isnan(lo) or _isnan(hi):
+        return "—"
+    return f"[{float(lo):+.2f}, {float(hi):+.2f}]"
+
+
+def f_int(x) -> str:
+    return "—" if _isnan(x) else f"{int(float(x))}"
 
 
 def f_period(start, end) -> str:
@@ -334,10 +531,26 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
     n_stations = r.get("n_stations")
     n_flagged = r.get("n_flagged")
     seg = r.get("segment_start")
+    n_common = r.get("n_common")
+    mae_pers = r.get("mae_persistence_common")
+    # A1: the skill denominator is the *intersection* of the model's days and the baseline's, so
+    # the persistence row's own n never reproduces it. Both are written next to the number.
+    skill_vs = "—"
+    if not _isnan(mae_pers):
+        skill_vs = f"vs {f_delta(mae_pers)}"
+        if not _isnan(n_common):
+            skill_vs += f" (n={int(float(n_common))})"
+    elif not _isnan(n_common):
+        skill_vs = f"n={int(float(n_common))}"
+    variable = r["variable"]
     return {
         "model_name": _mname(model_idx, model_id),
         "mae_debiased": f_delta(r.get("mae_debiased")),
         "skill_debiased": f_skill(r.get("skill_persistence_debiased")),
+        "skill_ci": f_skill_ci(r.get("skill_ci_low"), r.get("skill_ci_high")),
+        "skill_vs": skill_vs,
+        "n_common": f_int(n_common),
+        "n_debiased": f_int(r.get("n_debiased")),
         "rmse_ci": f_ci(r.get("rmse_ci_low"), r.get("rmse_ci_high")),
         "hit1f_ci": ("—" if _isnan(r.get("hit1f_ci_low")) or _isnan(r.get("hit1f_ci_high"))
                      else f"[{float(r['hit1f_ci_low']) * 100:.0f}%, "
@@ -349,7 +562,10 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
         "model_id": model_id,
         "station_id": station_id,
         "lead_day": int(lead),
-        "variable": r["variable"],
+        "variable": variable,
+        "variable_label": VAR_LABEL.get(variable, variable),
+        "variable_short": VAR_SHORT.get(variable, variable),
+        "secondary": variable in CLI_VARIABLES or variable in LEGACY_VARIABLE_ALIAS,
         "init_hour": f"{int(r['init_hour']):02d}",
         "method": r["method"],
         "window": r["window"],
@@ -403,7 +619,7 @@ def _view_href(base: str, view: tuple) -> str:
 _WINDOW_OPTS = [(w, "all history" if w == "all" else f"last {w[:-1]} days") for w in WINDOWS]
 _INIT_OPTS = [(i, f"{i:02d}Z") for i in INITS]
 _METHOD_OPTS = [(m, m) for m in METHODS]
-_VAR_OPTS = [(v, "daily max" if v == "tmax" else "daily min") for v in VARIABLES]
+_VAR_OPTS = [(v, VAR_SHORT.get(v, v)) for v in VARIABLES]
 
 _DIMS4 = (("window", "Window", _WINDOW_OPTS), ("init", "Initialization", _INIT_OPTS),
           ("method", "Interpolation", _METHOD_OPTS), ("variable", "Variable", _VAR_OPTS))
@@ -463,6 +679,44 @@ def _display_map(model_idx: dict) -> dict[str, str]:
     return names
 
 
+def _load_instant_errors(stations, models) -> pd.DataFrame | None:
+    """Forecast-minus-observed at the four common instants, for the ``t2`` daily-error chart.
+
+    Derived rather than stored (``derive.instant_errors``), which costs well under a second on the
+    whole archive.  Any failure — no ``truth_instant`` yet, an unreadable shard — returns ``None``
+    and the site simply falls back to the best variable it does have.
+    """
+    try:
+        from .. import store
+        from ..derive import instant_errors
+
+        ti = store.read_truth_instant()
+        if ti is None or not len(ti):
+            return None
+        return instant_errors(store.read_forecast_values(), ti, stations, models)
+    except Exception:  # noqa: BLE001 - the chart is not worth failing a build for
+        log.warning("instant errors unavailable; the daily-error chart falls back", exc_info=True)
+        return None
+
+
+def _normalise_variables(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename pre-v0.3 variable names to what they actually were.
+
+    Before methodology v0.3 the only two variables were the max/min of the four forecast samples
+    scored against the NWS daily extremes — exactly today's ``tmax_cli``/``tmin_cli``.  Renaming
+    them (only when the new names are absent) keeps an old scores table readable and puts those
+    numbers in the secondary block where they belong, instead of under a headline they never were.
+    """
+    if df is None or len(df) == 0 or "variable" not in df.columns:
+        return df
+    have = set(df["variable"].unique())
+    if not (have & set(LEGACY_VARIABLE_ALIAS)) or (have & set(LEGACY_VARIABLE_ALIAS.values())):
+        return df
+    out = df.copy()
+    out["variable"] = out["variable"].map(lambda v: LEGACY_VARIABLE_ALIAS.get(v, v))
+    return out
+
+
 def _model_index(models: list[ModelSpec]) -> dict[str, dict]:
     idx = {
         m.model_id: {
@@ -487,6 +741,7 @@ def build_site(
     pairwise: pd.DataFrame | None = None,
     daily: pd.DataFrame | None = None,
     truth: pd.DataFrame | None = None,
+    instant: pd.DataFrame | None = None,
     stations: list[Station] | None = None,
     models: list[ModelSpec] | None = None,
     status_report: dict | None = None,
@@ -522,6 +777,8 @@ def build_site(
 
     scores = scores if scores is not None else pd.DataFrame(columns=SCORE_COLUMNS)
     pairwise = pairwise if pairwise is not None else pd.DataFrame(columns=PAIRWISE_COLUMNS)
+    scores = _normalise_variables(scores)
+    pairwise = _normalise_variables(pairwise)
 
     if status_report is None:
         status_json = out / "api" / "v1" / "status.json"
@@ -563,9 +820,14 @@ def build_site(
         "built_at": built_at,
         "next_update": next_update(built_at),
         "min_n": MIN_N,
+        "ci_min_n": CI_MIN_N,
+        "ci_min_blocks": CI_MIN_BLOCKS,
         "site_url": SITE_URL,
         "repo_url": REPO_URL,
         "hf_url": HF_URL,
+        "hf_files_url": HF_FILES_URL,
+        "commit": source_commit(),
+        "cli_caveat": CLI_CAVEAT,
     }
 
     # Variant directories are named after the view slugs; if the set of views ever changes, the
@@ -586,15 +848,18 @@ def build_site(
     _write_indexes(env, w, base_ctx, scores, stations, _model_index(models))
     _write_api_index(env, w, base_ctx, api_written)
 
+    if instant is None:
+        instant = _load_instant_errors(stations, models)
+
     empty = scores is None or len(scores) == 0
     errors = pd.DataFrame()
     if not empty and daily is not None and truth is not None and len(daily) and len(truth):
         try:
-            errors = error_table(daily, truth)
+            errors = error_table(daily, truth, instant)
         except Exception:  # noqa: BLE001 - a malformed shard must not break the build
             errors = pd.DataFrame()
     downloads = _write_downloads(out, scores, pairwise, errors, stations, models)
-    _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads)
+    _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads, truth)
 
     if empty:
         w.write("index.html", env.get_template("empty.html").render(
@@ -606,7 +871,7 @@ def build_site(
         ))
         _write_feed(env, w, base_ctx, None)
         counts["pages"] = w.n
-        return counts
+        return _finish(out, counts)
 
     sc = scores.copy()
     sc["lead_day"] = sc["lead_day"].astype(int)
@@ -626,7 +891,11 @@ def build_site(
     scored_ids = set(sc["station_id"])
     station_links = [{"id": s.id, "name": s.name} for s in stations if s.id in scored_ids]
 
-    series_idx, month_idx, allday_idx = _error_indices(errors)
+    errors = _normalise_variables(errors)
+    chart_variable = _pick_series_variable(errors)
+    series_idx, month_idx, allday_idx = _error_indices(errors, chart_variable)
+    base_ctx["chart_variable"] = chart_variable
+    base_ctx["chart_variable_label"] = VAR_LABEL.get(chart_variable, chart_variable)
 
     # ---- leaderboards ---------------------------------------------------------------------
     for view in VIEWS:
@@ -647,7 +916,7 @@ def build_site(
                          lat=None, lon=None, elev_m=None)
         sub = sc[sc["station_id"] == sid]
         recent = _recent_truth(truth_sel, sid)
-        avail_all = sub[(sub["window"] == "all") & (sub["variable"] == DEFAULT_VARIABLE)
+        avail_all = sub[(sub["window"] == "all") & (sub["variable"] == chart_variable)
                         & (sub["lead_day"] == 1)]
         months = _month_block(month_idx, sid, None)
         for view2 in SUBVIEWS:
@@ -711,6 +980,27 @@ def build_site(
 
     _write_feed(env, w, base_ctx, _feed_entries(sc, model_idx, as_of_s, built_at))
     counts["pages"] = w.n
+    return _finish(out, counts)
+
+
+#: Cloudflare Pages refuses a deployment above these; the build says how close it is.
+MAX_FILES = 20_000
+MAX_FILE_BYTES = 25 * 1024 * 1024
+
+
+def _finish(out: Path, counts: dict[str, int]) -> dict[str, int]:
+    """Record and log what will be deployed, and warn before a Pages limit is actually hit."""
+    n_files, n_bytes = _tree_size(out)
+    counts["files"] = n_files
+    counts["bytes"] = n_bytes
+    log.info("public/: %d files, %s (%d pages)", n_files, _human_size(n_bytes), counts["pages"])
+    if n_files > 0.9 * MAX_FILES:
+        log.warning("public/ holds %d files; Cloudflare Pages allows %d", n_files, MAX_FILES)
+    big = [(p, p.stat().st_size) for p in out.rglob("*")
+           if p.is_file() and p.stat().st_size > 0.8 * MAX_FILE_BYTES]
+    for p, size in sorted(big, key=lambda t: -t[1]):
+        log.warning("%s is %s; Cloudflare Pages refuses files above %s",
+                    p.relative_to(out), _human_size(size), _human_size(MAX_FILE_BYTES))
     return counts
 
 
@@ -718,7 +1008,23 @@ def build_site(
 # error-series indices (built once, read by every permanent link)
 # ------------------------------------------------------------------------------------------
 
-def _error_indices(errors: pd.DataFrame):
+#: Preference order for the one variable the daily-error chart, the month table and the
+#: permanent-link CSV are drawn for.  The headline when it exists; otherwise the best available,
+#: so a build made during a methodology transition still shows a series instead of an empty frame.
+_SERIES_PREFERENCE = (HEADLINE_VARIABLE, *SAMPLED_VARIABLES, *CLI_VARIABLES)
+
+
+def _pick_series_variable(errors: pd.DataFrame) -> str:
+    if errors is None or len(errors) == 0 or "variable" not in errors.columns:
+        return DEFAULT_VARIABLE
+    have = set(errors["variable"].unique())
+    for v in _SERIES_PREFERENCE:
+        if v in have:
+            return v
+    return DEFAULT_VARIABLE
+
+
+def _error_indices(errors: pd.DataFrame, variable: str = DEFAULT_VARIABLE):
     """``(series, months, allday)`` keyed by ``(station_id, model_id, lead_day)``.
 
     ``series`` is the last :data:`SERIES_DAYS` of signed daily error in °F for the default
@@ -732,7 +1038,7 @@ def _error_indices(errors: pd.DataFrame):
     e = errors[
         (errors["init_hour"].astype(int) == DEFAULT_INIT)
         & (errors["method"] == DEFAULT_METHOD)
-        & (errors["variable"] == DEFAULT_VARIABLE)
+        & (errors["variable"] == variable)
     ][["station_id", "model_id", "lead_day", "climo_date", "err"]].copy()
     if e.empty:
         return empty, empty, empty
@@ -748,12 +1054,20 @@ def _error_indices(errors: pd.DataFrame):
     e["month"] = e["climo_date"].dt.strftime("%Y-%m")
     e = e.sort_values("climo_date")
 
+    # The pooled ``t2`` variable carries four rows per group-day (one per common instant).  The
+    # distribution and the monthly MAE are over those values, because that is the population the
+    # score is computed on; the time series needs one point per calendar day, so it plots the
+    # day mean of the four.
+    per_day = (e.groupby(["station_id", "model_id", "lead_day", "climo_date"], observed=True,
+                         as_index=False)["err_f"].mean().sort_values("climo_date"))
+
     series: dict = {}
     allday: dict = {}
     cutoff = e["climo_date"].max() - pd.Timedelta(days=SERIES_DAYS - 1)
     for key, grp in e.groupby(["station_id", "model_id", "lead_day"], observed=True):
+        allday[(key[0], key[1], int(key[2]))] = grp["err_f"].tolist()
+    for key, grp in per_day.groupby(["station_id", "model_id", "lead_day"], observed=True):
         k = (key[0], key[1], int(key[2]))
-        allday[k] = grp["err_f"].tolist()
         tail = grp[grp["climo_date"] >= cutoff]
         # a continuous calendar axis: days with no score are holes, not joined-up line
         if len(tail):
@@ -836,6 +1150,28 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
                 headline = _board(part, pw_sub, model_idx, int(lead))
                 break
 
+    # The like-for-like daily extremes, always shown under the headline table: the same four
+    # samples on the forecast and the observation side, so the sampling definition cancels.
+    lead2 = headline["lead"] if headline else HEADLINE_LEADS[0]
+    sampled = []
+    for var in SAMPLED_VARIABLES:
+        part = sc[
+            (sc["station_id"] == ALL_STATIONS) & (sc["window"] == window)
+            & (sc["init_hour"] == int(init_hour)) & (sc["method"] == method)
+            & (sc["variable"] == var) & (sc["lead_day"] == lead2)
+        ]
+        if part.empty:
+            continue
+        pw_var = pd.DataFrame()
+        if len(pw):
+            pw_var = pw[(pw["station_id"] == ALL_STATIONS) & (pw["window"] == window)
+                        & (pw["init_hour"] == int(init_hour)) & (pw["method"] == method)
+                        & (pw["variable"] == var)]
+        board = _board(part, pw_var, model_idx, lead2)
+        board["variable"] = var
+        board["variable_label"] = _sentence(VAR_LABEL.get(var, var))
+        sampled.append(board)
+
     matrix = _lead_matrix(sub, model_idx, leads)
     avail = sc[
         (sc["station_id"] == ALL_STATIONS) & (sc["window"] == "all")
@@ -843,11 +1179,13 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         & (sc["method"] == method) & (sc["lead_day"] == 1)
     ]
     availability, avail_start, avail_end = _availability(avail, model_idx)
-    map_points, map_rows = _map_points(sc, station_idx, view, model_idx)
+    maps = _bias_maps(sc, station_idx, view, model_idx)
 
     return env.get_template("index.html").render(
         **base_ctx,
         boards=boards,
+        sampled=sampled,
+        sampled_lead=lead2,
         spark_leads=list(SPARK_LEADS),
         headline=headline,
         matrix=matrix,
@@ -856,18 +1194,16 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         init_hour=f"{int(init_hour):02d}",
         method=method,
         variable=variable,
-        variable_label=VAR_LABEL[variable],
+        variable_label=VAR_LABEL.get(variable, variable),
+        variable_truth=VAR_TRUTH.get(variable, "the matching observation"),
+        is_headline=variable == HEADLINE_VARIABLE,
         n_stations=n_stations,
         variants=_variant_links("/", view, _DIMS4),
         availability=availability,
         avail_start=avail_start,
         avail_end=avail_end,
         station_links=station_links,
-        map_svg=Markup(svg.us_map(
-            map_points,
-            label=(f"Mean bias in °F of each station's best model, lead day 1, "
-                   f"{VAR_LABEL[variable]}, {window} window, {int(init_hour):02d}Z, {method}"))),
-        map_rows=map_rows,
+        maps=maps,
         canonical=f"{SITE_URL}{_view_href('/', view)}",
     )
 
@@ -903,23 +1239,53 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
         r["mark"] = ""
         r["mark_title"] = ""
         r["best_mae"] = r["best_skill"] = False
+        # A1: the baseline's own n is its whole record, not the intersection the skill column
+        # divides by, and saying so is the only way the two numbers stop contradicting each other.
+        if r["baseline"]:
+            r["n_note"] = "all days"
     return {"lead": lead, "rows": ranked + others, "leader": leader,
             "leader_name": _mname(model_idx, leader) if leader else "",
-            "n_ranked": len(ranked), "any_ranked": bool(ranked)}
+            "n_ranked": len(ranked), "any_ranked": bool(ranked),
+            "holm": _has_holm(pw_sub)}
 
 
 _MARK_TITLE = {
     "★": "lowest MAE in this view",
-    "=": "not distinguishable from the leader (95 % interval of the paired difference includes 0)",
-    "▼": "significantly worse than the leader (95 % interval excludes 0)",
-    "▲": "significantly better than the leader on their common days",
+    "=": "not distinguishable from the leader after the Holm correction within this table",
+    "▼": "worse than the leader; distinguishable after the Holm correction within this table",
+    "▲": "better than the leader on their common days; distinguishable after the Holm correction",
     "·": "no paired comparison available",
 }
 
+#: Columns that may carry the corrected verdict, newest name first.
+_HOLM_COLUMNS = ("distinguishable_holm",)
+_UNCORRECTED_COLUMNS = ("distinguishable_uncorrected", "significant")
+
+
+def _has_holm(pw_sub: pd.DataFrame | None) -> bool:
+    return (pw_sub is not None and len(pw_sub) > 0
+            and any(c in pw_sub.columns for c in _HOLM_COLUMNS))
+
+
+def _flag(row, columns: tuple[str, ...]):
+    for c in columns:
+        v = row.get(c)
+        if v is not None and not _isnan(v):
+            return bool(v)
+    return None
+
 
 def _significance(pw_sub: pd.DataFrame, lead: int, leader: str | None) -> dict[str, str]:
-    """Symbol per model: is its MAE distinguishable from the leader's on their common days?"""
+    """Symbol per model: is its MAE distinguishable from the leader's *after* the Holm correction?
+
+    Only ``distinguishable_holm`` is marked (review B2).  Every displayed table compares a family
+    of models against one leader, so an uncorrected 95 % interval would call roughly one in twenty
+    of them apart by chance; the uncorrected verdict is still published, but only in the pairwise
+    table on the permanent link, where it is one labelled column among several.
+    """
     if leader is None or pw_sub is None or len(pw_sub) == 0:
+        return {}
+    if not _has_holm(pw_sub):
         return {}
     g = pw_sub[pw_sub["lead_day"] == int(lead)]
     if g.empty:
@@ -932,7 +1298,8 @@ def _significance(pw_sub: pd.DataFrame, lead: int, leader: str | None) -> dict[s
             other, sign = r["model_a"], 1.0
         else:
             continue
-        if not bool(r["significant"]):
+        flag = _flag(r, _HOLM_COLUMNS)
+        if not flag:
             out[other] = "="
         else:
             diff = sign * float(r["mae_diff"])  # other − leader
@@ -979,33 +1346,84 @@ def _lead_matrix(sub: pd.DataFrame, model_idx: dict, leads: list[int]) -> dict:
     return {"leads": use_leads, "rows": rows, "spark_leads": list(SPARK_LEADS)}
 
 
-def _map_points(sc: pd.DataFrame, station_idx: dict, view,
-                model_idx: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """One dot per station: bias of the leading model at lead day 1 in this view."""
+def _bias_maps(sc: pd.DataFrame, station_idx: dict, view, model_idx: dict | None = None
+               ) -> list[dict]:
+    """Two maps: one fixed reference model, and the mean over all models (review A6).
+
+    The previous map coloured each station by the bias of *its own best model*, which is a
+    winner's-curse picture: on 16–28 days the winner at a station is largely noise, and the map
+    invited exactly the reading ("this model is better here") that the sample cannot support.  A
+    fixed reference and an all-model mean are both answerable questions.
+    """
     window, init_hour, method, variable = view
     sub = sc[(sc["station_id"] != ALL_STATIONS) & (sc["window"] == window)
              & (sc["init_hour"] == int(init_hour)) & (sc["method"] == method)
              & (sc["variable"] == variable) & (sc["lead_day"] == 1)
              & (sc["model_id"] != PERSISTENCE_ID)]
     if sub.empty:
-        return [], []
+        return []
+    label_var = VAR_LABEL.get(variable, variable)
+    scope = f"lead day 1, {label_var}, {window} window, {int(init_hour):02d}Z, {method}"
+    maps = []
+
+    ref = sub[sub["model_id"] == REFERENCE_MODEL]
+    if not ref.empty:
+        points, rows = _map_rows(ref, station_idx, model_idx, per_model=True)
+        maps.append({
+            "key": "reference",
+            "title": f"{_mname(model_idx, REFERENCE_MODEL)} bias",
+            "caption": (f"Mean bias of the fixed reference model "
+                        f"{_mname(model_idx, REFERENCE_MODEL)} ({scope}). One model everywhere, so "
+                        f"the colours compare stations, not models."),
+            "svg": Markup(svg.us_map(points, label=f"Mean bias in °F of "
+                                                   f"{_mname(model_idx, REFERENCE_MODEL)}, {scope}")),
+            "rows": rows, "per_model": True,
+        })
+
+    points, rows = _map_rows(sub, station_idx, model_idx, per_model=False)
+    maps.append({
+        "key": "mean",
+        "title": "All-model mean bias",
+        "caption": (f"Mean bias averaged over every scored model at each station ({scope}). A "
+                    f"station that is cold for all of them is a station property — elevation, "
+                    f"coastline, a grid cell that is partly sea — not a model ranking."),
+        "svg": Markup(svg.us_map(points, label=f"All-model mean bias in °F, {scope}")),
+        "rows": rows, "per_model": False,
+    })
+    return maps
+
+
+def _map_rows(sub: pd.DataFrame, station_idx: dict, model_idx: dict | None,
+              per_model: bool) -> tuple[list[dict], list[dict]]:
     points, rows = [], []
     for sid, grp in sub.groupby("station_id", observed=True):
-        best = grp.sort_values("mae").iloc[0]
         st = station_idx.get(sid)
-        bias_f = _f(best["bias"])
-        sig = not (_isnan(best["bias_ci_low"]) or _isnan(best["bias_ci_high"])) and not (
-            float(best["bias_ci_low"]) <= 0.0 <= float(best["bias_ci_high"]))
+        if per_model:
+            r0 = grp.iloc[0]
+            bias_c = float(r0["bias"]) if not _isnan(r0["bias"]) else None
+            mae_s = f_delta(r0["mae"])
+            n = int(r0["n"])
+            sig = not (_isnan(r0.get("bias_ci_low")) or _isnan(r0.get("bias_ci_high"))) and not (
+                float(r0["bias_ci_low"]) <= 0.0 <= float(r0["bias_ci_high"]))
+            note = _mname(model_idx, r0["model_id"])
+            n_models = 1
+        else:
+            bias_c = float(grp["bias"].mean()) if grp["bias"].notna().any() else None
+            mae_s = f_delta(grp["mae"].mean())
+            n = int(grp["n"].max())
+            sig = True  # a mean over models has no interval of its own; colour by magnitude
+            n_models = int(grp["model_id"].nunique())
+            note = f"{n_models} models"
+        bias_f = None if bias_c is None else bias_c * C_TO_F_DELTA
         row = {
             "id": sid, "name": st.name if st else sid,
             "lat": st.lat if st else None, "lon": st.lon if st else None,
-            "n": int(best["n"]), "model_id": best["model_id"],
-            "model_name": _mname(model_idx, best["model_id"]),
-            "mae": f_delta(best["mae"]), "bias": f_signed(best["bias"]),
+            "n": n, "n_models": n_models, "note": note,
+            "mae": mae_s, "bias": "—" if bias_c is None else f_signed(bias_c),
             "bias_class": svg.bias_class(bias_f, sig),
-            "sign": "" if bias_f is None else ("+" if bias_f > 0 else "−"),
+            "sign": "" if not bias_f else ("+" if bias_f > 0 else "−"),
             "href": f"/station/{sid}/",
-            "low_n": int(best["n"]) < MIN_N,
+            "low_n": n < MIN_N,
         }
         rows.append(row)
         if row["lat"] is not None:
@@ -1063,8 +1481,30 @@ def _grid_html(env, template, base_ctx, sub, view2, leads, model_idx, *, row_key
         & (sub["init_hour"] == int(init_hour))
         & (sub["method"] == method)
     ]
+    blocks = _var_blocks(part, PAGE_VARIABLES, leads, model_idx, row_key,
+                         station_fixed, model_fixed)
+    secondary = _var_blocks(part, CLI_VARIABLES, leads, model_idx, row_key,
+                            station_fixed, model_fixed)
+    ctx = dict(base_ctx)
+    ctx.update(extra or {})
+    return env.get_template(template).render(
+        **ctx, blocks=blocks, secondary_blocks=secondary, leads=leads,
+        spark_leads=list(SPARK_LEADS),
+        window=window,
+        window_label="all available history" if window == "all" else f"the last {window[:-1]} days",
+        init_hour=f"{int(init_hour):02d}", method=method,
+    )
+
+
+def _sentence(text: str) -> str:
+    """First letter upper-cased and nothing else touched, so ``NWS CLI`` survives a heading."""
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _var_blocks(part, variables, leads, model_idx, row_key, station_fixed, model_fixed):
+    """One MAE grid per variable that has any row, in the order given."""
     blocks = []
-    for var in VARIABLES:
+    for var in variables:
         p = part[part["variable"] == var]
         if p.empty:
             continue
@@ -1113,15 +1553,11 @@ def _grid_html(env, template, base_ctx, sub, view2, leads, model_idx, *, row_key
                 row["spark"], label=f"{row['name']} MAE by lead day 1 to 9, {var}",
                 vmax=vmax or None))
         flagged = max((c["n_flagged"] for row in rows for c in row["cells"] if c), default=0)
-        blocks.append({"variable": var, "rows": rows, "flagged": flagged})
-    ctx = dict(base_ctx)
-    ctx.update(extra or {})
-    return env.get_template(template).render(
-        **ctx, blocks=blocks, leads=leads, spark_leads=list(SPARK_LEADS),
-        window=window,
-        window_label="all available history" if window == "all" else f"the last {window[:-1]} days",
-        init_hour=f"{int(init_hour):02d}", method=method,
-    )
+        blocks.append({"variable": var, "label": _sentence(VAR_LABEL.get(var, var)),
+                       "truth": VAR_TRUTH.get(var, "the matching observation"),
+                       "headline": var == HEADLINE_VARIABLE,
+                       "rows": rows, "flagged": flagged})
+    return blocks
 
 
 def _pair_views(grp: pd.DataFrame | None, model_id: str,
@@ -1139,13 +1575,18 @@ def _pair_views(grp: pd.DataFrame | None, model_id: str,
         lo, hi = r["ci_low"], r["ci_high"]
         if sign < 0:
             lo, hi = (None if _isnan(hi) else -hi), (None if _isnan(lo) else -lo)
+        holm = _flag(r, _HOLM_COLUMNS)
+        unc = _flag(r, _UNCORRECTED_COLUMNS)
+        p_boot = r.get("p_boot")
         out.append({
             "other": other,
             "other_name": _mname(model_idx, other),
             "n_common": int(r["n_common"]),
             "diff": f_signed(sign * r["mae_diff"]),
             "ci": f_ci(lo, hi),
-            "significant": bool(r["significant"]),
+            "p_boot": "—" if _isnan(p_boot) else f"{float(p_boot):.3f}",
+            "holm": "—" if holm is None else ("yes" if holm else "no"),
+            "uncorrected": "—" if unc is None else ("yes" if unc else "no"),
         })
     return sorted(out, key=lambda d: d["other"])
 
@@ -1176,15 +1617,22 @@ def _recent_truth(truth_sel: pd.DataFrame, station_id: str) -> list[dict]:
 # permanent links
 # ------------------------------------------------------------------------------------------
 
+#: Display order of the variables on a permanent link: headline, per-hour, like-for-like, then
+#: the secondary CLI comparisons.
+_VARIABLE_ORDER = {v: i for i, v in enumerate(
+    (HEADLINE_VARIABLE, *HOUR_VARIABLES, *SAMPLED_VARIABLES, *CLI_VARIABLES))}
+
+
 def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, series_idx,
                       month_idx, allday_idx, as_of_s, data_through) -> int:
+    chart_variable = base_ctx.get("chart_variable", DEFAULT_VARIABLE)
     pw_head = pd.DataFrame()
     if len(pw):
         pw_head = pw[
             (pw["window"] == DEFAULT_WINDOW)
             & (pw["init_hour"] == DEFAULT_INIT)
             & (pw["method"] == DEFAULT_METHOD)
-            & (pw["variable"] == DEFAULT_VARIABLE)
+            & (pw["variable"] == chart_variable)
         ]
     pw_idx: dict[tuple[str, int], pd.DataFrame] = {}
     if len(pw_head):
@@ -1195,9 +1643,12 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
     n = 0
     for (sid, mid, lead), grp in sc.groupby(["station_id", "model_id", "lead_day"], observed=True):
         lead = int(lead)
-        grp = grp.assign(_w=grp["window"].map(WINDOW_ORDER).fillna(9))
-        rows = [_row_view(r, sid, mid, lead, model_idx) for _, r in
-                grp.sort_values(["variable", "init_hour", "method", "_w"]).iterrows()]
+        grp = grp.assign(_w=grp["window"].map(WINDOW_ORDER).fillna(9),
+                         _v=grp["variable"].map(_VARIABLE_ORDER).fillna(99))
+        all_rows = [_row_view(r, sid, mid, lead, model_idx) for _, r in
+                    grp.sort_values(["_v", "variable", "init_hour", "method", "_w"]).iterrows()]
+        rows = [r for r in all_rows if not r["secondary"]]
+        secondary_rows = [r for r in all_rows if r["secondary"]]
         pairs = _pair_views(pw_idx.get((sid, lead)), mid, model_idx)
         st = station_idx.get(sid)
         st_name = st.name if st else ("All stations (mean of daily station errors)"
@@ -1208,7 +1659,7 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
             ser["dates"] if ser else [], ser["values"] if ser else [],
             label=(f"Daily forecast minus observed error in °F for {_mname(model_idx, mid)} at "
                    f"{sid}, lead day {lead}, {DEFAULT_INIT:02d}Z {DEFAULT_METHOD} "
-                   f"{DEFAULT_VARIABLE}")))
+                   f"{chart_variable}")))
         hist_svg, hist_rows = svg.histogram(
             allday_idx.get(key, []),
             label=(f"Distribution of the signed daily error in °F for {_mname(model_idx, mid)} "
@@ -1220,7 +1671,7 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
                 for d, v in zip(ser["dates"], ser["values"])
             ][::-1]
         base = f"station/{sid}/model/{mid}/lead/{lead}"
-        _write_permalink_csv(out / base / "errors.csv", sid, mid, lead, ser)
+        _write_permalink_csv(out / base / "errors.csv", sid, mid, lead, ser, chart_variable)
         html = tpl.render(
             **base_ctx,
             station_id=sid, model_id=mid, lead=lead,
@@ -1230,17 +1681,18 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
             model_family=model_idx.get(mid, {}).get("family", mid),
             model_info=model_idx.get(mid, {}),
             segment=_segment_note(grp),
-            n_flagged=max((r["n_flagged"] for r in rows), default=0),
-            rows=rows, pairwise=pairs, pairwise_window=DEFAULT_WINDOW,
+            n_flagged=max((r["n_flagged"] for r in all_rows), default=0),
+            rows=rows, secondary_rows=secondary_rows,
+            pairwise=pairs, pairwise_window=DEFAULT_WINDOW,
+            holm=any(p["holm"] != "—" for p in pairs),
             chart_init=f"{DEFAULT_INIT:02d}", chart_method=DEFAULT_METHOD,
-            chart_variable=DEFAULT_VARIABLE, chart_variable_label=VAR_LABEL[DEFAULT_VARIABLE],
             chart_window=DEFAULT_WINDOW,
             series_days=SERIES_DAYS,
             series_svg=chart, series_rows=series_rows,
             hist_svg=Markup(hist_svg), hist_rows=hist_rows,
             months=month_idx.get(key, [])[::-1][:24],
             availability=_availability(grp[(grp["window"] == "all")
-                                           & (grp["variable"] == DEFAULT_VARIABLE)],
+                                           & (grp["variable"] == chart_variable)],
                                        model_idx)[0],
             json_url=f"/api/v1/scores/{sid}/{mid}/{lead}.json",
             csv_url=f"/{base}/errors.csv",
@@ -1253,7 +1705,8 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
     return n
 
 
-def _write_permalink_csv(path: Path, sid: str, mid: str, lead: int, ser: dict | None) -> None:
+def _write_permalink_csv(path: Path, sid: str, mid: str, lead: int, ser: dict | None,
+                         variable: str = DEFAULT_VARIABLE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["station_id,model_id,lead_day,init_hour,method,variable,climo_date,error_f"]
     if ser:
@@ -1261,7 +1714,7 @@ def _write_permalink_csv(path: Path, sid: str, mid: str, lead: int, ser: dict | 
             if v is None:
                 continue
             lines.append(f"{sid},{mid},{lead},{DEFAULT_INIT},{DEFAULT_METHOD},"
-                         f"{DEFAULT_VARIABLE},{d},{v:.4f}")
+                         f"{variable},{d},{v:.4f}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1270,10 +1723,32 @@ def _write_permalink_csv(path: Path, sid: str, mid: str, lead: int, ser: dict | 
 # ------------------------------------------------------------------------------------------
 
 def _prune_variants(out: Path) -> None:
-    """Delete the generated ``v/`` view directories so a renamed slug cannot survive a rebuild."""
+    """Delete the generated ``v/`` view directories so a renamed slug cannot survive a rebuild.
+
+    Also removes the ``name 2`` copies macOS creates when a directory is written twice while a
+    sync client holds it open: they are duplicates of real pages, they get deployed, and they
+    count against the 20 000-file limit of Cloudflare Pages.
+    """
     for path in (out / "v", *(out / "station").glob("*/v"), *(out / "model").glob("*/v")):
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
+    for path in out.rglob("* 2"):
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            log.info("removed macOS duplicate directory %s", path)
+    for path in list(out.rglob("* 2.*")):
+        if path.is_file():
+            path.unlink(missing_ok=True)
+
+
+def _tree_size(out: Path) -> tuple[int, int]:
+    """``(files, bytes)`` of everything that will be deployed."""
+    n = total = 0
+    for p in out.rglob("*"):
+        if p.is_file():
+            n += 1
+            total += p.stat().st_size
+    return n, total
 
 
 def _write_assets(out: Path) -> dict[str, str]:
@@ -1291,7 +1766,9 @@ def _write_assets(out: Path) -> dict[str, str]:
     asset_dir.mkdir(parents=True, exist_ok=True)
     urls: dict[str, str] = {}
     for f in sorted(ASSETS.glob("*")):
-        if not f.is_file():
+        # Only what the pages link. The assets directory also holds generated Python data (the
+        # public-domain coastline path), which belongs in the build, not in public/.
+        if not f.is_file() or f.suffix not in {".css", ".js", ".svg", ".woff2"}:
             continue
         data = f.read_bytes()
         digest = hashlib.sha256(data).hexdigest()[:10]
@@ -1354,10 +1831,22 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
     days = report.get("days", 0)
 
     def bar(rows, key_yes, key_part, label):
-        flags = ["yes" if d.get(key_yes) else ("part" if d.get(key_part) else "no") for d in rows]
-        pct = 100.0 * sum(1 for f in flags if f == "yes") / max(len(flags), 1)
+        # A day the model was never expected to have — before it entered the record, or an
+        # initialization the upstream archive did not produce — is drawn as an empty slot and
+        # left out of the percentage entirely (review B8).
+        flags = []
+        for d in rows:
+            if d.get("expected", True) is False:
+                flags.append("na")
+            elif d.get(key_yes):
+                flags.append("yes")
+            else:
+                flags.append("part" if d.get(key_part) else "no")
+        counted = [f for f in flags if f != "na"]
+        pct = 100.0 * sum(1 for f in counted if f == "yes") / max(len(counted), 1)
         return {"svg": Markup(svg.availability_row(flags, label=label)),
-                "uptime": f"{pct:.1f}%", "flags": flags}
+                "uptime": f"{pct:.1f}%" if counted else "—", "flags": flags,
+                "n_counted": len(counted), "n_na": len(flags) - len(counted)}
 
     names = names or display_names()
     model_bars = []
@@ -1384,6 +1873,31 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
             "overall": overall, "overall_text": text}
 
 
+#: 6.5 K per km is the standard-atmosphere lapse rate; the first-order magnitude of the
+#: representativeness error a station's height difference imposes (review B7, DESIGN §10.4).
+LAPSE_K_PER_M = 6.5 / 1000.0
+
+
+def _station_field(st, name: str):
+    """A station attribute that may not exist yet in this build's ``config.Station``."""
+    return getattr(st, name, None)
+
+
+def _station_dz(st) -> float | None:
+    dz = _station_field(st, "dz_m")
+    if dz is not None:
+        return round(float(dz), 1)
+    elev, grid = _station_field(st, "elev_m"), _station_field(st, "grid_elev_m")
+    if elev is None or grid is None:
+        return None
+    return round(float(elev) - float(grid), 1)
+
+
+def _station_lapse(st) -> float | None:
+    dz = _station_dz(st)
+    return None if dz is None else round(abs(dz) * LAPSE_K_PER_M, 2)
+
+
 def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> list[dict]:
     """Write the bulk CSVs under ``/data/`` and describe them for the page."""
     d = out / "data"
@@ -1397,15 +1911,19 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
         items.append({"name": name, "href": f"/data/{name}", "what": what,
                       "size": _human_size(p.stat().st_size), "rows": n_rows})
 
-    if scores is not None and len(scores):
-        # 4 dp in °C is 0.0001 °C — far finer than anything measurable here, and it keeps the
-        # published CSV a third smaller than float64 repr would.
-        scores.round(4).to_csv(d / "scores_latest.csv", index=False)
-    else:
-        (d / "scores_latest.csv").write_text(",".join(SCORE_COLUMNS) + "\n", encoding="utf-8")
-    add("scores_latest.csv", "every published aggregate: station × model × init × lead × variable "
-        "× method × window, with n, MAE, bias, RMSE, hit rates, skill and bootstrap intervals "
-        "(values in °C).", len(scores) if scores is not None else 0)
+    # gzip: the uncompressed table passed 20 MB in August 2026 and Cloudflare Pages refuses a
+    # single file above 25 MiB, so the plain .csv is not published at all.
+    (d / "scores_latest.csv").unlink(missing_ok=True)
+    with gzip.open(d / "scores_latest.csv.gz", "wt", encoding="utf-8", newline="") as f:
+        if scores is not None and len(scores):
+            # 4 dp in °C is 0.0001 °C — far finer than anything measurable here, and it keeps the
+            # published CSV a third smaller than float64 repr would.
+            scores.round(4).to_csv(f, index=False)
+        else:
+            f.write(",".join(SCORE_COLUMNS) + "\n")
+    add("scores_latest.csv.gz", "every published aggregate: station × model × init × lead × "
+        "variable × method × window, with n, MAE, bias, RMSE, hit rates, skill and bootstrap "
+        "intervals (values in °C).", len(scores) if scores is not None else 0)
 
     with gzip.open(d / "pairwise_latest.csv.gz", "wt", encoding="utf-8", newline="") as f:
         if pairwise is not None and len(pairwise):
@@ -1432,14 +1950,19 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
         "the forecast, the observation and the signed error (°C). This is the file to download if "
         "you want to recompute anything.", n_err)
 
-    st_lines = ["station_id,name,cli_pil,tz,std_offset_h,lat,lon,elev_m,kalshi"]
+    st_lines = ["station_id,name,cli_pil,iem_id,tz,std_offset_h,lat,lon,elev_m,grid_elev_m,dz_m,"
+                "lapse_k,market_city"]
     for s in stations:
         st_lines.append(",".join(str(x) if x is not None else "" for x in (
-            s.id, f'"{s.name}"', s.cli_pil, s.tz, s.std_offset_h, s.lat, s.lon, s.elev_m,
-            s.kalshi or "")))
+            s.id, f'"{s.name}"', s.cli_pil, _station_field(s, "iem_id") or "", s.tz,
+            s.std_offset_h, s.lat, s.lon, s.elev_m,
+            _station_field(s, "grid_elev_m"), _station_dz(s), _station_lapse(s),
+            _station_field(s, "market_city") or "")))
     (d / "stations.csv").write_text("\n".join(st_lines) + "\n", encoding="utf-8")
-    add("stations.csv", "station metadata: identifier, name, truth product, fixed standard UTC "
-        "offset, coordinates and elevation.", len(stations))
+    add("stations.csv", "station metadata: identifier, name, truth product, IEM archive id, fixed "
+        "standard UTC offset, coordinates, station elevation, the mean elevation of the 0.25° grid "
+        "cell, their difference and its first-order lapse-rate magnitude, and the "
+        "temperature-contract city the station was selected for.", len(stations))
 
     md_lines = ["model_id,family,source,product,init_field,inits,step_h,max_h,native_extremes"]
     for m in models:
@@ -1453,11 +1976,58 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
     return items
 
 
-def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads) -> None:
+def _revision_impact(truth: pd.DataFrame | None) -> dict:
+    """How much the first-final policy actually costs (review C4).
+
+    Every score is computed from the *first* final CLI report and never rewritten; a later
+    corrected report is stored alongside it.  This counts the corrections and measures how far
+    they moved the number, which is the upper bound on what the policy hides.
+    """
+    empty = {"n_days": 0, "n_revised": 0, "rows": [], "max": None, "any": False}
+    if truth is None or len(truth) == 0 or "revised" not in truth.columns:
+        return empty
+    t = truth.copy()
+    t = t[t["source"] == "CLI"] if "source" in t.columns else t
+    if "is_final" in t.columns:
+        t = t[t["is_final"].fillna(False).astype(bool)]
+    if not len(t):
+        return empty
+    rows = []
+    biggest = 0.0
+    n_revised = int(t["revised"].fillna(False).astype(bool).sum())
+    for var, first, later in (("daily maximum", "tmax_f", "revised_tmax_f"),
+                              ("daily minimum", "tmin_f", "revised_tmin_f")):
+        if first not in t.columns or later not in t.columns:
+            continue
+        d = pd.to_numeric(t[later], errors="coerce") - pd.to_numeric(t[first], errors="coerce")
+        d = d[d.notna() & (d != 0)]
+        if not len(d):
+            rows.append({"variable": var, "n": 0, "mean": "—", "p50": "—", "max": "—",
+                         "share": "0%"})
+            continue
+        biggest = max(biggest, float(d.abs().max()))
+        rows.append({
+            "variable": var, "n": int(len(d)),
+            "mean": f"{float(d.mean()):+.2f}",
+            "p50": f"{float(d.median()):+.1f}",
+            "max": f"{float(d.abs().max()):.0f}",
+            "share": f"{100.0 * len(d) / max(len(t), 1):.2f}%",
+        })
+    return {"n_days": int(len(t)), "n_revised": n_revised, "rows": rows,
+            "max": f"{biggest:.0f}" if biggest else None,
+            "any": any(r["n"] for r in rows)}
+
+
+def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
+                truth: pd.DataFrame | None = None) -> None:
     api_written = api_written or {}
     endpoints = [
-        ("scores/latest.json", "every published score (all stations, models, leads, windows)",
-         api_written.get("scores/latest.json", len(scores))),
+        ("scores/index.json", "the index of the sharded scores export: which stations, models, "
+         "leads and views exist and where each shard is",
+         api_written.get("scores/index.json", 1)),
+        ("scores/by-station/{station}.json", "every score for one station, one file per station "
+         "(the shards the index points at)",
+         api_written.get("scores/by-station/{station}.json", "—")),
         ("scores/leaderboard.json", "the station_id=ALL slice used by the front page",
          api_written.get("scores/leaderboard.json", "—")),
         ("leaderboard/{window}-{init}z-{method}-{variable}.json",
@@ -1476,12 +2046,20 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads) -> N
     ]
     schemas = [
         {"name": "forecast_values", "what": "one extracted station value per model run, valid "
-         "time, variable and interpolation method (DESIGN §3.1).",
+         "time, variable and interpolation method (DESIGN §3.1). This is the 6-hourly "
+         "instantaneous layer: the only table that is untouched by any daily-extreme definition, "
+         "and the one to start from to re-derive everything else or to check a claim about "
+         "diurnal amplitude.",
          "columns": ["model_id", "model_version", "init_time", "valid_time", "lead_h",
                      "station_id", "variable", "bucket_h", "method", "value_c", "missing_reason",
                      "source_url", "fetched_at"]},
+        {"name": "truth_instant", "what": "the observed 2 m temperature at the four common "
+         "synoptic instants — the routine METAR nearest the hour within ±35 minutes (DESIGN "
+         "§10.1). This is the truth for the headline t2 variables and for tmax_s/tmin_s.",
+         "columns": _TRUTH_INSTANT_COLUMNS},
         {"name": "truth_daily", "what": "one row per station-day-source with the first-final "
-         "policy and QC flags (DESIGN §3.2).", "columns": TRUTH_COLUMNS},
+         "policy and QC flags (DESIGN §3.2). Truth for the secondary tmax_cli/tmin_cli.",
+         "columns": TRUTH_COLUMNS},
         {"name": "daily_forecasts", "what": "sampled and native daily extremes per model run, "
          "station and climatological day (DESIGN §3.3).", "columns": DAILY_COLUMNS},
         {"name": "scores", "what": "published aggregates with bootstrap intervals (DESIGN §3.4).",
@@ -1502,7 +2080,8 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads) -> N
                     "what": what, "n": n} for p, what, n in endpoints],
         schemas=schemas,
         downloads=downloads,
-        changelog=CHANGELOG,
+        changelog=changelog_entries(),
+        revisions=_revision_impact(truth),
         limitations=LIMITATIONS,
         data_citation=(
             f"CastCheck (2026). Station-level verification of raw weather-model 2 m temperature "
@@ -1519,20 +2098,33 @@ def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
     """
     names = _display_map(model_idx)
     head = pd.DataFrame()
+    variable = _pick_series_variable(scores)
     if scores is not None and len(scores):
         sc = scores
         head = sc[(sc["window"] == DEFAULT_WINDOW) & (sc["init_hour"].astype(int) == DEFAULT_INIT)
-                  & (sc["method"] == DEFAULT_METHOD) & (sc["variable"] == DEFAULT_VARIABLE)
+                  & (sc["method"] == DEFAULT_METHOD) & (sc["variable"] == variable)
                   & (sc["lead_day"].astype(int) == 1)]
+
+    # A4: the persistence baseline is not a forecast system, and counting its days here made every
+    # station read 90 scored days while the model pages said 16–28. Only real models count.
+    forecast_ids = {mid for mid, info in model_idx.items() if not info.get("baseline")}
+    head_models = head[head["model_id"].isin(forecast_ids)] if len(head) else head
 
     st_rows = []
     for st in stations:
-        part = head[head["station_id"] == st.id] if len(head) else head
+        part = head_models[head_models["station_id"] == st.id] if len(head_models) else head_models
         n = int(part["n"].max()) if len(part) else 0
+        dz = _station_dz(st)
+        grid = _station_field(st, "grid_elev_m")
+        lapse = _station_lapse(st)
         st_rows.append({
             "id": st.id, "name": st.name, "cli_pil": st.cli_pil, "tz": st.tz,
             "offset": f"{st.std_offset_h:+d}",
             "elev": "—" if st.elev_m is None else f"{st.elev_m:.0f} m",
+            "grid_elev": "—" if grid is None else f"{float(grid):.0f} m",
+            "dz": "—" if dz is None else f"{dz:+.0f} m",
+            "lapse": "—" if lapse is None else f"{lapse:.1f} K",
+            "market_city": _station_field(st, "market_city") or "—",
             "n": n or "—", "n_models": int(part["model_id"].nunique()) if len(part) else "—",
             "low_n": n < MIN_N,
         })
@@ -1557,7 +2149,8 @@ def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
         })
 
     shared = {"window_label": f"the last {DEFAULT_WINDOW[:-1]} days",
-              "init_hour": f"{DEFAULT_INIT:02d}", "method": DEFAULT_METHOD}
+              "init_hour": f"{DEFAULT_INIT:02d}", "method": DEFAULT_METHOD,
+              "variable": variable, "variable_label": VAR_LABEL.get(variable, variable)}
     w.write("stations/index.html",
             env.get_template("stations.html").render(**base_ctx, **shared, rows=st_rows))
     w.write("models/index.html",
@@ -1577,14 +2170,15 @@ def _feed_entries(sc: pd.DataFrame, model_idx: dict, as_of_s: str, built_at: str
         dates = sorted((p.stem for p in hist.glob("*.parquet")), reverse=True)[:30]
     if as_of_s not in dates:
         dates = [as_of_s, *dates]
+    variable = _pick_series_variable(sc)
     board = sc[(sc["station_id"] == ALL_STATIONS) & (sc["window"] == DEFAULT_WINDOW)
                & (sc["init_hour"] == DEFAULT_INIT) & (sc["method"] == DEFAULT_METHOD)
-               & (sc["variable"] == DEFAULT_VARIABLE) & (sc["lead_day"] == 1)
+               & (sc["variable"] == variable) & (sc["lead_day"] == 1)
                & (sc["model_id"] != PERSISTENCE_ID)]
     board = board[board["n"] >= MIN_N] if len(board) else board
     if len(board):
         top = board.sort_values("mae").iloc[0]
-        summary = (f"Lead day 1, daily maximum, {DEFAULT_WINDOW} window, "
+        summary = (f"Lead day 1, {VAR_LABEL.get(variable, variable)}, {DEFAULT_WINDOW} window, "
                    f"{DEFAULT_INIT:02d}Z, {DEFAULT_METHOD}: lowest MAE is "
                    f"{f_delta(top['mae'])} °F ({_mname(model_idx, top['model_id'])}, "
                    f"n = {int(top['n'])}).")

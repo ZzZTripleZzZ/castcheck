@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -24,7 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 import typer
 
 from . import __version__
-from .config import PUBLIC_DIR, ModelSpec, load_models, load_stations, model_by_id
+from .config import PUBLIC_DIR, REPO_ROOT, ModelSpec, load_models, load_stations, model_by_id
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="CastCheck — forecast verification pipeline")
 publish_app = typer.Typer(no_args_is_help=True, help="Optional publishing targets (token-gated)")
@@ -102,11 +103,12 @@ def _journal(command: str):
         raise
     except Exception as exc:
         status, code = "error", 1
-        parts.append(f"{type(exc).__name__}: {exc}")
+        detail = redact(exc, limit=160)
+        parts.append(f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__)
         raise
     finally:
         dt = time.monotonic() - t0
-        summary = "; ".join(p for p in parts if p)
+        summary = redact("; ".join(p for p in parts if p), limit=500)
         log.info("%s %s in %.1fs — %s", command, status, dt, summary or "(no summary)")
         record_run(command, status=status, summary=summary, started_at=started, duration_s=dt,
                    exit_code=code)
@@ -116,6 +118,43 @@ def _journal(command: str):
             _http.log_summary()
         except ImportError:  # pragma: no cover - _http is always importable in practice
             pass
+
+
+# --------------------------------------------------------------------------- redaction
+
+#: ``data/raw/last_run.json`` is committed to a public repository, so everything that reaches it is
+#: scrubbed first. These patterns are ordered: query strings go before token shapes, so that a
+#: credential carried as a URL parameter is removed with the query rather than left behind as a
+#: bare word.
+_REDACTIONS = (
+    # ``https://host/path?key=secret`` -> ``https://host/path?…``
+    (re.compile(r"(https?://[^\s?#]+)\?[^\s]*"), r"\1?…"),
+    # long opaque strings: API keys, bearer tokens, AWS ids, signatures
+    (re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{24,}\b"), "…"),
+    # anything that names itself a secret, whatever it holds
+    (re.compile(r"(?i)\b(token|secret|password|passwd|api[_-]?key|authorization)\b\s*[:=]\s*\S+"),
+     r"\1=…"),
+)
+
+
+def redact(text: str, limit: int = 300) -> str:
+    """One short, safe line: no absolute paths, no query strings, no token-shaped words.
+
+    Journal entries and their summaries end up in a public file, and the things that land in them
+    are exception messages — the least curated strings in the process. An upstream library is free
+    to put a signed URL, a home directory or an API key into ``str(exc)``, so the journal treats
+    every message as untrusted rather than trusting each library not to.
+    """
+    s = " ".join(str(text).split())
+    if not s:
+        return ""
+    # absolute paths inside the repo become repo-relative; any other absolute path keeps its last
+    # two components only, which is enough to identify the file and says nothing about the machine
+    s = s.replace(str(REPO_ROOT) + os.sep, "").replace(str(REPO_ROOT), ".")
+    s = re.sub(r"(?:/[^/\s:,'\"]+){3,}", lambda m: ".../" + "/".join(m.group(0).split("/")[-2:]), s)
+    for pattern, repl in _REDACTIONS:
+        s = pattern.sub(repl, s)
+    return s[:limit]
 
 
 def _now() -> datetime:
@@ -338,32 +377,114 @@ def truth_backfill(start: str, end: str, stations: str = ""):
         summary.append(f"{start}..{end}: {len(rows)} rows, {len(sts)} station(s)")
 
 
-@app.command()
-def derive():
-    """Recompute daily_forecasts from forecast_values (full re-derivation, idempotent)."""
-    with _journal("derive") as summary:
-        from .derive import daily_from_values
-        from .store import read_forecast_values, write_daily
+def _instant_summary(rows) -> str:
+    n = len(rows)
+    if not n:
+        return "0 instants"
+    n_val = int(rows["temp_c"].notna().sum())
+    flags = rows.loc[rows["qc_flag"] != "", "qc_flag"].value_counts().to_dict()
+    flag_txt = " ".join(f"{k}={v}" for k, v in sorted(flags.items()))
+    return f"{n} instants, {n_val} with a value ({100 * n_val / n:.1f}%)" + (f", {flag_txt}" if flag_txt else "")
 
-        values = read_forecast_values()
-        daily = daily_from_values(values, load_stations(), load_models())
-        typer.echo(f"{len(values)} values -> {len(daily)} daily rows -> {write_daily(daily)}")
-        summary.append(f"{len(values)} values -> {len(daily)} daily rows")
+
+@app.command("truth-instant")
+def truth_instant(day: str = typer.Option("", "--date", help="UTC date YYYY-MM-DD (default: UTC yesterday)"),
+                  stations: str = typer.Option("", help="comma-separated ICAO subset")):
+    """Observed 2 m temperature at 00/06/12/18 UTC for one day, from api.weather.gov.
+
+    This is the recent-days path: the IEM ASOS archive lags real time, so the daily pipeline fills
+    the last week from the live API and ``truth-instant-backfill`` overwrites it with the archive
+    later (a value always beats a gap, and the archive always beats the API).
+    """
+    with _journal("truth-instant") as summary:
+        from .store import upsert_truth_instant
+        from .truth_instant import truth_instant_for_day
+
+        d = date.fromisoformat(day) if day else (_now().date() - timedelta(days=1))
+        sts = _station_subset(stations)
+        rows = truth_instant_for_day(sts, d)
+        out = upsert_truth_instant(rows)
+        typer.echo(f"{d}: {_instant_summary(rows)} -> {out}")
+        summary.append(f"{d}: {_instant_summary(rows)}")
+
+
+@app.command("truth-instant-backfill")
+def truth_instant_backfill(start: str, end: str, stations: str = "", workers: int = 3):
+    """Observed 2 m temperature at 00/06/12/18 UTC for a date range, from the IEM ASOS archive."""
+    with _journal("truth-instant-backfill") as summary:
+        from .store import upsert_truth_instant
+        from .truth_instant import coverage, truth_instant_for_range
+
+        sts = _station_subset(stations)
+        rows = truth_instant_for_range(sts, date.fromisoformat(start), date.fromisoformat(end),
+                                       max_workers=workers)
+        out = upsert_truth_instant(rows)
+        typer.echo(f"{start}..{end}: {_instant_summary(rows)} -> {out}")
+        for r in coverage(rows).itertuples():
+            typer.echo(f"  {r.station_id} {r.year}: {r.coverage:.4f} "
+                       f"(no_report={r.no_report} gap={r.gap_gt35min} suspect={r.suspect})")
+        summary.append(f"{start}..{end}: {_instant_summary(rows)}, {len(sts)} station(s)")
+
+
+def _station_subset(stations: str):
+    sts = load_stations()
+    return [s for s in sts if s.id in stations.split(",")] if stations else sts
+
+
+@app.command()
+def derive(
+    since: int = typer.Option(14, "--since", help="re-derive the runs initialised in the last N days"),
+    full: bool = typer.Option(False, "--full", help="re-derive the whole archive instead"),
+):
+    """Recompute daily_forecasts from forecast_values (idempotent).
+
+    The default is incremental: only the shards whose initialisation date falls in the last
+    ``--since`` days are opened, which keeps the daily pipeline O(window) instead of O(archive).
+    ``--full`` reproduces the whole table and needs memory proportional to the whole archive.
+    """
+    with _journal("derive") as summary:
+        from .derive import daily_from_values, derive_window
+        from .store import read_forecast_values, read_truth_instant, write_daily
+
+        if full:
+            values = read_forecast_values()
+            daily = daily_from_values(values, load_stations(), load_models(),
+                                      truth_instant=read_truth_instant())
+            scope = f"{len(values)} values (full)"
+        else:
+            end = _now().date()
+            start = end - timedelta(days=int(since))
+            daily = derive_window(start, end, load_stations(), load_models())
+            scope = f"inits {start}..{end}"
+        typer.echo(f"{scope} -> {len(daily)} daily rows -> {write_daily(daily)}")
+        summary.append(f"{scope} -> {len(daily)} daily rows")
 
 
 @app.command()
 def verify(n_boot: int = 1000):
     """Compute scores and pairwise comparisons from daily_forecasts + truth."""
     with _journal("verify") as summary:
-        import pandas as pd
-
-        from .store import read_daily, read_truth, write_scores
-        from .verify import persistence_daily, score
+        from .derive import instant_errors
+        from .store import (
+            read_daily,
+            read_forecast_values,
+            read_truth,
+            read_truth_instant,
+            write_scores,
+        )
+        from .verify import score
 
         daily = read_daily()
         tr = read_truth()
-        daily = pd.concat([daily, persistence_daily(tr)], ignore_index=True) if len(tr) else daily
-        scores, pairwise = score(daily, tr, n_boot=n_boot)
+        ti = read_truth_instant()
+        instant = None
+        if len(ti):
+            from .derive import DERIVE_VALUE_COLUMNS
+
+            values = read_forecast_values(columns=DERIVE_VALUE_COLUMNS)
+            instant = instant_errors(values, ti, load_stations(), load_models())
+            del values
+        scores, pairwise = score(daily, tr, instant, n_boot=n_boot, truth_instant=ti)
         as_of = _now().strftime("%Y-%m-%d")
         write_scores(scores, pairwise, as_of)
         typer.echo(f"scores={len(scores)} pairwise={len(pairwise)} as_of={as_of}")

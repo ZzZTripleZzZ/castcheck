@@ -2,14 +2,17 @@
 
 **Independent, daily, station-level verification of public weather forecasts.**
 
-Every day CastCheck takes the *raw* 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES, NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational runs of GraphCast, Pangu-Weather, FourCastNet v2 and Aurora from both GFS and IFS initial conditions), extracts them at 23 U.S. airport stations, and scores them against the NWS Daily Climate Report. Every *station × model × lead day* gets a permanent URL with confidence intervals; the full history is an open dataset.
+Every day CastCheck takes the *raw* 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES, NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational runs of GraphCast, Pangu-Weather, FourCastNet v2 and Aurora from both GFS and IFS initial conditions), extracts them at 23 U.S. airport stations, and scores them against observations. Every *station × model × lead day* gets a permanent URL with confidence intervals; the full history is an open dataset.
+
+The headline metric (methodology v0.3) is **`t2`**: the instantaneous 2 m temperature at 00/06/12/18 UTC, verified against the observation at the *same* instants, pooled over the four. Daily extremes are published two ways — `tmax_s`/`tmin_s`, the max/min of the four forecast samples against the max/min of the four *observed* samples (like for like), and `tmax_cli`/`tmin_cli`, the same forecast samples against the true NWS Daily Climate Report extremes. The second carries a sampling penalty whose size depends on each model's own diurnal amplitude, so it is published for operational relevance and never used for ranking.
 
 - Site: https://castcheck.zifanzhang.com
 - Methodology: [METHODOLOGY.md](METHODOLOGY.md) (versioned with the data)
 - Data: Hugging Face `castcheck/temperature-verification` (primary), Kaggle mirror
 - API: `https://castcheck.zifanzhang.com/api/v1/...` (static JSON)
+- Citation metadata: [CITATION.cff](CITATION.cff); every built page carries the source commit in its footer
 
-> **Fairness statement.** These are raw model outputs on the native 0.25° grid, without MOS, bias correction, downscaling or any post-processing. They are not equivalent to the products end users receive, and the scores here understate operational forecast quality. Daily extremes are computed identically for every model from the common 6-hourly instantaneous samples, so the well-known under-sampling of the diurnal cycle affects all models equally.
+> **Fairness statement.** These are raw model outputs on the native 0.25° grid, without MOS, bias correction, downscaling or any post-processing. They are not equivalent to the products end users receive, and the scores here understate operational forecast quality. Every model is sampled at the same four instants, and the headline metric compares those samples with observations at the same instants, so no part of it depends on a model's own diurnal amplitude. Where the comparison is against the true daily extremes instead (`tmax_cli`/`tmin_cli`), it carries a sampling penalty that is *not* equal across models — its size depends on each model's diurnal amplitude — which is why those numbers are labelled secondary and are never ranked.
 
 ## How it works
 
@@ -17,7 +20,8 @@ Every day CastCheck takes the *raw* 2 m temperature forecasts of operational NWP
 ECMWF Open Data (.index byte-range)  ┐
 AWS AIWP (remote lazy NetCDF)        ├─▶ station values ─▶ daily extremes per lead day ─┐
 AWS GFS (.idx byte-range)            ┘                                                   ├─▶ scores + bootstrap CIs ─▶ site / API / datasets
-NWS CLI (first final report), CF6, hourly obs, IEM archive ─▶ truth with QC flags ───────┘
+IEM ASOS (routine METAR at 00/06/12/18 UTC) ─▶ truth_instant ─────────────────────────────┤
+NWS CLI (first final report), CF6, hourly obs, IEM archive ─▶ truth_daily with QC flags ──┘
 ```
 
 All logic lives in importable, tested functions; `castcheck` is a thin CLI over them. Pipelines run on GitHub Actions (with a local launchd mirror) and deploy a static site to Cloudflare Pages. See [DESIGN.md](DESIGN.md).
@@ -28,7 +32,7 @@ All logic lives in importable, tested functions; `castcheck` is a thin CLI over 
 uv venv --python 3.12 && uv pip install -e ".[dev,publish]"
 
 .venv/bin/castcheck fetch --model ifs_hres --init 2026-08-30T00   # one run, all stations
-.venv/bin/castcheck truth --date 2026-08-29                       # NWS climate reports
+.venv/bin/castcheck truth --date 2026-08-29                       # observations and NWS climate reports
 .venv/bin/castcheck daily                                         # derive → verify → build public/
 .venv/bin/castcheck status                                        # completeness; exit 1 if today has gaps
 
@@ -49,6 +53,7 @@ token-gated and all support `--dry-run`:
 
 ECMWF Open Data (CC-BY-4.0) · NOAA/NCEP GFS and NWS products (public domain) · NOAA/CIRA AIWP (open data) · Iowa Environmental Mesonet AFOS archive. CastCheck's published tables are CC-BY-4.0; code is MIT.
 
-Please cite as: *CastCheck, methodology v0.2, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+Please cite as: *CastCheck, methodology v0.3, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+Machine-readable metadata is in [CITATION.cff](CITATION.cff).
 The methodology version that produced a given table is in its own `methodology_version` column, and in
 `castcheck.METHODOLOGY_VERSION`; cite the version you actually used.

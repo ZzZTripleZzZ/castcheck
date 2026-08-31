@@ -5,9 +5,10 @@ Optional and token-gated (``BSKY_HANDLE`` + ``BSKY_APP_PASSWORD``, or ``~/.bsky_
 ``data/raw/bluesky_preview.png`` — under ``raw/``, which is gitignored and excluded from the dataset
 push, so a preview never ends up in a data commit — and the post text and alt text are returned.
 
-What is plotted: mean absolute error of the daily maximum temperature at lead day 1, from the 00Z
-cycle, bilinear interpolation, averaged over all stations (``station_id == "ALL"``), with the
-bootstrap 95 % interval as the error bar. Groups below :data:`castcheck.verify.MIN_N` samples are
+What is plotted: mean absolute error of the headline variable ``t2`` — the instantaneous 2 m
+temperature at 00/06/12/18 UTC, pooled over those four instants and scored against the observation
+at the same instant — at lead day 1, from the 00Z cycle, bilinear interpolation, averaged over all
+stations (``station_id == "ALL"``), with the bootstrap 95 % interval as the error bar. Groups below :data:`castcheck.verify.MIN_N` samples are
 drawn in grey and labelled, per METHODOLOGY §4; if no group in the 90-day window reaches that many
 samples the next wider window is used and the title says so.
 """
@@ -41,7 +42,10 @@ WINDOW_LABEL = {"90d": "last 90 days", "30d": "last 30 days", "365d": "last 365 
 
 LEAD_DAY = 1
 INIT_HOUR = 0
-VARIABLE = "tmax"
+#: METHODOLOGY v0.3: the headline is the instantaneous value at the four common instants, pooled.
+#: Nothing in it depends on a model's own diurnal amplitude, which the sampled daily extremes did.
+VARIABLE = "t2"
+VARIABLE_LABEL = "instantaneous 2 m temperature at 00/06/12/18 UTC"
 METHOD = "bilinear"
 
 
@@ -125,7 +129,7 @@ def build_chart(sel: pd.DataFrame, window: str) -> tuple[bytes, str]:
         ax.text(m + h + right * 0.02, i, note, va="center", fontsize=8,
                 color=MUTED_COLOUR if n >= MIN_N else LOW_N_COLOUR)
 
-    ax.set_xlabel("mean absolute error of daily maximum temperature, °F", fontsize=9, color=TEXT_COLOUR)
+    ax.set_xlabel(f"mean absolute error, {VARIABLE_LABEL}, °F", fontsize=9, color=TEXT_COLOUR)
     ax.set_title(f"Lead day 1 · 00Z · {WINDOW_LABEL.get(window, window)} · 23 U.S. stations",
                  fontsize=12, color=TEXT_COLOUR, loc="left", pad=22)
     ax.text(0, 1.045, "raw model output, no post-processing · bootstrap 95% CI · "
@@ -144,10 +148,11 @@ def build_chart(sel: pd.DataFrame, window: str) -> tuple[bytes, str]:
     plt.close(fig)
 
     parts = ", ".join(f"{lab} {v:.1f} (n={int(n)})" for lab, v, n in zip(labels, mae_f, sel["n"]))
-    alt = (f"Horizontal bar chart, {len(sel)} models, of the mean absolute error in °F of the daily "
-           f"maximum temperature forecast at lead day 1 from the 00Z cycle over the "
-           f"{WINDOW_LABEL.get(window, window)}, averaged over 23 U.S. airport stations, with "
-           f"bootstrap 95% confidence intervals; data through {through}. Values: {parts}.")
+    alt = (f"Horizontal bar chart, {len(sel)} models, of the mean absolute error in °F of the "
+           f"{VARIABLE_LABEL} at lead day 1 from the 00Z cycle over the "
+           f"{WINDOW_LABEL.get(window, window)}, averaged over 23 U.S. airport stations and over "
+           f"the four sample instants, with bootstrap 95% confidence intervals; data through "
+           f"{through}. Values: {parts}.")
     return buf.getvalue(), alt
 
 
@@ -157,9 +162,11 @@ def post_text(sel: pd.DataFrame, window: str) -> str:
     usable = models[models["n"] >= MIN_N]
     best = (usable if len(usable) else models if len(models) else sel).iloc[0]
     mae_f = c_to_f_delta(best["mae"])
-    text = (f"Best raw Tmax forecast at lead day 1 over the {WINDOW_LABEL.get(window, window)}: "
+    text = (f"Best raw 2 m temperature forecast at lead day 1 over the "
+            f"{WINDOW_LABEL.get(window, window)}: "
             f"{display_name(best['model_id'])} ({mae_f:.1f} °F MAE, n={int(best['n'])})\n"
-            f"Raw 0.25° model output, no post-processing, scored against NWS climate reports.\n"
+            f"Instantaneous values at 00/06/12/18 UTC vs the observation at the same instants. "
+            f"Raw 0.25° model output, no post-processing.\n"
             f"{SITE}")
     if len(text) > MAX_POST_CHARS:  # pragma: no cover - guarded by tests on real names
         head, _, tail = text.rpartition("\n")
