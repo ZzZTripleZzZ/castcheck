@@ -1,50 +1,79 @@
 {% extends "base.html" %}
 {% block title %}Status — CastCheck{% endblock %}
+{% block description %}CastCheck pipeline status: model-run and truth completeness for the last 90 days, current gaps and the last run time.{% endblock %}
 {% block content %}
 <h1>Pipeline status</h1>
 {% if not report %}
 <p class="empty">No status report has been generated yet.</p>
 {% else %}
-<p class="lede">As of {{ report.as_of }} (report generated {{ report.generated_at }}).
-{% if report.ok %}<span class="ok">No gaps for the current day.</span>{% else %}
-<span class="bad">{{ report.n_current_gaps }} gap(s) for the current day.</span>{% endif %}
-{{ report.n_gaps }} gap(s) over the last {{ report.days }} days in total.
-A model run counts as complete only when every station has a value at every expected forecast step;
-nothing is silently skipped (methodology §6).</p>
+<div class="headline">
+<p class="verdict"><span class="{{ 'ok' if overall == 'ok' else ('bad' if overall == 'bad' else 'warnc') }}">
+{{ '●' if overall == 'ok' else '▲' }} {{ overall_text }}</span></p>
+<ul class="meta">
+  <li>as of <b>{{ report.as_of }}</b></li>
+  <li>last run <b>{{ report.generated_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+  <li>window <b>last {{ report.days }} days</b></li>
+  <li>stations <b>{{ report.n_stations }}</b></li>
+  <li>gaps in window <b>{{ report.n_gaps }}</b></li>
+</ul>
+<p class="note">A model run counts as complete only when every station has a value at every
+expected forecast step; nothing is silently skipped (methodology §6). Truth is the first final NWS
+Daily Climate Report, which can only exist from the day after the climatological day.</p>
+</div>
 
 <section>
 <h2 id="runs">Model runs — last {{ report.days }} days</h2>
 <div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Model</th><th scope="col">Init</th>
+<th scope="col" class="num">Complete</th><th scope="col">Last {{ report.days }} days</th>
+<th scope="col">Latest init held</th></tr></thead>
+<tbody>
+{% for m in model_bars %}
+<tr><th scope="row"><a href="/model/{{ m.model_id }}/">{{ m.model_id }}</a></th>
+<td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
+<td class="num">{{ m.uptime }}</td>
+<td>{{ m.svg }}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete</span></td>
+<td class="tiny">{{ m.latest_init or '—' }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="legend"><span class="swatch" style="background:var(--ok)"></span> complete ·
+<span class="swatch" style="background:var(--warn)"></span> partial ·
+<span class="swatch" style="background:var(--bad)"></span> missing. Oldest day on the left.</p>
+<details class="data-behind">
+<summary>Day-by-day grid</summary>
+<div class="scroll tall">
 <table class="scores avail-grid">
-<thead><tr><th scope="col">Model</th><th scope="col">Init</th><th scope="col">Latest init held</th>
+<thead><tr><th scope="col">Model</th><th scope="col">Init</th>
 {% for d in report.dates %}<th scope="col" class="tiny">{{ d[5:] }}</th>{% endfor %}</tr></thead>
 <tbody>
 {% for m in report.models %}
-<tr><th scope="row">{{ m.model_id }}</th><td class="num">{{ m.init_hour }}Z</td>
-<td class="tiny">{{ m.latest_init or '—' }}</td>
+<tr><th scope="row">{{ m.model_id }}</th><td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
 {% for d in m.days %}<td class="cellbox {{ 'yes' if d.complete else ('part' if d.stations_any else 'no') }}"
-title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations complete, {{ d.values }} values">
-<span class="sr">{{ 'complete' if d.complete else ('partial' if d.stations_any else 'missing') }}</span></td>{% endfor %}
+title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values"><span class="sr">{{ d.date }} {{ 'complete' if d.complete else ('partial' if d.stations_any else 'missing') }}</span></td>{% endfor %}
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
+</details>
 </section>
 
 <section>
 <h2 id="truth">Truth (first-final NWS CLI) — last {{ report.days }} days</h2>
 <div class="scroll">
-<table class="scores avail-grid">
-<thead><tr><th scope="col">Station</th><th scope="col">Missing</th>
-{% for d in report.dates %}<th scope="col" class="tiny">{{ d[5:] }}</th>{% endfor %}</tr></thead>
+<table class="scores">
+<thead><tr><th scope="col">Station</th><th scope="col" class="num">Available</th>
+<th scope="col">Last {{ report.days }} days</th><th scope="col" class="num">Missing</th></tr></thead>
 <tbody>
-{% for t in report.truth %}
-<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a></th>
-<td class="num">{{ t.n_missing }}</td>
-{% for d in t.days %}<td class="cellbox {{ 'yes' if d.cli_final else ('part' if d.any_source else 'no') }}"
-title="{{ d.date }}"><span class="sr">{{ 'final' if d.cli_final else ('other source' if d.any_source else 'missing') }}</span></td>{% endfor %}
-</tr>
+{% for t in truth_bars %}
+<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a> <span class="sub">{{ t.name }}</span></th>
+<td class="num">{{ t.uptime }}</td>
+<td>{{ t.svg }}</td>
+<td class="num">{{ t.n_missing }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -54,9 +83,44 @@ title="{{ d.date }}"><span class="sr">{{ 'final' if d.cli_final else ('other sou
 {% if report.current_gaps %}
 <section>
 <h2 id="gaps">Current gaps</h2>
-<ul>{% for g in report.current_gaps %}<li>{{ g.type }} · {{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ g.init_hour }}Z{% endif %} · {{ g.date }} — {{ g.detail }}</li>{% endfor %}</ul>
+<div class="scroll tall">
+<table class="scores">
+<thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
+<tbody>
+{% for g in report.current_gaps %}
+<tr><td>{{ g.type }}</td>
+<td>{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
+<td>{{ g.date }}</td><td>{{ g.detail }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 </section>
 {% endif %}
-<p class="jsonlink"><a href="/api/v1/status.json">status.json</a></p>
+
+{% if report.gaps and report.gaps|length > report.current_gaps|length %}
+<section>
+<h2 id="allgaps">All gaps in the window ({{ report.n_gaps }})</h2>
+<details class="data-behind">
+<summary>Show the full list</summary>
+<div class="scroll tall">
+<table class="scores">
+<thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
+<tbody>
+{% for g in report.gaps[:200] %}
+<tr><td>{{ g.type }}</td>
+<td>{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
+<td>{{ g.date }}</td><td>{{ g.detail }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% if report.n_gaps > 200 %}<p class="note">The 200 most recent of {{ report.n_gaps }}. The day-by-day grids above are the complete record; <a href="/api/v1/status.json">status.json</a> carries the same list.</p>{% endif %}
+</details>
+</section>
+{% endif %}
+
+<p class="downloads"><a href="/api/v1/status.json">status.json</a>
+<a href="/feed.xml">Atom feed</a> <a href="/data/">data &amp; licences</a></p>
 {% endif %}
 {% endblock %}

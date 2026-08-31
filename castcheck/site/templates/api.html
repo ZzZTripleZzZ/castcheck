@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}JSON API v1 — CastCheck{% endblock %}
+{% block description %}CastCheck JSON API v1: static, CORS-open endpoints for scores, leaderboards, pairwise comparisons, stations, models and pipeline status.{% endblock %}
+{% block content %}
+<h1>JSON API <span class="mono">v1</span></h1>
+<p class="lede">Plain static files on a CDN — no server, no keys, no rate limit.
+<code>Access-Control-Allow-Origin: *</code> and
+<code>Cache-Control: public, max-age=3600, stale-while-revalidate=86400</code> on everything under
+<code>/api/</code>. Every response carries <code>schema_version</code>, <code>generated_at</code>,
+<code>data_through</code>, <code>window</code>, <code>units</code>, <code>method</code> and
+<code>truth</code>; every result row can be turned into a permanent link.</p>
+<ul class="meta">
+  <li>base <b>{{ site_url }}/api/v1/</b></li>
+  <li>schema <b>v{{ schema_version }}</b></li>
+  <li>methodology <b>v{{ methodology_version }}</b></li>
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+</ul>
+
+<section>
+<h2 id="endpoints">Endpoints</h2>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Path</th><th scope="col">Contents</th></tr></thead>
+<tbody>
+<tr><td><a href="/api/v1/scores/latest.json"><code>scores/latest.json</code></a></td>
+<td>every published aggregate, compact <code>{columns, rows}</code> encoding.</td></tr>
+<tr><td><a href="/api/v1/scores/leaderboard.json"><code>scores/leaderboard.json</code></a></td>
+<td>the <code>station_id=ALL</code> slice only.</td></tr>
+<tr><td><a href="/api/v1/leaderboard/90d-00z-bilinear-tmax.json"><code>leaderboard/{window}-{init}z-{method}-{variable}.json</code></a></td>
+<td>one pre-built file per site view, ranked, with a <code>permalink</code> per row.</td></tr>
+<tr><td><code>scores/{station}/{model}/{lead}.json</code></td>
+<td>one permanent-link card: every window/init/method/variable, the pairwise table and the daily error series.</td></tr>
+<tr><td><a href="/api/v1/pairwise/latest.json"><code>pairwise/latest.json</code></a></td>
+<td>paired model-vs-model MAE differences (<code>station_id=ALL</code>).</td></tr>
+<tr><td><a href="/api/v1/stations.json"><code>stations.json</code></a></td><td>station metadata.</td></tr>
+<tr><td><a href="/api/v1/models.json"><code>models.json</code></a></td><td>model registry incl. the persistence baseline.</td></tr>
+<tr><td><a href="/api/v1/status.json"><code>status.json</code></a></td><td>pipeline completeness report.</td></tr>
+<tr><td><a href="/api/v1/openapi.json"><code>openapi.json</code></a></td><td>OpenAPI 3.1 description of the above.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section>
+<h2 id="curl">curl</h2>
+<pre class="code"># the front-page ranking, straight to a table
+curl -s {{ site_url }}/api/v1/leaderboard/90d-00z-bilinear-tmax.json \
+  | jq -r '.results[] | [.rank, .model_id, .mae, .bias, .n] | @tsv'
+
+# one permanent-link card
+curl -s {{ site_url }}/api/v1/scores/ALL/gfs/1.json | jq '.scores.columns'
+
+# is anything missing today?
+curl -s {{ site_url }}/api/v1/status.json | jq '.ok, .n_current_gaps'</pre>
+</section>
+
+<section>
+<h2 id="python">Python</h2>
+<pre class="code">import io, urllib.request, json
+import pandas as pd
+
+BASE = "{{ site_url }}/api/v1"
+
+def table(path):
+    """Read a compact {columns, rows} endpoint into a DataFrame."""
+    with urllib.request.urlopen(f"{BASE}/{path}") as r:
+        payload = json.load(r)
+    df = pd.DataFrame(payload["rows"], columns=payload["columns"])
+    df.attrs.update({k: payload[k] for k in
+                     ("generated_at", "data_through", "units", "method", "truth")})
+    return df
+
+scores = table("scores/latest.json")
+best = (scores.query("station_id == 'ALL' and window == '90d' and init_hour == 0 "
+                     "and method == 'bilinear' and variable == 'tmax' and lead_day == 1 "
+                     "and n >= 30")
+              .sort_values("mae"))
+print(best[["model_id", "n", "mae", "mae_ci_low", "mae_ci_high", "bias"]])
+
+# the full per-day record (°C), ~one row per station/model/init/lead/method/variable/day
+errors = pd.read_csv("{{ site_url }}/data/daily_errors.csv.gz")</pre>
+<p class="note">MAE, bias, RMSE and the interval bounds are in <strong>°C</strong> in the API and
+the CSVs; the site displays them in °F (multiply a difference by 1.8).</p>
+</section>
+
+<section>
+<h2 id="envelope">Response envelope</h2>
+<pre class="code">{
+  "schema_version": "{{ schema_version }}",
+  "methodology_version": "{{ methodology_version }}",
+  "castcheck_version": "{{ castcheck_version }}",
+  "generated_at": "…UTC ISO-8601…",
+  "data_through": "{{ data_through }}",
+  "next_update": "{{ next_update }}",
+  "window": {"type": "90d", "days": 90, "start": "…", "end": "…"},
+  "units": {"mae": "degC", "bias": "degC", "rmse": "degC", "n": "days",
+            "hit1f": "fraction", "skill_persistence": "fraction"},
+  "method": {"ci": "moving-block bootstrap", "resamples": 1000, "level": 0.95,
+             "block": "7 days", "ref": "{{ site_url }}/methodology/"},
+  "truth": {"source": "NWS Daily Climate Report (CLI), first final issuance"},
+  "license": "CC-BY-4.0",
+  "columns": [...], "rows": [[...]]
+}</pre>
+</section>
+
+<section>
+<h2 id="stability">Stability</h2>
+<p>Paths under <code>/api/v1/</code> and the permanent links
+<code>/station/{ICAO}/model/{model_id}/lead/{d}/</code> are fixed. Columns may be
+<em>added</em> within v1; a removal or a change of meaning bumps <code>schema_version</code> and
+appears in the <a href="/data/#changelog">changelog</a>. Numbers change every day as history
+accumulates — always record <code>generated_at</code> and <code>data_through</code> with anything
+you quote.</p>
+</section>
+{% endblock %}

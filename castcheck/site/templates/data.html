@@ -1,18 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Data — CastCheck{% endblock %}
+{% block description %}CastCheck data: table schemas with units, bulk CSV and JSON downloads, licences, citation, changelog and known limitations.{% endblock %}
 {% block content %}
 <h1>Data</h1>
 <p class="lede">Everything published here is recomputable from the archived station values, the truth
-table and this repository at a given commit. Nothing is hand-edited.</p>
+table and this repository at a given commit. Nothing is hand-edited. Errors are stored in °C and
+displayed in °F on the site; the downloads below are in °C.</p>
+<ul class="meta">
+  <li>schema <b>v{{ schema_version }}</b></li>
+  <li>methodology <b>v{{ methodology_version }}</b></li>
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>built <b>{{ built_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+</ul>
+
+<section>
+<h2 id="download">Downloads</h2>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">File</th><th scope="col">Contents</th>
+<th scope="col" class="num">Rows</th><th scope="col" class="num">Size</th></tr></thead>
+<tbody>
+{% for d in downloads %}
+<tr><td><a href="{{ d.href }}"><code>{{ d.name }}</code></a></td><td>{{ d.what }}</td>
+<td class="num">{{ d.rows }}</td><td class="num">{{ d.size }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p>The parquet shards behind these CSVs are mirrored as a Hugging Face dataset:
+<a href="{{ hf_url }}">{{ hf_url }}</a>. The code that produces them is at
+<a href="{{ repo_url }}">{{ repo_url }}</a> (MIT).</p>
+</section>
 
 <section>
 <h2 id="api">JSON API (v1)</h2>
+<p>Static files, CORS-open, cached one hour. See <a href="/api/v1/">the API page</a> for
+worked <code>curl</code> and Python examples and <a href="/api/v1/openapi.json">openapi.json</a>.</p>
+<div class="scroll">
 <table class="scores">
-<thead><tr><th scope="col">Endpoint</th><th scope="col">Contents</th><th scope="col">Rows/files</th></tr></thead>
+<thead><tr><th scope="col">Endpoint</th><th scope="col">Contents</th><th scope="col" class="num">Rows/files</th></tr></thead>
 <tbody>
 {% for e in endpoints %}<tr><td><a href="{{ e.href }}"><code>{{ e.path }}</code></a></td><td>{{ e.what }}</td><td class="num">{{ e.n }}</td></tr>{% endfor %}
 </tbody>
 </table>
+</div>
 </section>
 
 <section>
@@ -20,21 +52,59 @@ table and this repository at a given commit. Nothing is hand-edited.</p>
 {% for t in schemas %}
 <h3 id="schema-{{ t.name }}">{{ t.name }}</h3>
 <p>{{ t.what }}</p>
-<p class="mono cols-list">{{ t.columns|join(' · ') }}</p>
+<div class="scroll tall">
+<table class="scores">
+<thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Unit</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+{% for f in t.fields %}<tr><td><code>{{ f.name }}</code></td><td class="tiny">{{ f.type }}</td><td class="tiny">{{ f.unit }}</td><td>{{ f.what }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
 {% endfor %}
 </section>
 
 <section>
 <h2 id="licence">Licences and attribution</h2>
 <ul>
-<li>ECMWF IFS HRES and AIFS Single open data — <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a>, © ECMWF.</li>
-<li>NCEP GFS (AWS <code>noaa-gfs-bdp-pds</code>) — U.S. Government work, public domain.</li>
-<li>NOAA/CIRA AIWP model output (AWS <code>noaa-oar-mlwp-data</code>) — U.S. Government work, public domain.</li>
-<li>NWS Daily Climate Report (CLI), CF6 and station observations — U.S. Government work, public domain.</li>
-<li>CastCheck derived tables and this site — CC-BY-4.0. Please cite the permanent link of the page you used.</li>
+<li><strong>CastCheck derived tables and this site</strong> — <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Please cite the permanent link of the page you used.</li>
+<li><strong>CastCheck code</strong> — MIT, <a href="{{ repo_url }}">{{ repo_url }}</a>.</li>
+<li><strong>ECMWF IFS HRES and AIFS Single open data</strong> — <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, © ECMWF. Source: <code>data.ecmwf.int</code> and the AWS Open Data mirror.</li>
+<li><strong>NCEP GFS</strong> (AWS <code>noaa-gfs-bdp-pds</code>) — U.S. Government work, public domain.</li>
+<li><strong>NOAA/CIRA AIWP</strong> model output (AWS <code>noaa-oar-mlwp-data</code>) — U.S. Government work, public domain. Cite: Radford, J. T., et al. (2025). Domain-agnostic evaluation of AI weather prediction models. <em>Bulletin of the American Meteorological Society</em>. <a href="https://doi.org/10.1175/BAMS-D-24-0057.1">doi:10.1175/BAMS-D-24-0057.1</a>.</li>
+<li><strong>NWS Daily Climate Report (CLI), CF6 and station observations</strong> — U.S. Government work, public domain, via <code>api.weather.gov</code>.</li>
+<li><strong>Historical NWS text products</strong> — Iowa Environmental Mesonet (IEM) AFOS archive, Iowa State University.</li>
 </ul>
-<p><strong>Raw model output.</strong> These are values interpolated from each model's native grid,
-without MOS, bias correction, downscaling or any other post-processing, and they are not the
-products that ECMWF, NOAA, the NWS or any app vendor issue to end users.</p>
+<p><strong>Raw model output, no post-processing.</strong> These are values interpolated from each
+model's native grid, without MOS, bias correction, downscaling or any other post-processing, and
+they are not the products that ECMWF, NOAA, the NWS or any app vendor issue to end users.</p>
+</section>
+
+<section>
+<h2 id="cite">Cite the dataset</h2>
+<blockquote class="citation"><p>{{ data_citation }}</p></blockquote>
+<p class="note">For a specific number, cite its permanent link instead — every score card carries a
+short and a long citation with the access date.</p>
+</section>
+
+<section>
+<h2 id="changelog">Changelog</h2>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Methodology</th><th scope="col">Date</th><th scope="col">Change</th></tr></thead>
+<tbody>
+{% for v, d, what in changelog %}<tr><td class="num">v{{ v }}</td><td>{{ d }}</td><td>{{ what }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="note">Data events (a source outage, a corrected observation, a model version change) are
+recorded in <a href="/status/">status</a> and in the <code>gaps</code> list of
+<a href="/api/v1/status.json">status.json</a>.</p>
+</section>
+
+<section>
+<h2 id="limitations">Known limitations</h2>
+<ol>
+{% for l in limitations %}<li>{{ l }}</li>{% endfor %}
+</ol>
 </section>
 {% endblock %}

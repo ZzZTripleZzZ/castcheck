@@ -1,31 +1,106 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}{{ model.model_id }} — CastCheck{% endblock %}
+{% block description %}Verification of {{ model.family }} ({{ model.model_id }}) 2 m temperature forecasts at every station and lead day.{% endblock %}
 {% block content %}
 <h1>{{ model.family }} <span class="mono">({{ model.model_id }})</span></h1>
 <p class="lede">source {{ model.source }} · product {{ model.product }}{% if model.init_field %} ·
 initial conditions from {{ model.init_field }}{% endif %} · steps every {{ model.step_h }} h to
 {{ model.max_h }} h · initializations {{ model.inits|join(', ') }} UTC{% if model.native_extremes %} ·
-native extreme fields {{ model.native_extremes|join(', ') }} (diagnostic only){% endif %}.</p>
-<p class="switch">View: {% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+native extreme fields {{ model.native_extremes|join(', ') }} (diagnostic only, never in the
+headline ranking){% endif %}.</p>
+{% if model.model_version or model.segment_start %}
+<p class="note">Scores use the latest model version segment{% if model.model_version %},
+<span class="mono">{{ model.model_version }}</span>{% endif %}{% if model.segment_start %},
+starting {{ model.segment_start }}{% endif %}. Earlier days ran a different version of the model
+and are excluded rather than silently pooled into the same average.</p>
+{% endif %}
+<ul class="meta">
+  <li>window <b>{{ window_label }}</b></li><li>init <b>{{ init_hour }}Z</b></li>
+  <li>interpolation <b>{{ method }}</b></li><li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li><li>next update <b>{{ next_update }}</b></li>
+</ul>
+{{ m.switcher(variants) }}
+<p class="note">These pages are always <strong>bilinear</strong> interpolation, the headline method.
+The nearest-node variant, and every other window/initialization/interpolation/variable combination,
+is published on each permanent link below — follow any number.</p>
 
 {% for b in blocks %}
 <section>
-<h2 id="{{ b.variable }}">Daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature — MAE (°F), {{ window_label }}, {{ init_hour }}Z, {{ method }}</h2>
+<h2 id="{{ b.variable }}">{{ 'Daily maximum' if b.variable == 'tmax' else 'Daily minimum' }} temperature — MAE °F by station</h2>
 <div class="scroll">
 <table class="scores grid">
-<thead><tr><th scope="col">Station</th>{% for l in leads %}<th scope="col">lead {{ l }}</th>{% endfor %}</tr></thead>
+<caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
+every cell links to its permanent page. The sparkline shows this station across lead days
+{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a scale shared within this table.</caption>
+<thead><tr><th scope="col">Station</th>{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
+<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
 <tbody>
 {% for row in b.rows %}
-<tr><th scope="row"><a href="/station/{{ row.station_id }}/">{{ row.station_id }}</a></th>
+<tr><th scope="row"><a href="/station/{{ row.key }}/">{{ row.key }}</a></th>
 {% for c in row.cells %}
-<td class="num {{ 'low-n' if c.low_n else '' }}">{% if c.mae %}<a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub">n={{ c.n }}</span>{% else %}<span class="sub">—</span>{% endif %}</td>
+{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
+{% else %}<td class="low-n">—</td>{% endif %}
 {% endfor %}
+<td class="sparkcell">{{ row.spark_svg }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% if b.flagged %}
+<p class="note">Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the
+observation (a CLI value that disagreed with the hourly observations, or a fallback source). They
+are kept in the scores and counted here rather than dropped —
+see <a href="/methodology/">methodology</a>.</p>
+{% endif %}
+{% if loop.first %}{{ m.legend(min_n) }}{% endif %}
+</section>
+{% endfor %}
+{% if not blocks %}<p class="empty">No scores yet for this model in this view.</p>{% endif %}
+
+{% if not canonical_view %}
+<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model availability and the observed-truth table{% endif %} live on the
+<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window, initialization
+or interpolation selected here.</p>
+{% endif %}
+{% if months %}
+<section>
+<h2 id="months">Month by month</h2>
+<p class="note">MAE °F at lead day 1, 00Z, bilinear, daily maximum, per station.</p>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="num">{{ k }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for r in months %}
+<tr><th scope="row">{{ r.month }}</th>
+{% for c in r.cells %}{% if c %}<td>{{ c.mae }}<span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>{% else %}<td class="low-n">—</td>{% endif %}{% endfor %}
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
 </section>
-{% endfor %}
-{% if not blocks %}<p class="empty">No scores yet for this model.</p>{% endif %}
+{% endif %}
+
+<section>
+<h2 id="source">Source and licence</h2>
+<div class="cards">
+<div class="card"><h3>Where it comes from</h3>
+<p>{{ model.source }} · {{ model.product }}{% if model.init_field %} · {{ model.init_field }} initial conditions{% endif %}</p>
+<p>Steps every {{ model.step_h }} h to {{ model.max_h }} h; sampled at 00/06/12/18 UTC only.</p></div>
+<div class="card"><h3>Licence</h3>
+{% if model.source == 'ecmwf' %}<p>ECMWF open data, CC BY 4.0, © ECMWF.</p>
+{% elif model.source == 'aiwp' %}<p>NOAA/CIRA AIWP, U.S. Government work, public domain. Cite Radford et al. (2025), <em>BAMS</em>, doi:10.1175/BAMS-D-24-0057.1.</p>
+{% elif model.source == 'truth' %}<p>Derived from NWS observations; public domain.</p>
+{% else %}<p>NOAA/NCEP, U.S. Government work, public domain.</p>{% endif %}</div>
+<div class="card"><h3>Post-processing</h3>
+<p>None. Raw grid values, bilinear (headline) or nearest-node interpolation, no MOS, no bias
+correction, no downscaling.</p></div>
+</div>
+</section>
+
+<p class="downloads"><a href="/api/v1/scores/latest.json">All scores as JSON</a>
+<a href="/data/scores_latest.csv">scores_latest.csv</a>
+<a href="/data/daily_errors.csv.gz">daily_errors.csv.gz</a>
+<a href="/data/">data &amp; licences</a></p>
 {% endblock %}

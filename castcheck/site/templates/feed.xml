@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>CastCheck — daily model verification</title>
+  <subtitle>Independent, automated, station-level verification of raw weather-model 2 m temperature forecasts.</subtitle>
+  <link href="{{ site_url }}/feed.xml" rel="self"/>
+  <link href="{{ site_url }}/"/>
+  <id>{{ site_url }}/</id>
+  <updated>{{ built_at }}</updated>
+  <author><name>CastCheck</name></author>
+  <rights>CC BY 4.0</rights>
+{% for e in entries %}
+  <entry>
+    <title>CastCheck update {{ e.date }}</title>
+    <link href="{{ site_url }}/"/>
+    <id>tag:castcheck,{{ e.date }}:update</id>
+    <updated>{{ e.updated }}</updated>
+    <summary>{{ e.summary }} Scores recomputed from scratch; methodology v{{ methodology_version }}, schema v{{ schema_version }}, data through {{ data_through }}.</summary>
+  </entry>
+{% endfor %}
+</feed>

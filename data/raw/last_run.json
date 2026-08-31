@@ -2,11 +2,11 @@
   "commands": {
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 30.725,
+      "duration_s": 14.177,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:34:19+00:00",
-      "last_success_at": "2026-08-31T00:34:19+00:00",
-      "started_at": "2026-08-31T00:33:48+00:00",
+      "finished_at": "2026-08-31T00:40:03+00:00",
+      "last_success_at": "2026-08-31T00:40:03+00:00",
+      "started_at": "2026-08-31T00:39:49+00:00",
       "status": "ok",
       "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
     },
@@ -42,13 +42,13 @@
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 7.334,
+      "duration_s": 17.806,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:31:41+00:00",
-      "last_success_at": "2026-08-31T00:31:41+00:00",
-      "started_at": "2026-08-31T00:31:34+00:00",
+      "finished_at": "2026-08-31T00:36:41+00:00",
+      "last_success_at": "2026-08-31T00:36:41+00:00",
+      "started_at": "2026-08-31T00:36:23+00:00",
       "status": "ok",
-      "summary": "2024-01-01..2024-02-29: 1380 rows, 23 station(s)"
+      "summary": "2026-01-01..2026-08-28: 5526 rows, 23 station(s)"
     },
     "verify": {
       "castcheck_version": "0.1.0",
@@ -61,5 +61,5 @@
       "summary": "scores=10096 pairwise=5088 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T00:34:19+00:00"
+  "updated_at": "2026-08-31T00:40:03+00:00"
 }

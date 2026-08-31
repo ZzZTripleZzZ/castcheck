@@ -1,0 +1,36 @@
+{# Shared table fragments. Every number is a link to its permanent page; every CI is written
+   compactly next to the value it belongs to; every bias carries a colour chip *and* a sign. #}
+
+{% macro switcher(groups) -%}
+<nav class="switch" aria-label="View">
+{% for g in groups %}
+  <span class="k">{{ g.title }}</span>
+  {% for it in g.opts %}<a href="{{ it.href }}"{% if it.current %} class="current" aria-current="page"{% endif %}>{{ it.label }}</a>{% endfor %}
+{% endfor %}
+</nav>
+{%- endmacro %}
+
+{% macro meta_list(as_of, data_through, built_at, next_update, extra) -%}
+<ul class="meta">
+  <li>window <b>{{ extra.window_label }}</b></li>
+  <li>init <b>{{ extra.init_hour }}Z</b></li>
+  <li>interpolation <b>{{ extra.method }}</b></li>
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+</ul>
+{%- endmacro %}
+
+{% macro bias_cell(cell) -%}
+<td class="num bias{{ ' low-n' if cell.low_n else '' }}"><i class="c {{ cell.bias_class }}"></i>{{ cell.bias }}</td>
+{%- endmacro %}
+
+{% macro legend(min_n) -%}
+<p class="legend">
+<i class="swatch b-warm-2"></i>+ model too warm ·
+<i class="swatch b-cool-2"></i>− model too cold ·
+<i class="swatch b-flat"></i> bias interval includes zero ·
+★ lowest MAE · = not distinguishable from the leader · ▼ significantly worse ·
+n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked · CI is a 95 % moving-block bootstrap interval.
+</p>
+{%- endmacro %}

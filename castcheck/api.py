@@ -13,16 +13,27 @@ Endpoints
 ``scores/leaderboard.json``                    the ``station_id="ALL"`` slice only (small; used by ``/``)
 ``scores/{station}/{model}/{lead}.json``        one permanent-link card: every window/init/method/
                                                variable for that combination, its pairwise
-                                               comparisons, and the last 90 days of daily errors
+                                               comparisons, and the last 90 days of signed daily
+                                               error (the matching forecasts and observations are
+                                               in ``/data/daily_errors.csv.gz``)
 ``pairwise/latest.json``                       the ``station_id="ALL"`` pairwise slice
+``leaderboard/{window}-{init}z-{method}-{variable}.json``
+                                               one pre-ranked file per site view, results as
+                                               objects with a ``permalink`` each
+``openapi.json``                               OpenAPI 3.1 description of all of the above
 ``status.json``                                data-completeness report (see ``status.py``)
+
+Every response carries the same envelope (docs/05 §D): ``schema_version``, ``generated_at``,
+``data_through``, ``next_update``, ``window {type, days, start, end}``, ``units``,
+``method {ci, resamples, level, block, ref}`` and ``truth {source}``.  Every result row carries a
+``permalink`` to the page where the number is explained.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -30,12 +41,62 @@ import pandas as pd
 
 from . import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
 from .config import PUBLIC_DIR, ModelSpec, Station, load_models, load_stations
-from .verify import ALL_STATIONS, PERSISTENCE_ID, error_table
+from .verify import ALL_STATIONS, BLOCK_DAYS, MIN_N, PERSISTENCE_ID, error_table
 
-__all__ = ["api_dir", "compact_table", "export_api", "write_json"]
+__all__ = [
+    "LEADERBOARD_VIEWS",
+    "SERIES_DAYS",
+    "UNITS",
+    "api_dir",
+    "compact_table",
+    "export_api",
+    "openapi_document",
+    "write_json",
+]
 
 SERIES_DAYS = 90
+N_BOOT = 1000
+CI_LEVEL = 0.95
 _ENVELOPE_CONSTANTS = ("computed_at", "methodology_version", "schema_version")
+
+#: Units of every numeric field, so a consumer never has to guess.  Errors are computed and
+#: published in °C; the HTML site converts differences to °F for display.
+UNITS = {
+    "mae": "degC", "bias": "degC", "rmse": "degC",
+    "mae_ci_low": "degC", "mae_ci_high": "degC",
+    "bias_ci_low": "degC", "bias_ci_high": "degC",
+    "mae_diff": "degC", "ci_low": "degC", "ci_high": "degC",
+    "n": "days", "n_common": "days",
+    "hit1f": "fraction", "hit2f": "fraction", "hit3f": "fraction",
+    "skill_persistence": "fraction",
+    "init_hour": "UTC hour", "lead_day": "days",
+}
+
+METHOD_BLOCK = {
+    "ci": "circular moving-block bootstrap over climatological days",
+    "resamples": N_BOOT,
+    "level": CI_LEVEL,
+    "block": f"{BLOCK_DAYS} days",
+    "min_n": MIN_N,
+    "ref": "https://castcheck.zifanzhang.com/methodology/",
+}
+
+TRUTH_BLOCK = {
+    "source": "NWS Daily Climate Report (CLI), first final issuance after local midnight",
+    "fallback": ["CF6 monthly summary", "hourly station observations (flagged)"],
+    "policy": "first-final; later corrections are stored but never change a published score",
+}
+
+WINDOWS = ("30d", "90d", "365d", "all")
+INITS = (0, 12)
+METHODS = ("bilinear", "nearest")
+VARIABLES = ("tmax", "tmin")
+#: every pre-built leaderboard file, mirroring the site's ``/v/…/`` pages
+LEADERBOARD_VIEWS = tuple(
+    (w, i, m, v) for w in WINDOWS for i in INITS for m in METHODS for v in VARIABLES
+)
+SITE = "https://castcheck.zifanzhang.com"
+PUBLISH_HOUR_UTC = 11
 
 
 def api_dir(out: str | Path | None = None) -> Path:
@@ -86,19 +147,84 @@ def write_json(path: Path, payload) -> Path:
     return path
 
 
-def _envelope(scores: pd.DataFrame, **extra) -> dict:
+def _period(scores: pd.DataFrame, window: str | None = None) -> tuple[str | None, str | None]:
+    """First and last climatological day covered by ``scores`` (optionally one window)."""
+    if scores is None or len(scores) == 0 or "period_end" not in scores:
+        return None, None
+    sub = scores if window is None else scores[scores["window"] == window]
+    if len(sub) == 0:
+        return None, None
+    start = pd.to_datetime(sub["period_start"], errors="coerce").dropna()
+    end = pd.to_datetime(sub["period_end"], errors="coerce").dropna()
+    return (start.min().date().isoformat() if len(start) else None,
+            end.max().date().isoformat() if len(end) else None)
+
+
+def _next_update(from_iso: str) -> str:
+    """Next scheduled publish: 11:00 UTC daily (DESIGN §7)."""
+    try:
+        t = datetime.fromisoformat(from_iso)
+    except ValueError:  # pragma: no cover - defensive
+        t = datetime.now(UTC)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=UTC)
+    nxt = t.replace(hour=PUBLISH_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if nxt <= t:
+        nxt += timedelta(days=1)
+    return nxt.isoformat()
+
+
+def _window_block(scores: pd.DataFrame, window: str | None) -> dict:
+    days = {"30d": 30, "90d": 90, "365d": 365, "all": None}
+    start, end = _period(scores, window)
+    return {
+        "type": window or "multiple",
+        "days": days.get(window) if window else None,
+        "start": start,
+        "end": end,
+    }
+
+
+def _envelope(scores: pd.DataFrame, window: str | None = None, **extra) -> dict:
+    """The response envelope every endpoint shares (docs/05 §D)."""
     computed_at = ""
     if scores is not None and len(scores) and "computed_at" in scores:
         computed_at = str(scores["computed_at"].iloc[0])
+    generated_at = computed_at or pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
+    _, data_through = _period(scores)
     env = {
         "castcheck_version": __version__,
         "schema_version": SCHEMA_VERSION,
         "methodology_version": METHODOLOGY_VERSION,
-        "computed_at": computed_at or pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),
+        "generated_at": generated_at,
+        "computed_at": generated_at,  # kept for v1 compatibility; same value
+        "data_through": data_through,
+        "next_update": _next_update(generated_at),
+        "window": _window_block(scores, window),
+        "units": dict(UNITS),
+        "method": dict(METHOD_BLOCK),
+        "truth": dict(TRUTH_BLOCK),
         "license": "CC-BY-4.0 (CastCheck derived data); see /data/ for upstream licences",
+        "site": SITE,
     }
     env.update(extra)
     return env
+
+
+def permalink(station_id: str, model_id: str, lead_day: int) -> str:
+    return f"/station/{station_id}/model/{model_id}/lead/{int(lead_day)}/"
+
+
+def _with_permalink(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the ``permalink`` column required by docs/05 §D to a score-shaped table."""
+    if df is None or len(df) == 0:
+        return df
+    out = df.copy()
+    out["permalink"] = [
+        permalink(s, m, ld)
+        for s, m, ld in zip(out["station_id"], out["model_id"], out["lead_day"])
+    ]
+    return out
 
 
 def _station_payload(stations: list[Station]) -> list[dict]:
@@ -136,12 +262,13 @@ def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[di
     keys = ["station_id", "model_id", "lead_day", "init_hour", "method", "variable"]
     for key, grp in e.sort_values("climo_date").groupby(keys, observed=True):
         st, mid, lead, init_hour, method, variable = key
+        # Only the signed error: this is a score card, and repeating the forecast and the
+        # observation here would double every card for numbers that already live, in full and for
+        # every day of the record, in /data/daily_errors.csv.gz.
         out.setdefault((st, mid, int(lead)), []).append({
             "init_hour": int(init_hour), "method": method, "variable": variable,
             "dates": [d.date().isoformat() for d in grp["climo_date"]],
             "err_c": [_clean(v) for v in grp["err"]],
-            "obs_c": [_clean(v) for v in grp["obs_c"]],
-            "fcst_c": [_clean(v) for v in grp["fcst_c"]],
         })
     return out
 
@@ -173,7 +300,8 @@ def export_api(
     written["stations.json"] = len(stations) + 1
     written["models.json"] = len(models) + 1
 
-    write_json(base / "scores" / "latest.json", {**_envelope(scores), **compact_table(scores)})
+    write_json(base / "scores" / "latest.json",
+               {**_envelope(scores), **compact_table(_with_permalink(scores))})
     written["scores/latest.json"] = len(scores)
 
     if len(scores):
@@ -181,8 +309,14 @@ def export_api(
     else:
         board = scores
     write_json(base / "scores" / "leaderboard.json",
-               {**_envelope(scores, scope=f"station_id={ALL_STATIONS}"), **compact_table(board)})
+               {**_envelope(scores, scope=f"station_id={ALL_STATIONS}"),
+                **compact_table(_with_permalink(board))})
     written["scores/leaderboard.json"] = len(board)
+
+    written["leaderboard/{view}.json"] = _write_leaderboards(base, scores)
+
+    write_json(base / "openapi.json", openapi_document())
+    written["openapi.json"] = 1
 
     if len(pairwise):
         pw_all = pairwise[pairwise["station_id"] == ALL_STATIONS]
@@ -224,7 +358,7 @@ def export_api(
                 **_envelope(scores),
                 "station_id": st, "model_id": mid, "lead_day": lead,
                 "permalink": f"/station/{st}/model/{mid}/lead/{lead}/",
-                "scores": compact_table(grp),
+                "scores": compact_table(_with_permalink(grp)),
                 "pairwise": compact_table(pw_grp) if pw_grp is not None else {"columns": [], "rows": []},
                 "series_days": series_days,
                 "series": series.get((st, mid, lead), []),
@@ -237,3 +371,201 @@ def export_api(
         write_json(base / "status.json", status)
         written["status.json"] = 1
     return written
+
+
+# ------------------------------------------------------------------------------------------
+# pre-built leaderboards and the OpenAPI description
+# ------------------------------------------------------------------------------------------
+
+_BOARD_FIELDS = (
+    "model_id", "n", "mae", "mae_ci_low", "mae_ci_high", "bias", "bias_ci_low", "bias_ci_high",
+    "rmse", "hit1f", "hit2f", "hit3f", "skill_persistence", "period_start", "period_end",
+)
+
+
+def _write_leaderboards(base: Path, scores: pd.DataFrame) -> int:
+    """One ranked file per site view: ``leaderboard/{window}-{init}z-{method}-{variable}.json``.
+
+    Results are objects (not the compact encoding) because these files are small, are what a
+    third party is most likely to read, and every row needs its ``permalink`` and its rank next to
+    the numbers.  Groups below :data:`MIN_N` are included but carry ``"rank": null`` and
+    ``"ranked": false``, exactly as the site greys them out.
+    """
+    n = 0
+    for window, init_hour, method, variable in LEADERBOARD_VIEWS:
+        rows: list[dict] = []
+        if scores is not None and len(scores):
+            sub = scores[
+                (scores["station_id"] == ALL_STATIONS)
+                & (scores["window"] == window)
+                & (scores["init_hour"].astype(int) == int(init_hour))
+                & (scores["method"] == method)
+                & (scores["variable"] == variable)
+            ].sort_values(["lead_day", "mae"])
+            rank_by_lead: dict[int, int] = {}
+            for _, r in sub.iterrows():
+                lead = int(r["lead_day"])
+                ranked = int(r["n"]) >= MIN_N and r["model_id"] != PERSISTENCE_ID
+                rank = None
+                if ranked:
+                    rank = rank_by_lead.get(lead, 0) + 1
+                    rank_by_lead[lead] = rank
+                item = {"lead_day": lead, "rank": rank, "ranked": ranked,
+                        "baseline": r["model_id"] == PERSISTENCE_ID}
+                item.update({k: _clean(r[k]) for k in _BOARD_FIELDS if k in sub.columns})
+                item["permalink"] = permalink(ALL_STATIONS, r["model_id"], lead)
+                rows.append(item)
+        payload = {
+            **_envelope(scores, window=window,
+                        scope=f"station_id={ALL_STATIONS}"),
+            "view": {"window": window, "init_hour": int(init_hour), "method": method,
+                     "variable": variable,
+                     "page": f"{SITE}/v/{window}-{int(init_hour):02d}z-{method}-{variable}/"},
+            "results": rows,
+        }
+        write_json(base / "leaderboard"
+                   / f"{window}-{int(init_hour):02d}z-{method}-{variable}.json", payload)
+        n += 1
+    return n
+
+
+def openapi_document() -> dict:
+    """A minimal but valid OpenAPI 3.1 description of the static API."""
+    envelope = {
+        "type": "object",
+        "required": ["schema_version", "generated_at", "data_through", "window", "units",
+                     "method", "truth"],
+        "properties": {
+            "schema_version": {"type": "string"},
+            "methodology_version": {"type": "string"},
+            "castcheck_version": {"type": "string"},
+            "generated_at": {"type": "string", "format": "date-time"},
+            "data_through": {"type": ["string", "null"], "format": "date"},
+            "next_update": {"type": "string", "format": "date-time"},
+            "window": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "examples": ["30d", "90d", "365d", "all"]},
+                    "days": {"type": ["integer", "null"]},
+                    "start": {"type": ["string", "null"], "format": "date"},
+                    "end": {"type": ["string", "null"], "format": "date"},
+                },
+            },
+            "units": {"type": "object", "additionalProperties": {"type": "string"}},
+            "method": {"type": "object"},
+            "truth": {"type": "object"},
+            "license": {"type": "string"},
+        },
+    }
+    table = {
+        "allOf": [
+            {"$ref": "#/components/schemas/Envelope"},
+            {"type": "object",
+             "properties": {
+                 "columns": {"type": "array", "items": {"type": "string"}},
+                 "rows": {"type": "array", "items": {"type": "array"}},
+             }},
+        ]
+    }
+
+    def get(summary: str, schema_ref: str, params: list | None = None) -> dict:
+        op = {
+            "summary": summary,
+            "responses": {"200": {"description": "OK", "content": {
+                "application/json": {"schema": {"$ref": schema_ref}}}}},
+        }
+        if params:
+            op["parameters"] = params
+        return {"get": op}
+
+    def path_param(name: str, example, description: str) -> dict:
+        return {"name": name, "in": "path", "required": True,
+                "schema": {"type": "string"}, "example": example,
+                "description": description}
+
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "CastCheck API",
+            "version": f"1.{SCHEMA_VERSION}",
+            "summary": "Station-level verification of raw weather-model 2 m temperature forecasts.",
+            "description": (
+                "Static JSON on a CDN: no keys, no rate limit, CORS open, cached one hour. "
+                "MAE, bias, RMSE and interval bounds are in degrees Celsius; the HTML site "
+                "displays the same differences in degrees Fahrenheit. Groups with fewer than "
+                f"{MIN_N} scored days are published but never ranked."
+            ),
+            "license": {"name": "CC BY 4.0",
+                        "url": "https://creativecommons.org/licenses/by/4.0/"},
+            "contact": {"url": SITE},
+        },
+        "servers": [{"url": f"{SITE}/api/v1"}],
+        "paths": {
+            "/scores/latest.json": get(
+                "Every published aggregate, compact {columns, rows} encoding.",
+                "#/components/schemas/Table"),
+            "/scores/leaderboard.json": get(
+                "The station_id=ALL slice of the scores table.",
+                "#/components/schemas/Table"),
+            "/leaderboard/{view}.json": get(
+                "One pre-ranked leaderboard per site view, e.g. 90d-00z-bilinear-tmax.",
+                "#/components/schemas/Leaderboard",
+                [path_param("view", "90d-00z-bilinear-tmax",
+                            "{window}-{init}z-{method}-{variable}")]),
+            "/scores/{station}/{model}/{lead}.json": get(
+                "One permanent-link card: every window/init/method/variable for that "
+                "combination, its pairwise comparisons and the daily error series.",
+                "#/components/schemas/Card",
+                [path_param("station", "ALL", "ICAO identifier, or ALL for the aggregate"),
+                 path_param("model", "gfs", "model_id from models.json"),
+                 path_param("lead", "1", "lead day")]),
+            "/pairwise/latest.json": get(
+                "Paired model-vs-model MAE differences on common days.",
+                "#/components/schemas/Table"),
+            "/stations.json": get("Station metadata.", "#/components/schemas/Envelope"),
+            "/models.json": get("Model registry.", "#/components/schemas/Envelope"),
+            "/status.json": get("Pipeline completeness report.",
+                                "#/components/schemas/Envelope"),
+        },
+        "components": {"schemas": {
+            "Envelope": envelope,
+            "Table": table,
+            "Leaderboard": {
+                "allOf": [
+                    {"$ref": "#/components/schemas/Envelope"},
+                    {"type": "object", "properties": {
+                        "view": {"type": "object"},
+                        "results": {"type": "array", "items": {
+                            "type": "object",
+                            "properties": {
+                                "lead_day": {"type": "integer"},
+                                "rank": {"type": ["integer", "null"]},
+                                "ranked": {"type": "boolean"},
+                                "model_id": {"type": "string"},
+                                "n": {"type": "integer"},
+                                "mae": {"type": ["number", "null"]},
+                                "mae_ci_low": {"type": ["number", "null"]},
+                                "mae_ci_high": {"type": ["number", "null"]},
+                                "bias": {"type": ["number", "null"]},
+                                "permalink": {"type": "string"},
+                            },
+                        }},
+                    }},
+                ]
+            },
+            "Card": {
+                "allOf": [
+                    {"$ref": "#/components/schemas/Envelope"},
+                    {"type": "object", "properties": {
+                        "station_id": {"type": "string"},
+                        "model_id": {"type": "string"},
+                        "lead_day": {"type": "integer"},
+                        "permalink": {"type": "string"},
+                        "scores": {"$ref": "#/components/schemas/Table"},
+                        "pairwise": {"$ref": "#/components/schemas/Table"},
+                        "series": {"type": "array", "items": {"type": "object"}},
+                    }},
+                ]
+            },
+        }},
+    }

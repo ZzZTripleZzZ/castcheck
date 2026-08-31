@@ -1,61 +1,156 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}CastCheck — how far off was each weather model?{% endblock %}
+{% block description %}Daily-updated, station-level verification of raw weather-model 2 m temperature forecasts: MAE, bias, bootstrap intervals and sample sizes for every model, station and lead day.{% endblock %}
+{% block head %}<link rel="canonical" href="{{ canonical }}">{% endblock %}
 {% block content %}
-<h1>Model leaderboard</h1>
-<p class="lede">2 m temperature at {{ n_stations }} U.S. stations, scored against the NWS Daily
-Climate Report. Ranking below: <strong>all stations</strong>, <strong>{{ window_label }}</strong>,
-<strong>{{ init_hour }}Z</strong> initialization, <strong>{{ method }}</strong> interpolation.
-Lower MAE is better. Every number carries its sample size <em>n</em> and a 95&nbsp;% bootstrap
-interval; groups with n&nbsp;&lt;&nbsp;{{ min_n }} are greyed and excluded from the ranking.</p>
+<h1>How far off was each weather model?</h1>
 
-<p class="switch">Other views:
-{% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
-</p>
+<div class="headline">
+{% if headline and headline.n_ranked %}
+{% set top = headline.rows[0] %}
+<p class="verdict">Over {{ window_label }}, across {{ n_stations }} U.S. stations, the most accurate
+raw {{ variable_label }} temperature forecast <strong>{{ headline.lead }} day{{ '' if headline.lead == 1 else 's' }} ahead</strong>
+is <strong>{{ top.model_id }}</strong>: mean absolute error
+<span class="num">{{ top.mae }} °F</span> <span class="ci">{{ top.mae_ci }}</span>,
+bias <span class="num">{{ top.bias }} °F</span>, on <span class="num">n = {{ top.n }}</span> scored days.</p>
+{% else %}
+<p class="verdict">No group in this view yet has enough scored days to rank
+(<span class="num">n &lt; {{ min_n }}</span>). Every number below is still published, greyed out,
+with its sample size.</p>
+{% endif %}
+<p class="note">Scope: raw model output on the native 0.25° grid, daily maximum/minimum taken as the
+max/min of the four common 6-hourly samples, scored against the first final NWS Daily Climate
+Report, errors computed in °C and shown in °F
+(<a href="/methodology/">methodology v{{ methodology_version }}</a>).</p>
+{{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method}) }}
+</div>
+
+{{ m.switcher(variants) }}
 
 {% if not boards %}
-<p class="empty">No scores yet for this combination.</p>
+<p class="empty">No scores yet for this combination of window, initialization, interpolation and
+variable. Try another view above, or see <a href="/status/">status</a> for what the pipeline holds.</p>
 {% endif %}
 
 {% for b in boards %}
 <section>
-<h2 id="lead{{ b.lead }}-{{ b.variable }}">Lead day {{ b.lead }} — daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature</h2>
+<h2 id="lead{{ b.lead }}">Lead day {{ b.lead }} — {{ variable_label }} temperature</h2>
+<div class="scroll">
 <table class="scores">
-<thead><tr><th scope="col">#</th><th scope="col">Model</th><th scope="col">MAE (°F)</th>
-<th scope="col">95 % CI</th><th scope="col">Bias (°F)</th><th scope="col">±3 °F</th>
-<th scope="col">Skill vs persistence</th><th scope="col">n</th><th scope="col">Period</th></tr></thead>
+<caption>{{ window_label }}, all stations pooled, {{ init_hour }}Z initialization,
+{{ method }} interpolation. Lower MAE is better; bias is positive when the model is too warm.
+Every number links to its permanent page. <em>Skill</em> is measured against persistence;
+<em>skill, debiased</em> repeats it after removing each station's constant offset, which is why a
+station with a steady warm bias can look skill-less in one column and skilful in the other.
+Under <em>n</em>: the mean number of stations behind each scored day, and how many of those days
+carry a QC flag on the observation.</caption>
+<thead><tr>
+<th scope="col">#</th><th scope="col">Model</th>
+<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
+<th scope="col" class="num">±3 °F</th>
+<th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence). Positive means better than yesterday's observation.">Skill</abbr></th>
+<th scope="col" class="num"><abbr title="The same skill score after removing this station's constant offset, so a steady warm or cold bias is not counted as lack of skill.">Skill, debiased</abbr></th>
+<th scope="col" class="num">n</th><th scope="col">vs leader</th>
+</tr></thead>
 <tbody>
 {% for r in b.rows %}
-<tr class="{{ 'low-n' if r.low_n else '' }}{{ ' baseline' if r.baseline else '' }}">
-<td>{{ '—' if r.low_n or r.baseline else loop.index }}</td>
-<td><a href="{{ r.permalink }}">{{ r.model_id }}</a></td>
-<td class="num">{{ r.mae }}</td>
-<td class="num ci">{{ r.mae_ci }}</td>
-<td class="num">{{ r.bias }}</td>
-<td class="num">{{ r.hit3f }}</td>
-<td class="num">{{ r.skill }}</td>
-<td class="num">{{ r.n }}</td>
-<td class="period">{{ r.period }}</td>
+<tr class="{{ 'low-n' if r.low_n }}{{ ' baseline' if r.baseline }}">
+<td class="num">{{ r.rank or '—' }}</td>
+<td><a href="{{ r.permalink }}">{{ r.model_id }}</a>{% if r.baseline %} <span class="sub">baseline</span>{% endif %}</td>
+<td class="num{{ ' best' if r.best_mae }}"><a href="{{ r.permalink }}">{{ r.mae }}</a> <span class="ci">{{ r.mae_ci }}</span></td>
+<td class="num bias"><i class="c {{ r.bias_class }}"></i><a href="{{ r.permalink }}">{{ r.bias }}</a> <span class="ci">{{ r.bias_ci }}</span></td>
+<td class="num"><a href="{{ r.permalink }}">{{ r.hit3f }}</a></td>
+<td class="num{{ ' best' if r.best_skill }}"><a href="{{ r.permalink }}">{{ r.skill }}</a></td>
+<td class="num">{{ r.skill_debiased }}</td>
+<td class="num">{{ r.n }}<span class="sub">{{ r.n_stations }} stns{% if r.n_flagged %} · {{ r.n_flagged }} QC{% endif %}</span></td>
+<td class="sig">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span><span class="sr"> {{ r.mark_title }}</span>{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
+{% if loop.first %}{{ m.legend(min_n) }}{% endif %}
 </section>
 {% endfor %}
+
+{% if matrix %}
+<section>
+<h2 id="matrix">Every model × every lead day</h2>
+<p class="note">MAE in °F with the bias underneath, {{ window_label }}, {{ init_hour }}Z,
+{{ method }}, {{ variable_label }}. The sparkline is the same model's MAE across lead days
+{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a shared vertical scale.</p>
+<div class="scroll">
+<table class="scores grid">
+<thead><tr><th scope="col">Model</th>
+{% for l in matrix.leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
+<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
+<tbody>
+{% for row in matrix.rows %}
+<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.model_id }}/">{{ row.model_id }}</a></th>
+{% for c in row.cells %}
+{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
+{% else %}<td class="low-n">—</td>{% endif %}
+{% endfor %}
+<td class="sparkcell">{{ row.spark_svg }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
+
+{% if map_rows %}
+<section>
+<h2 id="map">Where the errors are</h2>
+<figure class="chart">
+{{ map_svg }}
+<figcaption>Each station's <em>best</em> model at lead day 1 ({{ window_label }}, {{ init_hour }}Z,
+{{ method }}, {{ variable_label }}): dot area grows with the number of scored days, fill is the
+mean bias (warm = model too warm, cool = too cold, grey = interval includes zero). There is no
+coastline because CastCheck ships no third-party boundary file; the frame is a latitude/longitude
+graticule. <span class="readout">Hover a dot for its numbers.</span></figcaption>
+</figure>
+<details class="data-behind">
+<summary>The same data as a table</summary>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Station</th><th scope="col">Best model</th>
+<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
+<th scope="col" class="num">n</th></tr></thead>
+<tbody>
+{% for r in map_rows %}
+<tr class="{{ 'low-n' if r.low_n }}"><th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a> {{ r.name }}</th>
+<td>{{ r.model_id }}</td><td class="num">{{ r.mae }}</td>
+<td class="num bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }}</td>
+<td class="num">{{ r.n }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</details>
+</section>
+{% endif %}
 
 {% if availability %}
 <section>
 <h2 id="availability">Data availability</h2>
-<p>Each model is scored only over its own available period ({{ avail_start }} → {{ avail_end }}).</p>
-<table class="avail">
-<thead><tr><th scope="col">Model</th><th scope="col">Period</th><th scope="col">Scored days</th><th scope="col"></th></tr></thead>
+<p class="note">Each model is scored only over its own available period ({{ avail_start }} →
+{{ avail_end }}); the windows above are therefore not identical across models. Pairwise
+comparisons on the permanent-link pages use common days only.</p>
+<div class="scroll">
+<table class="scores avail">
+<thead><tr><th scope="col">Model</th><th scope="col">Period</th>
+<th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
 <tbody>
 {% for a in availability %}
-<tr><td><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></td>
+<tr><th scope="row"><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></th>
 <td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
 <td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
 </section>
 {% endif %}
 

@@ -1,58 +1,160 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}{{ station_id }} · {{ model_id }} · lead {{ lead }} — CastCheck{% endblock %}
-{% block description %}CastCheck score card: {{ model_id }} 2 m temperature at {{ station_id }}, lead day {{ lead }}.{% endblock %}
+{% block description %}CastCheck score card: {{ model_id }} 2 m temperature at {{ station_id }}, lead day {{ lead }} — MAE, bias, bootstrap intervals, daily errors and monthly slices.{% endblock %}
+{% block head %}<link rel="canonical" href="{{ canonical }}">{% endblock %}
 {% block content %}
 <h1>{{ station_id }} · {{ model_id }} · lead day {{ lead }}</h1>
-<p class="lede">{{ station_name }} · {{ model_family }} · target day = initialization date + {{ lead }} day{{ '' if lead == 1 else 's' }}.
-This page is a permanent link; the numbers change as history accumulates, the methodology version does not.</p>
+<p class="lede">{{ station_name }} · {{ model_family }} · target day = initialization date +
+{{ lead }} day{{ '' if lead == 1 else 's' }}. This page is a permanent link: the numbers change as
+history accumulates, the address and the methodology version do not.</p>
+{% if segment.model_version or segment.segment_start %}
+<p class="note">Scores use the latest model version segment{% if segment.model_version %},
+<span class="mono">{{ segment.model_version }}</span>{% endif %}{% if segment.segment_start %},
+starting {{ segment.segment_start }}{% endif %} — days before that ran a different version of the
+model and are excluded rather than silently pooled.{% if n_flagged %} Of the scored days,
+{{ n_flagged }} carry a QC flag on the observation.{% endif %}</p>
+{% endif %}
+<ul class="meta">
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+  <li>methodology <b>v{{ methodology_version }}</b></li>
+</ul>
+<p class="downloads"><a href="{{ json_url }}">JSON for this page</a>
+<a href="{{ csv_url }}">CSV of the daily errors</a>
+<a href="#cite">Cite this page</a></p>
 
 <section>
-<h2 id="scores">Scores</h2>
-<div class="scroll">
-<table class="scores">
+<h2 id="scores">Every number for this combination</h2>
+<p class="note">All four windows × both initializations × both interpolations × both variables.
+Errors are computed in °C and shown in °F; CI is a 95 % moving-block bootstrap interval.
+<em>MAE debiased</em> and <em>skill, debiased</em> remove the constant offset of the window first,
+so a station that the model always reads a degree too warm is not scored as if it had no skill —
+compare the two skill columns to see how much of the error is a fixed offset.
+<span class="ci">n QC</span> next to <em>n</em> counts days whose observation carries a QC flag.</p>
+<div class="scroll tall">
+<table class="scores card">
 <thead><tr><th scope="col">Variable</th><th scope="col">Init</th><th scope="col">Method</th>
-<th scope="col">Window</th><th scope="col">n</th><th scope="col">MAE (°F)</th><th scope="col">95 % CI</th>
-<th scope="col">Bias (°F)</th><th scope="col">95 % CI</th><th scope="col">RMSE (°F)</th>
-<th scope="col">±1 °F</th><th scope="col">±2 °F</th><th scope="col">±3 °F</th>
-<th scope="col">Skill vs persistence</th><th scope="col">Period</th></tr></thead>
+<th scope="col">Window</th><th scope="col" class="num">n</th>
+<th scope="col" class="num">MAE °F</th>
+<th scope="col" class="num"><abbr title="MAE after removing the constant offset of the window: the part of the error that is not a fixed bias.">MAE debiased</abbr></th>
+<th scope="col" class="num">Bias °F</th>
+<th scope="col" class="num">RMSE °F</th>
+<th scope="col" class="num">±1 °F</th><th scope="col" class="num">±2 °F</th><th scope="col" class="num">±3 °F</th>
+<th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence).">Skill</abbr></th>
+<th scope="col" class="num"><abbr title="The same skill score on the debiased errors, so a steady offset is not counted as lack of skill.">Skill, debiased</abbr></th>
+<th scope="col">Period</th></tr></thead>
 <tbody>
 {% for r in rows %}
-<tr class="{{ 'low-n' if r.low_n else '' }}">
-<td>{{ r.variable }}</td><td class="num">{{ r.init_hour }}Z</td><td>{{ r.method }}</td>
-<td>{{ r.window }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.mae }}</td>
-<td class="num ci">{{ r.mae_ci }}</td><td class="num">{{ r.bias }}</td><td class="num ci">{{ r.bias_ci }}</td>
-<td class="num">{{ r.rmse }}</td><td class="num">{{ r.hit1f }}</td><td class="num">{{ r.hit2f }}</td>
-<td class="num">{{ r.hit3f }}</td><td class="num">{{ r.skill }}</td><td class="period">{{ r.period }}</td>
-</tr>
+<tr class="{{ 'low-n' if r.low_n }}"><td>{{ r.variable }}</td><td>{{ r.init_hour }}Z</td><td>{{ r.method }}</td><td>{{ r.window }}</td><td>{{ r.n }}{% if r.n_flagged %} <span class="ci">{{ r.n_flagged }} QC</span>{% endif %}</td><td>{{ r.mae }} <span class="ci">{{ r.mae_ci }}</span></td><td>{{ r.mae_debiased }}</td><td class="bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }} <span class="ci">{{ r.bias_ci }}</span></td><td>{{ r.rmse }} <span class="ci">{{ r.rmse_ci }}</span></td><td>{{ r.hit1f }} <span class="ci">{{ r.hit1f_ci }}</span></td><td>{{ r.hit2f }}</td><td>{{ r.hit3f }}</td><td>{{ r.skill }}</td><td>{{ r.skill_debiased }}</td><td class="period">{{ r.period }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
-<p class="note">Greyed rows have n &lt; {{ min_n }} and are excluded from rankings (methodology §4).</p>
+{{ m.legend(min_n) }}
 </section>
 
 <section>
 <h2 id="series">Daily error, last {{ series_days }} days</h2>
-<figure class="chart" data-chart="{{ json_url }}" data-init="{{ chart_init }}" data-method="{{ chart_method }}" data-variable="{{ chart_variable }}">
-<figcaption>Forecast &minus; observed, °F, {{ chart_init }}Z {{ chart_method }} {{ chart_variable }}.
-The table above is the full record; this chart needs JavaScript and is only an aid.</figcaption>
+<figure class="chart">
+{{ series_svg }}
+<figcaption>Forecast &minus; observed, °F, {{ chart_init }}Z {{ chart_method }}
+{{ chart_variable_label }}. The dashed line is zero; the thick line is a centred 7-day mean, drawn
+only where the whole window is present. Gaps are days with no score, never interpolation.
+<span class="readout">Hover a point for its date and value.</span></figcaption>
 </figure>
+<details class="data-behind">
+<summary>The same series as a table ({{ series_rows|length }} days, newest first) · <a href="{{ csv_url }}">download CSV</a></summary>
+<div class="scroll tall">
+<table class="scores two">
+<thead><tr><th scope="col">Climatological day</th><th scope="col" class="num">Error °F</th></tr></thead>
+<tbody>
+{% for r in series_rows %}<tr><td>{{ r.date }}</td><td>{{ r.err }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+</details>
 </section>
+
+<section>
+<h2 id="distribution">Error distribution</h2>
+<figure class="chart">
+{{ hist_svg }}
+<figcaption>All scored days for {{ chart_init }}Z {{ chart_method }} {{ chart_variable_label }},
+20 equal bins. The dashed marks are the 50th and 90th percentiles of the <em>absolute</em> error,
+mirrored on both sides. <span class="readout">Hover a bar for its bin and count.</span></figcaption>
+</figure>
+{% if hist_rows %}
+<details class="data-behind">
+<summary>Bin counts as a table</summary>
+<div class="scroll">
+<table class="scores nums">
+<thead><tr><th scope="col">From °F</th><th scope="col">To °F</th><th scope="col" class="num">Days</th></tr></thead>
+<tbody>
+{% for r in hist_rows %}<tr><td>{{ r.from }}</td><td>{{ r.to }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+</details>
+{% endif %}
+</section>
+
+{% if months %}
+<section>
+<h2 id="months">Month by month</h2>
+<p class="note">{{ chart_init }}Z {{ chart_method }} {{ chart_variable_label }}, newest first.</p>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Month</th><th scope="col" class="num">n</th>
+<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th></tr></thead>
+<tbody>
+{% for r in months %}
+<tr><th scope="row">{{ r.month }}</th><td class="num">{{ r.n }}</td><td class="num">{{ r.mae }}</td>
+<td class="num bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
+
+{% if availability %}
+<section>
+<h2 id="availability">Availability</h2>
+<div class="scroll">
+<table class="scores avail">
+<thead><tr><th scope="col">Model</th><th scope="col">Scored period</th>
+<th scope="col" class="num">Days</th><th scope="col">Coverage</th></tr></thead>
+<tbody>
+{% for a in availability %}
+<tr><th scope="row">{{ a.model_id }}</th><td class="period">{{ a.period }}</td>
+<td class="num">{{ a.n }}</td>
+<td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
 
 {% if pairwise %}
 <section>
 <h2 id="pairwise">Compared with other models</h2>
-<p>Paired bootstrap on the days both models cover ({{ pairwise_window }}, {{ chart_init }}Z, {{ chart_method }}, {{ chart_variable }}).
-Negative means <strong>{{ model_id }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval excludes zero.</p>
+<p class="note">Paired bootstrap on the days both models cover ({{ pairwise_window }},
+{{ chart_init }}Z, {{ chart_method }}, {{ chart_variable_label }}). Negative means
+<strong>{{ model_id }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval
+excludes zero.</p>
 <div class="scroll">
 <table class="scores">
-<thead><tr><th scope="col">Other model</th><th scope="col">Common days</th>
-<th scope="col">MAE difference (°F)</th><th scope="col">95 % CI</th><th scope="col">Distinguishable</th></tr></thead>
+<thead><tr><th scope="col">Other model</th><th scope="col" class="num">Common days</th>
+<th scope="col" class="num">MAE difference °F</th><th scope="col">Distinguishable</th></tr></thead>
 <tbody>
 {% for p in pairwise %}
 <tr><td><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/">{{ p.other }}</a></td>
-<td class="num">{{ p.n_common }}</td><td class="num">{{ p.diff }}</td><td class="num ci">{{ p.ci }}</td>
-<td>{{ 'yes' if p.significant else 'no' }}</td></tr>
+<td class="num">{{ p.n_common }}</td>
+<td class="num">{{ p.diff }} <span class="ci">{{ p.ci }}</span></td>
+<td class="sig">{{ 'yes' if p.significant else 'no' }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -62,8 +164,14 @@ Negative means <strong>{{ model_id }}</strong> has the lower MAE. "Distinguishab
 
 <section>
 <h2 id="cite">Cite this page</h2>
-<blockquote class="citation"><p>{{ citation }}</p></blockquote>
-<p class="jsonlink">Machine-readable: <a href="{{ json_url }}">{{ json_url }}</a> ·
-<a href="/api/v1/scores/latest.json">all scores</a> · <a href="/methodology/">methodology v{{ methodology_version }}</a></p>
+<blockquote class="citation">
+<p><span class="k">Short</span>{{ citation }}</p>
+<p><span class="k">Long</span>{{ citation_long }}</p>
+<p><span class="k">Accessed</span>{{ as_of }} (data through {{ data_through }}; page built {{ built_at }})</p>
+</blockquote>
+<p class="downloads"><a href="{{ json_url }}">JSON</a> <a href="{{ csv_url }}">CSV</a>
+<a href="/api/v1/scores/latest.json">all scores</a>
+<a href="/methodology/">methodology v{{ methodology_version }}</a>
+<a href="/data/#licence">licence</a></p>
 </section>
 {% endblock %}

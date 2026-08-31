@@ -1,6 +1,7 @@
 """Data-completeness report (DESIGN §5, §6): what is missing, right now.
 
-``build()`` answers three questions for the last ``days`` (default 14) days:
+``build()`` answers three questions for the last ``days`` (default 90 — the GitHub-Status-style
+uptime window the site draws) days:
 
 1. for every ``model × initialization``, did a **complete** run arrive?  A run is complete when every
    station has a present ``t2`` value at every expected forecast step (``max_h / step_h`` steps,
@@ -23,11 +24,13 @@ import pandas as pd
 from . import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
 from .config import PUBLIC_DIR, ModelSpec, Station, load_models, load_stations
 
-__all__ = ["DEFAULT_DAYS", "EXIT_GAPS", "EXIT_OK", "build", "exit_code", "write_status"]
+__all__ = ["DEFAULT_DAYS", "EXIT_GAPS", "EXIT_OK", "MAX_LISTED_GAPS", "build", "exit_code",
+           "write_status"]
 
 EXIT_OK = 0
 EXIT_GAPS = 1
-DEFAULT_DAYS = 14
+DEFAULT_DAYS = 90  # the uptime window drawn on /status/
+MAX_LISTED_GAPS = 400  # `gaps` is a convenience list; the per-day grids are the full record
 
 
 def _expected_steps(model: ModelSpec) -> int:
@@ -71,6 +74,7 @@ def build(
         "methodology_version": METHODOLOGY_VERSION,
         "as_of": as_of_d.isoformat(),
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "last_run": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "days": days,
         "dates": [d.isoformat() for d in window],
         "n_stations": len(stations),
@@ -181,9 +185,28 @@ def build(
         })
 
     report["n_gaps"] = len(report["gaps"])
+    # The per-day grids above already carry the complete picture; the flat list is a convenience,
+    # so it is capped (newest first) to keep status.json small. n_gaps stays the true total.
+    if len(report["gaps"]) > MAX_LISTED_GAPS:
+        report["gaps"] = sorted(report["gaps"], key=lambda g: g["date"],
+                                reverse=True)[:MAX_LISTED_GAPS]
+        report["gaps_truncated"] = True
+    else:
+        report["gaps_truncated"] = False
     report["n_current_gaps"] = len(report["current_gaps"])
     report["gaps_today"] = report["current_gaps"]  # alias used by the CLI
     report["ok"] = report["n_current_gaps"] == 0
+
+    # GitHub-Status-style headline: share of model-run slots and truth days that are complete
+    slots = [d for m in report["models"] for d in m["days"]]
+    tdays = [d for t in report["truth"] for d in t["days"]]
+    report["uptime"] = {
+        "model_runs": round(100.0 * sum(1 for d in slots if d["complete"]) / len(slots), 2)
+        if slots else None,
+        "truth": round(100.0 * sum(1 for d in tdays if d["cli_final"]) / len(tdays), 2)
+        if tdays else None,
+        "window_days": days,
+    }
     return report
 
 

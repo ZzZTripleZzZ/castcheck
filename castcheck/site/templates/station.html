@@ -1,5 +1,7 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}{{ station.id }} — CastCheck{% endblock %}
+{% block description %}Model verification at {{ station.id }} ({{ station.name }}): MAE, bias and sample size for every model and lead day.{% endblock %}
 {% block content %}
 <h1>{{ station.id }} — {{ station.name }}</h1>
 <p class="lede">
@@ -9,35 +11,101 @@
 Cross-station aggregate: the daily error series is first averaged over the stations that have a
 value that day, then scored and bootstrapped over days exactly like a single station.{% endif %}
 </p>
-<p class="switch">View: {% for v in variants %}<a href="{{ v.href }}"{% if v.current %} class="current" aria-current="page"{% endif %}>{{ v.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<ul class="meta">
+  <li>window <b>{{ window_label }}</b></li><li>init <b>{{ init_hour }}Z</b></li>
+  <li>interpolation <b>{{ method }}</b></li><li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li><li>next update <b>{{ next_update }}</b></li>
+</ul>
+{{ m.switcher(variants) }}
+<p class="note">These pages are always <strong>bilinear</strong> interpolation, the headline method.
+The nearest-node variant, and every other window/initialization/interpolation/variable combination,
+is published on each permanent link below — follow any number.</p>
 
 {% for b in blocks %}
 <section>
-<h2 id="{{ b.variable }}">Daily {{ 'maximum' if b.variable == 'tmax' else 'minimum' }} temperature — MAE (°F), {{ window_label }}, {{ init_hour }}Z, {{ method }}</h2>
+<h2 id="{{ b.variable }}">{{ 'Daily maximum' if b.variable == 'tmax' else 'Daily minimum' }} temperature — MAE °F</h2>
 <div class="scroll">
 <table class="scores grid">
-<thead><tr><th scope="col">Model</th>{% for l in leads %}<th scope="col">lead {{ l }}</th>{% endfor %}</tr></thead>
+<caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
+every cell links to its permanent page. The sparkline shows the same model across lead days
+{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a scale shared within this table.</caption>
+<thead><tr><th scope="col">Model</th>{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
+<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
 <tbody>
 {% for row in b.rows %}
-<tr class="{{ 'baseline' if row.baseline else '' }}"><th scope="row">{{ row.model_id }}</th>
+<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.key }}/">{{ row.key }}</a></th>
 {% for c in row.cells %}
-<td class="num {{ 'low-n' if c.low_n else '' }}">{% if c.mae %}<a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub">n={{ c.n }}</span>{% else %}<span class="sub">—</span>{% endif %}</td>
+{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
+{% else %}<td class="low-n">—</td>{% endif %}
 {% endfor %}
+<td class="sparkcell">{{ row.spark_svg }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% if b.flagged %}
+<p class="note">Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the
+observation (a CLI value that disagreed with the hourly observations, or a fallback source). They
+are kept in the scores and counted here rather than dropped —
+see <a href="/methodology/">methodology</a>.</p>
+{% endif %}
+{% if loop.first %}{{ m.legend(min_n) }}{% endif %}
+</section>
+{% endfor %}
+{% if not blocks %}<p class="empty">No scores yet for this station in this view.</p>{% endif %}
+
+{% if not canonical_view %}
+<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model availability and the observed-truth table{% endif %} live on the
+<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window, initialization
+or interpolation selected here.</p>
+{% endif %}
+{% if months %}
+<section>
+<h2 id="months">Month by month</h2>
+<p class="note">MAE °F at lead day 1, 00Z, bilinear, daily maximum — the seasonal slice behind the
+window averages. A model that is excellent in one season and poor in another shows up here and
+nowhere else.</p>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="num">{{ k }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for r in months %}
+<tr><th scope="row">{{ r.month }}</th>
+{% for c in r.cells %}{% if c %}<td>{{ c.mae }}<span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>{% else %}<td class="low-n">—</td>{% endif %}{% endfor %}
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
 </section>
+{% endif %}
+
+{% if availability %}
+<section>
+<h2 id="availability">Model availability at this station</h2>
+<div class="scroll">
+<table class="scores avail">
+<thead><tr><th scope="col">Model</th><th scope="col">Period</th>
+<th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
+<tbody>
+{% for a in availability %}
+<tr><th scope="row"><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></th>
+<td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
+<td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
 {% endfor %}
-{% if not blocks %}<p class="empty">No scores yet for this station.</p>{% endif %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
 
 {% if recent %}
 <section>
 <h2 id="recent">Observed truth — last {{ recent|length }} days</h2>
 <div class="scroll">
 <table class="scores">
-<thead><tr><th scope="col">Climatological day</th><th scope="col">Tmax (°F)</th><th scope="col">Tmin (°F)</th><th scope="col">Source</th><th scope="col">Flag</th></tr></thead>
+<thead><tr><th scope="col">Climatological day</th><th scope="col" class="num">Tmax °F</th>
+<th scope="col" class="num">Tmin °F</th><th scope="col">Source</th><th scope="col">Flag</th></tr></thead>
 <tbody>
 {% for r in recent %}<tr><td>{{ r.date }}</td><td class="num">{{ r.tmax }}</td><td class="num">{{ r.tmin }}</td><td>{{ r.source }}</td><td>{{ r.flag }}</td></tr>{% endfor %}
 </tbody>
@@ -46,5 +114,8 @@ value that day, then scored and bootstrapped over days exactly like a single sta
 </section>
 {% endif %}
 
-<p class="jsonlink"><a href="/api/v1/scores/latest.json">All scores as JSON</a></p>
+<p class="downloads"><a href="/api/v1/scores/latest.json">All scores as JSON</a>
+<a href="/data/scores_latest.csv">scores_latest.csv</a>
+<a href="/data/daily_errors.csv.gz">daily_errors.csv.gz</a>
+<a href="/data/">data &amp; licences</a></p>
 {% endblock %}
