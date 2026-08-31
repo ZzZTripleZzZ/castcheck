@@ -1,109 +1,118 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
+{% set nav_current = 'models' %}
 {% block title %}{{ model.model_id }} — CastCheck{% endblock %}
 {% block description %}Verification of {{ model.family }} ({{ model.model_id }}) 2 m temperature forecasts at every station and lead day.{% endblock %}
 {% block content %}
-<h1>{{ model.display }} <span class="mono">({{ model.model_id }})</span></h1>
-<p class="lede">source {{ model.source }} · product {{ model.product }}{% if model.init_field %} ·
-initial conditions from {{ model.init_field }}{% endif %} · steps every {{ model.step_h }} h to
-{{ model.max_h }} h · initializations {{ model.inits|join(', ') }} UTC{% if model.native_extremes %} ·
-native extreme fields {{ model.native_extremes|join(', ') }} (diagnostic only, never in the
-headline ranking){% endif %}.</p>
-{% if model.model_version or model.segment_start %}
-<p class="note">Scores use the latest model version segment{% if model.model_version %},
-<span class="mono">{{ model.model_version }}</span>{% endif %}{% if model.segment_start %},
-starting {{ model.segment_start }}{% endif %}. Earlier days ran a different version of the model
-and are excluded rather than silently pooled into the same average.</p>
-{% endif %}
-<ul class="meta">
-  <li>window <b>{{ window_label }}</b></li><li>init <b>{{ init_hour }}Z</b></li>
-  <li>interpolation <b>{{ method }}</b></li><li>data through <b>{{ data_through }}</b></li>
-  <li>updated <b>{{ built_at }}</b></li><li>next update <b>{{ next_update }}</b></li>
-</ul>
-{{ m.switcher(variants) }}
-<p class="note">These pages are always <strong>bilinear</strong> interpolation, the headline method.
-The nearest-node variant, and every other window/initialization/interpolation/variable combination,
-is published on each permanent link below — follow any number.</p>
+<section class="hero">
+  <p class="eyebrow">Model</p>
+  <h1 class="hero__title hero__title--wide">{{ model.display }}</h1>
+  <p class="hero__id mono">{{ model.model_id }}</p>
+  <p class="hero__scope hero__scope--lede">source {{ model.source }} · product
+  {{ model.product }}{% if model.init_field %} · initial conditions from {{ model.init_field }}{% endif %}
+  · steps every {{ model.step_h }} h to {{ model.max_h }} h · initializations
+  {{ model.inits|join(', ') }} UTC{% if model.native_extremes %} · native extreme fields
+  {{ model.native_extremes|join(', ') }} (diagnostic only, never in the headline ranking){% endif %}.
+{% if model.model_version or model.segment_start %} Scores use the latest model version
+  segment{% if model.model_version %}, <span class="mono">{{ model.model_version }}</span>{% endif %}{% if model.segment_start %},
+  starting {{ model.segment_start }}{% endif %}. Earlier days ran a different version of the model
+  and are excluded rather than silently pooled into the same average.{% endif %}</p>
+  <div class="mcard__tags" style="margin-top:var(--sp-3)">
+    <span class="badge badge--mono">{{ model.source }}</span>
+{% if model.init_field %}<span class="badge">{{ model.init_field }} init</span>{% endif %}
+{% if model.model_version %}<span class="badge badge--mono">{{ model.model_version }}</span>{% endif %}
+  </div>
+  {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method}) }}
+</section>
+
+{{ m.switcher(variants, 'these pages are always bilinear — every other combination is on the permanent links') }}
 
 {% for b in blocks %}
-<section>
-<h2 id="{{ b.variable }}">{{ b.label }} — MAE °F by station</h2>
-<p class="note">Scored against {{ b.truth }}.{% if b.headline %} This is the headline variable:
-the same four instants on the forecast and the observation side.{% endif %}</p>
-<div class="scroll">
-<table class="scores grid">
-<caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
-every cell links to its permanent page. The sparkline shows this station across lead days
-{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a scale shared within this table.</caption>
-<thead><tr><th scope="col">Station</th>{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
-<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
-<tbody>
-{% for row in b.rows %}
-<tr><th scope="row"><a href="/station/{{ row.key }}/">{{ row.key }}</a></th>
-{% for c in row.cells %}
-{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
-{% else %}<td class="low-n">—</td>{% endif %}
-{% endfor %}
-<td class="sparkcell">{{ row.spark_svg }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
+<section class="panel" id="{{ b.variable }}">
+  <div class="panel__head">
+    <h2 class="panel__title">{{ b.label }} — MAE °F by station<span class="lead-tag">{{ b.variable }}</span></h2>
+    <p class="panel__sub">Scored against {{ b.truth }}.{% if b.headline %} This is the headline
+    variable: the same four instants on the forecast and the observation side.{% endif %}
+{% if loop.first %} These pages are always <strong>bilinear</strong> interpolation, the headline
+    method. The nearest-node variant, and every other window/initialization/interpolation/variable
+    combination, is published on each permanent link below — follow any number.{% endif %}</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+  {{ m.grid_table(b, leads, spark_leads, window_label, init_hour, method, 'station') }}
+  </div>
+  <div class="panel__foot">
 {% if b.flagged %}
-<p class="note">Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the
-observation (a CLI value that disagreed with the hourly observations, or a fallback source). They
-are kept in the scores and counted here rather than dropped —
-see <a href="/methodology/">methodology</a>.</p>
+  <p>Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the observation (a
+  CLI value that disagreed with the hourly observations, or a fallback source). They are kept in
+  the scores and counted here rather than dropped — see <a href="/methodology/">methodology</a>.</p>
 {% endif %}
 {% if loop.first %}{{ m.legend(min_n) }}{% endif %}
+  </div>
 </section>
 {% endfor %}
+
 {{ m.cli_section(secondary_blocks, leads, spark_leads, window_label, init_hour, method, 'station', cli_caveat) }}
-{% if not blocks %}<p class="empty">No scores yet for this model in this view.</p>{% endif %}
+
+{% if not blocks %}
+<div class="empty-state">
+  <h3>Nothing scored in this view yet</h3>
+  <p>No scores yet for this model in this view. Try another window or initialization above.</p>
+</div>
+{% endif %}
 
 {% if not canonical_view %}
-<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model availability and the observed-truth table{% endif %} live on the
-<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window, initialization
-or interpolation selected here.</p>
+<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model
+availability and the observed-truth table{% endif %} live on the
+<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window,
+initialization or interpolation selected here.</p>
 {% endif %}
+
 {% if months %}
-<section>
-<h2 id="months">Month by month</h2>
-<p class="note">MAE °F at lead day 1, 00Z, bilinear, {{ chart_variable_label }}, per station.</p>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="num">{{ k }}</th>{% endfor %}</tr></thead>
-<tbody>
+<section class="panel" id="months">
+  <div class="panel__head">
+    <h2 class="panel__title">Month by month</h2>
+    <p class="panel__sub">MAE °F at lead day 1, 00Z, bilinear, {{ chart_variable_label }}, per station.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="is-num">{{ k }}</th>{% endfor %}</tr></thead>
+      <tbody>
 {% for r in months %}
-<tr><th scope="row">{{ r.month }}</th>
-{% for c in r.cells %}{% if c %}<td>{{ c.mae }}<span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>{% else %}<td class="low-n">—</td>{% endif %}{% endfor %}
-</tr>
+      <tr><th scope="row" class="keycell">{{ r.month }}</th>
+      {% for c in r.cells %}{% if c %}<td class="is-num"><span class="val">{{ c.mae }}</span><span class="ci">{{ c.bias }} · n={{ c.n }}</span><i class="bias__bar {{ c.bias_class }}"></i></td>{% else %}<td class="is-num is-lown"><span class="val">—</span></td>{% endif %}{% endfor %}
+      </tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
-<section>
-<h2 id="source">Source and licence</h2>
-<div class="cards">
-<div class="card"><h3>Where it comes from</h3>
-<p>{{ model.source }} · {{ model.product }}{% if model.init_field %} · {{ model.init_field }} initial conditions{% endif %}</p>
-<p>Steps every {{ model.step_h }} h to {{ model.max_h }} h; sampled at 00/06/12/18 UTC only.</p></div>
-<div class="card"><h3>Licence</h3>
+<section id="source">
+  <div class="section-head">
+    <h2>Source and licence</h2>
+    <p>Where the numbers come from, what may be done with them, and what was — deliberately — not
+    done to the forecast before scoring it.</p>
+  </div>
+  <div class="cards">
+    <div class="card"><h3>Where it comes from</h3>
+    <p>{{ model.source }} · {{ model.product }}{% if model.init_field %} · {{ model.init_field }} initial conditions{% endif %}</p>
+    <p>Steps every {{ model.step_h }} h to {{ model.max_h }} h; sampled at 00/06/12/18 UTC only.</p></div>
+    <div class="card"><h3>Licence</h3>
 {% if model.source == 'ecmwf' %}<p>ECMWF open data, CC BY 4.0, © ECMWF.</p>
 {% elif model.source == 'aiwp' %}<p>NOAA/CIRA AIWP, U.S. Government work, public domain. Cite Radford et al. (2025), <em>BAMS</em>, doi:10.1175/BAMS-D-24-0057.1.</p>
 {% elif model.source == 'truth' %}<p>Derived from NWS observations; public domain.</p>
 {% else %}<p>NOAA/NCEP, U.S. Government work, public domain.</p>{% endif %}</div>
-<div class="card"><h3>Post-processing</h3>
-<p>None. Raw grid values, bilinear (headline) or nearest-node interpolation, no MOS, no bias
-correction, no downscaling.</p></div>
-</div>
+    <div class="card"><h3>Post-processing</h3>
+    <p>None. Raw grid values, bilinear (headline) or nearest-node interpolation, no MOS, no bias
+    correction, no downscaling.</p></div>
+  </div>
 </section>
 
-<p class="downloads"><a href="/api/v1/scores/index.json">All scores as JSON</a>
-<a href="/data/scores_latest.csv.gz">scores_latest.csv.gz</a>
-<a href="/data/#download">daily errors, one file per station</a>
-<a href="/data/">data &amp; licences</a></p>
+<ul class="downloads">
+  <li><a href="/api/v1/scores/index.json"><span class="fmt">JSON</span> all scores</a></li>
+  <li><a href="/data/scores_latest.csv.gz"><span class="fmt">CSV</span> scores_latest.csv.gz</a></li>
+  <li><a href="/data/#download"><span class="fmt">CSV</span> daily errors, one file per station</a></li>
+  <li><a href="/data/"><span class="fmt">DATA</span> data &amp; licences</a></li>
+</ul>
 {% endblock %}

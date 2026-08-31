@@ -1,29 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Data — CastCheck{% endblock %}
 {% block description %}CastCheck data: table schemas with units, bulk CSV and JSON downloads, licences, citation, changelog and known limitations.{% endblock %}
+{% set nav_current = 'data' %}
 {% block content %}
-<h1>Data</h1>
-<p class="lede">Everything published here is recomputable from the archived station values, the truth
+<section class="hero">
+  <p class="eyebrow">Reference</p>
+  <h1 class="hero__title hero__title--wide">Data</h1>
+  <p class="hero__scope hero__scope--lede">Everything published here is recomputable from the archived station values, the truth
 table and this repository at a given commit. Nothing is hand-edited. Errors are stored in °C and
 displayed in °F on the site; the downloads below are in °C.</p>
-<ul class="meta">
-  <li>schema <b>v{{ schema_version }}</b></li>
-  <li>methodology <b>v{{ methodology_version }}</b></li>
-  <li>data through <b>{{ data_through }}</b></li>
-  <li>built <b>{{ built_at }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-</ul>
+  <dl class="metastrip">
+    <div><dt>Schema</dt><dd>v{{ schema_version }}</dd></div>
+    <div><dt>Methodology</dt><dd>v{{ methodology_version }}</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Built</dt><dd>{{ built_at }}</dd></div>
+    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+  </dl>
+</section>
+
+<article class="prose prose--wide">
 
 <section>
 <h2 id="download">Downloads</h2>
-<div class="scroll">
-<table class="scores">
+<div class="table-wrap">
+<table class="data">
 <thead><tr><th scope="col">File</th><th scope="col">Contents</th>
-<th scope="col" class="num">Rows</th><th scope="col" class="num">Size</th></tr></thead>
+<th scope="col" class="is-num">Rows</th><th scope="col" class="is-num">Size</th></tr></thead>
 <tbody>
 {% for d in downloads %}
 <tr><td><a href="{{ d.href }}"><code>{{ d.name }}</code></a></td><td>{{ d.what }}</td>
-<td class="num">{{ d.rows }}</td><td class="num">{{ d.size }}</td></tr>
+<td class="is-num">{{ d.rows }}</td><td class="is-num">{{ d.size }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -56,11 +62,11 @@ Report in <code>truth_daily</code> is the truth for the secondary <code>*_cli</c
 <h2 id="api">JSON API (v1)</h2>
 <p>Static files, CORS-open, cached one hour. See <a href="/api/v1/">the API page</a> for
 worked <code>curl</code> and Python examples and <a href="/api/v1/openapi.json">openapi.json</a>.</p>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Endpoint</th><th scope="col">Contents</th><th scope="col" class="num">Rows/files</th></tr></thead>
+<div class="table-wrap">
+<table class="data">
+<thead><tr><th scope="col">Endpoint</th><th scope="col">Contents</th><th scope="col" class="is-num">Rows/files</th></tr></thead>
 <tbody>
-{% for e in endpoints %}<tr><td><a href="{{ e.href }}"><code>{{ e.path }}</code></a></td><td>{{ e.what }}</td><td class="num">{{ e.n }}</td></tr>{% endfor %}
+{% for e in endpoints %}<tr><td><a href="{{ e.href }}"><code>{{ e.path }}</code></a></td><td>{{ e.what }}</td><td class="is-num">{{ e.n }}</td></tr>{% endfor %}
 </tbody>
 </table>
 </div>
@@ -71,8 +77,8 @@ worked <code>curl</code> and Python examples and <a href="/api/v1/openapi.json">
 {% for t in schemas %}
 <h3 id="schema-{{ t.name }}">{{ t.name }}</h3>
 <p>{{ t.what }}</p>
-<div class="scroll tall">
-<table class="scores">
+<div class="table-wrap table-wrap--tall">
+<table class="data">
 <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Unit</th><th scope="col">Meaning</th></tr></thead>
 <tbody>
 {% for f in t.fields %}<tr><td><code>{{ f.name }}</code></td><td class="tiny">{{ f.type }}</td><td class="tiny">{{ f.unit }}</td><td>{{ f.what }}</td></tr>{% endfor %}
@@ -100,7 +106,9 @@ they are not the products that ECMWF, NOAA, the NWS or any app vendor issue to e
 
 <section>
 <h2 id="cite">Cite the dataset</h2>
-<blockquote class="citation"><p>{{ data_citation }}</p></blockquote>
+<div class="cite">
+  <div class="cite__row"><span class="cite__k">Dataset</span><p class="cite__v">{{ data_citation }}</p></div>
+</div>
 <p class="note">For a specific number, cite its permanent link instead — every score card carries a
 short and a long citation with the access date.</p>
 <p>Machine-readable citation metadata is in
@@ -114,12 +122,12 @@ every page — so a citation can name the exact code that produced the number. T
 <h2 id="changelog">Changelog</h2>
 <p class="note">Rendered from the <code>Changelog</code> section of
 <a href="/methodology/#changelog">METHODOLOGY.md</a>, so the two cannot diverge.</p>
-<div class="scroll">
-<table class="scores">
+<div class="table-wrap">
+<table class="data">
 <thead><tr><th scope="col">Methodology</th><th scope="col">Date</th><th scope="col">Change</th></tr></thead>
 <tbody>
 {% for c in changelog %}
-<tr><td class="num">v{{ c.version }}</td><td>{{ c.date }}</td>
+<tr><td class="is-num">v{{ c.version }}</td><td>{{ c.date }}</td>
 <td>{{ c.summary }}
 {% if c.details %}<ul class="tight">{% for d in c.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</td></tr>
 {% endfor %}
@@ -138,19 +146,19 @@ rewritten when a corrected report arrives later. That keeps a published number s
 at the price of a permanent, documented discrepancy wherever a correction happened. This is how
 often, and how large:</p>
 {% if revisions.any %}
-<div class="scroll">
-<table class="scores">
+<div class="table-wrap">
+<table class="data">
 <caption>Station-days with a first-final CLI in the archive: <b>{{ revisions.n_days }}</b>, of
 which <b>{{ revisions.n_revised }}</b> carry a later corrected report. The rows below count only
 the days on which the corrected value actually differs, and measure corrected &minus; first in
 whole °F.</caption>
-<thead><tr><th scope="col">Variable</th><th scope="col" class="num">Days changed</th>
-<th scope="col" class="num">Share of days</th><th scope="col" class="num">Mean change °F</th>
-<th scope="col" class="num">Median °F</th><th scope="col" class="num">Largest |change| °F</th></tr></thead>
+<thead><tr><th scope="col">Variable</th><th scope="col" class="is-num">Days changed</th>
+<th scope="col" class="is-num">Share of days</th><th scope="col" class="is-num">Mean change °F</th>
+<th scope="col" class="is-num">Median °F</th><th scope="col" class="is-num">Largest |change| °F</th></tr></thead>
 <tbody>
 {% for r in revisions.rows %}
-<tr><th scope="row">{{ r.variable }}</th><td class="num">{{ r.n }}</td><td class="num">{{ r.share }}</td>
-<td class="num">{{ r.mean }}</td><td class="num">{{ r.p50 }}</td><td class="num">{{ r.max }}</td></tr>
+<tr><th scope="row">{{ r.variable }}</th><td class="is-num">{{ r.n }}</td><td class="is-num">{{ r.share }}</td>
+<td class="is-num">{{ r.mean }}</td><td class="is-num">{{ r.p50 }}</td><td class="is-num">{{ r.max }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -172,4 +180,5 @@ later report). This table fills in automatically when one does.</p>
 {% for l in limitations %}<li>{{ l }}</li>{% endfor %}
 </ol>
 </section>
+</article>
 {% endblock %}

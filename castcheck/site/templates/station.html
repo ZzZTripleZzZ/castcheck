@@ -1,124 +1,139 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
+{% set nav_current = 'stations' %}
 {% block title %}{{ station.id }} — CastCheck{% endblock %}
 {% block description %}Model verification at {{ station.id }} ({{ station.name }}): MAE, bias and sample size for every model and lead day.{% endblock %}
 {% block content %}
-<h1>{{ station.id }} — {{ station.name }}</h1>
-<p class="lede">
+<section class="hero">
+  <p class="eyebrow">Station</p>
+  <h1 class="hero__title hero__title--wide">{{ station.id }} — {{ station.name }}</h1>
+  <p class="hero__scope hero__scope--lede">
 {% if station.lat is not none %}{{ '%.4f'|format(station.lat) }}, {{ '%.4f'|format(station.lon) }}
-{% if station.elev_m is not none %}· {{ '%.0f'|format(station.elev_m) }} m{% endif %}
-· standard offset UTC{{ '%+d'|format(station.std_offset_h) }} h · truth product {{ station.cli_pil }}{% else %}
-Cross-station aggregate: the daily error series is first averaged over the stations that have a
-value that day, then scored and bootstrapped over days exactly like a single station.{% endif %}
-</p>
-<ul class="meta">
-  <li>window <b>{{ window_label }}</b></li><li>init <b>{{ init_hour }}Z</b></li>
-  <li>interpolation <b>{{ method }}</b></li><li>data through <b>{{ data_through }}</b></li>
-  <li>updated <b>{{ built_at }}</b></li><li>next update <b>{{ next_update }}</b></li>
-</ul>
-{{ m.switcher(variants) }}
-<p class="note">These pages are always <strong>bilinear</strong> interpolation, the headline method.
-The nearest-node variant, and every other window/initialization/interpolation/variable combination,
-is published on each permanent link below — follow any number.</p>
+  {% if station.elev_m is not none %}· {{ '%.0f'|format(station.elev_m) }} m{% endif %}
+  · standard offset UTC{{ '%+d'|format(station.std_offset_h) }} h · truth product
+  {{ station.cli_pil }}{% else %}
+  Cross-station aggregate: the daily error series is first averaged over the stations that have a
+  value that day, then scored and bootstrapped over days exactly like a single station.{% endif %}</p>
+  {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method}) }}
+</section>
+
+{{ m.switcher(variants, 'these pages are always bilinear — every other combination is on the permanent links') }}
 
 {% for b in blocks %}
-<section>
-<h2 id="{{ b.variable }}">{{ b.label }} — MAE °F</h2>
-<p class="note">Scored against {{ b.truth }}.{% if b.headline %} This is the headline variable:
-the same four instants on the forecast and the observation side.{% endif %}</p>
-<div class="scroll">
-<table class="scores grid">
-<caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
-every cell links to its permanent page. The sparkline shows the same model across lead days
-{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a scale shared within this table.</caption>
-<thead><tr><th scope="col">Model</th>{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
-<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
-<tbody>
-{% for row in b.rows %}
-<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.key }}/" title="{{ row.key }}">{{ row.name }}</a><span class="sub mono">{{ row.key }}</span></th>
-{% for c in row.cells %}
-{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
-{% else %}<td class="low-n">—</td>{% endif %}
-{% endfor %}
-<td class="sparkcell">{{ row.spark_svg }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
+<section class="panel" id="{{ b.variable }}">
+  <div class="panel__head">
+    <h2 class="panel__title">{{ b.label }} — MAE °F<span class="lead-tag">{{ b.variable }}</span></h2>
+    <p class="panel__sub">Scored against {{ b.truth }}.{% if b.headline %} This is the headline
+    variable: the same four instants on the forecast and the observation side.{% endif %}
+{% if loop.first %} These pages are always <strong>bilinear</strong> interpolation, the headline
+    method. The nearest-node variant, and every other window/initialization/interpolation/variable
+    combination, is published on each permanent link below — follow any number.{% endif %}</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+  {{ m.grid_table(b, leads, spark_leads, window_label, init_hour, method, 'model') }}
+  </div>
+  <div class="panel__foot">
 {% if b.flagged %}
-<p class="note">Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the
-observation (a CLI value that disagreed with the hourly observations, or a fallback source). They
-are kept in the scores and counted here rather than dropped —
-see <a href="/methodology/">methodology</a>.</p>
+  <p>Up to {{ b.flagged }} of the scored days in this table carry a QC flag on the observation (a
+  CLI value that disagreed with the hourly observations, or a fallback source). They are kept in
+  the scores and counted here rather than dropped — see <a href="/methodology/">methodology</a>.</p>
 {% endif %}
 {% if loop.first %}{{ m.legend(min_n) }}{% endif %}
+  </div>
 </section>
 {% endfor %}
+
 {{ m.cli_section(secondary_blocks, leads, spark_leads, window_label, init_hour, method, 'model', cli_caveat) }}
-{% if not blocks %}<p class="empty">No scores yet for this station in this view.</p>{% endif %}
+
+{% if not blocks %}
+<div class="empty-state">
+  <h3>Nothing scored in this view yet</h3>
+  <p>No scores yet for this station in this view. Try another window or initialization above.</p>
+</div>
+{% endif %}
 
 {% if not canonical_view %}
-<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model availability and the observed-truth table{% endif %} live on the
-<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window, initialization
-or interpolation selected here.</p>
+<p class="note">Month-by-month slices{% if canonical_href.startswith('/station/') %}, model
+availability and the observed-truth table{% endif %} live on the
+<a href="{{ canonical_href }}">canonical page</a>: they do not depend on the window,
+initialization or interpolation selected here.</p>
 {% endif %}
+
 {% if months %}
-<section>
-<h2 id="months">Month by month</h2>
-<p class="note">MAE °F at lead day 1, 00Z, bilinear, {{ chart_variable_label }} — the seasonal slice behind
-the window averages. A model that is excellent in one season and poor in another shows up here and
-nowhere else.</p>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="num">{{ k }}</th>{% endfor %}</tr></thead>
-<tbody>
+<section class="panel" id="months">
+  <div class="panel__head">
+    <h2 class="panel__title">Month by month</h2>
+    <p class="panel__sub">MAE °F at lead day 1, 00Z, bilinear, {{ chart_variable_label }} — the
+    seasonal slice behind the window averages. A model that is excellent in one season and poor in
+    another shows up here and nowhere else.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Month</th>{% for k in months[0].cols %}<th scope="col" class="is-num">{{ k }}</th>{% endfor %}</tr></thead>
+      <tbody>
 {% for r in months %}
-<tr><th scope="row">{{ r.month }}</th>
-{% for c in r.cells %}{% if c %}<td>{{ c.mae }}<span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>{% else %}<td class="low-n">—</td>{% endif %}{% endfor %}
-</tr>
+      <tr><th scope="row" class="keycell">{{ r.month }}</th>
+      {% for c in r.cells %}{% if c %}<td class="is-num"><span class="val">{{ c.mae }}</span><span class="ci">{{ c.bias }} · n={{ c.n }}</span><i class="bias__bar {{ c.bias_class }}"></i></td>{% else %}<td class="is-num is-lown"><span class="val">—</span></td>{% endif %}{% endfor %}
+      </tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
 {% if availability %}
-<section>
-<h2 id="availability">Model availability at this station</h2>
-<div class="scroll">
-<table class="scores avail">
-<thead><tr><th scope="col">Model</th><th scope="col">Period</th>
-<th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
-<tbody>
+<section class="panel" id="availability">
+  <div class="panel__head">
+    <h2 class="panel__title">Model availability at this station</h2>
+    <p class="panel__sub">Each model is scored only over its own available period, on a shared
+    scale; the window averages above are therefore not identical across models.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th><th scope="col">Period</th>
+      <th scope="col" class="is-num">Scored days</th><th scope="col">Coverage</th></tr></thead>
+      <tbody>
 {% for a in availability %}
-<tr><th scope="row"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
-<td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
-<td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
+      <tr><th scope="row" class="model-cell"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
+      <td class="period">{{ a.period }}</td><td class="is-num"><span class="val">{{ a.n }}</span></td>
+      <td class="avail-cell"><div class="avail"><div class="avail__track"><i class="avail__span" style="left:{{ a.left }}%;width:{{ a.width }}%"></i></div></div></td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
 {% if recent %}
-<section>
-<h2 id="recent">Observed truth — last {{ recent|length }} days</h2>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Climatological day</th><th scope="col" class="num">Tmax °F</th>
-<th scope="col" class="num">Tmin °F</th><th scope="col">Source</th><th scope="col">Flag</th></tr></thead>
-<tbody>
-{% for r in recent %}<tr><td>{{ r.date }}</td><td class="num">{{ r.tmax }}</td><td class="num">{{ r.tmin }}</td><td>{{ r.source }}</td><td>{{ r.flag }}</td></tr>{% endfor %}
-</tbody>
-</table>
-</div>
+<section class="panel" id="recent">
+  <div class="panel__head">
+    <h2 class="panel__title">Observed truth<span class="lead-tag">last {{ recent|length }} days</span></h2>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Climatological day</th><th scope="col" class="is-num">Tmax °F</th>
+      <th scope="col" class="is-num">Tmin °F</th><th scope="col">Source</th><th scope="col">Flag</th></tr></thead>
+      <tbody>
+{% for r in recent %}<tr><td class="keycell">{{ r.date }}</td>
+      <td class="is-num"><span class="val">{{ r.tmax }}</span></td>
+      <td class="is-num"><span class="val">{{ r.tmin }}</span></td>
+      <td>{{ r.source }}</td><td>{{ r.flag }}</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
-<p class="downloads"><a href="/api/v1/scores/index.json">All scores as JSON</a>
-<a href="/data/scores_latest.csv.gz">scores_latest.csv.gz</a>
-<a href="/data/daily_errors/{{ station.id }}.csv.gz">daily_errors/{{ station.id }}.csv.gz</a>
-<a href="/data/">data &amp; licences</a></p>
+<ul class="downloads">
+  <li><a href="/api/v1/scores/index.json"><span class="fmt">JSON</span> all scores</a></li>
+  <li><a href="/data/scores_latest.csv.gz"><span class="fmt">CSV</span> scores_latest.csv.gz</a></li>
+{% if station.cli_pil %}
+  <li><a href="/data/daily_errors/{{ station.id }}.csv.gz"><span class="fmt">CSV</span> daily_errors/{{ station.id }}.csv.gz</a></li>
+{% else %}
+  {# the ALL pseudo-station has no shard of its own: its rows are the mean of the real ones #}
+  <li><a href="/data/#download"><span class="fmt">CSV</span> daily errors, one file per station</a></li>
+{% endif %}
+  <li><a href="/data/"><span class="fmt">DATA</span> data &amp; licences</a></li>
+</ul>
 {% endblock %}

@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block title %}CastCheck — no data yet{% endblock %}
 {% block content %}
-<h1>{{ heading }}</h1>
-<p class="empty">{{ message }}</p>
-<p>The pipeline runs daily: forecasts are fetched shortly after each 00Z and 12Z run, the NWS Daily
-Climate Report for the previous climatological day is collected the following morning, and the
-scores are recomputed and republished from scratch. Until the first pair of forecast and truth
-exists there is nothing to score.</p>
-<p>See <a href="/methodology/">the methodology</a> for what will be published here, and
+<section class="hero">
+  <p class="eyebrow">Nothing scored yet</p>
+  <h1 class="hero__title">{{ heading }}</h1>
+</section>
+<div class="empty-state">
+  <h3>{{ message }}</h3>
+  <p>The pipeline runs daily: forecasts are fetched shortly after each 00Z and 12Z run, the NWS
+  Daily Climate Report for the previous climatological day is collected the following morning, and
+  the scores are recomputed and republished from scratch. Until the first pair of forecast and
+  truth exists there is nothing to score.</p>
+</div>
+<p class="note">See <a href="/methodology/">the methodology</a> for what will be published here, and
 <a href="/status/">status</a> for what the pipeline currently holds.</p>
 {% endblock %}

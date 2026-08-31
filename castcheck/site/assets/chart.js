@@ -31,7 +31,7 @@
   }
 
   /* ---- hover read-out: the SVG points already carry <title>, this makes them legible fast ---- */
-  var figs = document.querySelectorAll("figure.chart");
+  var figs = document.querySelectorAll(".fig");
   for (var i = 0; i < figs.length; i++) (function (fig) {
     var out = fig.querySelector(".readout");
     if (!out) return;

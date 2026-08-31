@@ -1,26 +1,32 @@
 {% extends "base.html" %}
 {% block title %}JSON API v1 — CastCheck{% endblock %}
 {% block description %}CastCheck JSON API v1: static, CORS-open endpoints for scores, leaderboards, pairwise comparisons, stations, models and pipeline status.{% endblock %}
+{% set nav_current = 'api' %}
 {% block content %}
-<h1>JSON API <span class="mono">v1</span></h1>
-<p class="lede">Plain static files on a CDN — no server, no keys, no rate limit.
+<section class="hero">
+  <p class="eyebrow">Reference</p>
+  <h1 class="hero__title hero__title--wide">JSON API <span class="mono">v1</span></h1>
+  <p class="hero__scope hero__scope--lede">Plain static files on a CDN — no server, no keys, no rate limit.
 <code>Access-Control-Allow-Origin: *</code> and
 <code>Cache-Control: public, max-age=3600, stale-while-revalidate=86400</code> on everything under
 <code>/api/</code>. Every response carries <code>schema_version</code>, <code>generated_at</code>,
 <code>data_through</code>, <code>window</code>, <code>units</code>, <code>method</code> and
 <code>truth</code>; every result row can be turned into a permanent link.</p>
-<ul class="meta">
-  <li>base <b>{{ site_url }}/api/v1/</b></li>
-  <li>schema <b>v{{ schema_version }}</b></li>
-  <li>methodology <b>v{{ methodology_version }}</b></li>
-  <li>data through <b>{{ data_through }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-</ul>
+  <dl class="metastrip">
+    <div><dt>Base</dt><dd>{{ site_url }}/api/v1/</dd></div>
+    <div><dt>Schema</dt><dd>v{{ schema_version }}</dd></div>
+    <div><dt>Methodology</dt><dd>v{{ methodology_version }}</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+  </dl>
+</section>
+
+<article class="prose prose--wide">
 
 <section>
 <h2 id="endpoints">Endpoints</h2>
-<div class="scroll">
-<table class="scores">
+<div class="table-wrap">
+<table class="data">
 <thead><tr><th scope="col">Path</th><th scope="col">Contents</th></tr></thead>
 <tbody>
 <tr><td><a href="/api/v1/scores/index.json"><code>scores/index.json</code></a></td>
@@ -121,4 +127,5 @@ appears in the <a href="/data/#changelog">changelog</a>. Numbers change every da
 accumulates — always record <code>generated_at</code> and <code>data_through</code> with anything
 you quote.</p>
 </section>
+</article>
 {% endblock %}

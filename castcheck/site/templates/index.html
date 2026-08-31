@@ -1,214 +1,307 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
+{% set nav_current = 'overview' %}
 {% block title %}CastCheck — how far off was each weather model?{% endblock %}
 {% block description %}Daily-updated, station-level verification of raw weather-model 2 m temperature forecasts: MAE, bias, bootstrap intervals and sample sizes for every model, station and lead day.{% endblock %}
 {% block head %}<link rel="canonical" href="{{ canonical }}">{% endblock %}
 {% block content %}
-<h1>How far off was each weather model?</h1>
+{% set top = headline.rows[0] if headline and headline.n_ranked else none %}
+{% set pers = (headline.rows | selectattr('baseline') | list | first) if headline else none %}
 
-<div class="headline">
-{% if headline and headline.n_ranked %}
-{% set top = headline.rows[0] %}
-<p class="verdict">Over {{ window_label }}, across {{ n_stations }} U.S. stations, the most accurate
-raw {{ variable_label }} forecast <strong>{{ headline.lead }} day{{ '' if headline.lead == 1 else 's' }} ahead</strong>
-is <strong>{{ top.model_name }}</strong>: mean absolute error
-<span class="num">{{ top.mae }} °F</span> <span class="ci">{{ top.mae_ci }}</span>,
-bias <span class="num">{{ top.bias }} °F</span>, on <span class="num">n = {{ top.n }}</span> scored days.</p>
+<section class="hero">
+  <div class="hero__grid">
+    <div>
+      <p class="eyebrow">Daily verification · methodology v{{ methodology_version }}</p>
+      <h1 class="hero__title">How far off was each weather model?</h1>
+{% if top %}
+      <p class="hero__verdict">Over {{ window_label }}, across {{ n_stations }} U.S. stations, the
+      most accurate raw {{ variable_label }} forecast
+      <strong>{{ headline.lead }} day{{ '' if headline.lead == 1 else 's' }} ahead</strong> is
+      <strong>{{ top.model_name }}</strong>: mean absolute error
+      <span class="val">{{ top.mae }} °F</span> <span class="val">{{ top.mae_ci }}</span>, bias
+      <span class="val">{{ top.bias }} °F</span>, on <span class="val">n = {{ top.n }}</span>
+      scored days.</p>
 {% else %}
-<p class="verdict">No group in this view yet has enough scored days to rank
-(<span class="num">n &lt; {{ min_n }}</span>). Every number below is still published, greyed out,
-with its sample size.</p>
+      <p class="hero__verdict">No group in this view yet has enough scored days to rank
+      (<span class="val">n &lt; {{ min_n }}</span>). Every number below is still published, greyed
+      out, with its sample size.</p>
 {% endif %}
-<p class="note">Scope: raw model output on the native 0.25° grid.
+      <p class="hero__scope">Scope: raw model output on the native 0.25° grid.
 {% if is_headline %}The headline variable is the <strong>instantaneous</strong> 2 m temperature at
-00/06/12/18 UTC, scored against {{ variable_truth }} — the same four instants on both sides, so
-nothing in the number depends on a model's own diurnal amplitude.{% else %}
-This view scores the {{ variable_label }} against {{ variable_truth }}.{% endif %}
+      00/06/12/18 UTC, scored against {{ variable_truth }} — the same four instants on both sides,
+      so nothing in the number depends on a model's own diurnal amplitude.{% else %}
+      This view scores the {{ variable_label }} against {{ variable_truth }}.{% endif %}
 {# a blank line here would be swallowed by trim_blocks, so the space is explicit #} Errors are
-computed in °C and shown in °F
-(<a href="/methodology/">methodology v{{ methodology_version }}</a>).</p>
-{{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method, 'variable_label': variable_label}) }}
-</div>
+      computed in °C and shown in °F
+      (<a href="/methodology/">methodology v{{ methodology_version }}</a>).</p>
+      {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method, 'variable_label': variable_label}) }}
+    </div>
+    <div>
+      <div class="kpi-row">
+        <div class="kpi">
+          <p class="kpi__label">Leader, lead day {{ headline.lead if headline else 1 }}</p>
+          <p class="kpi__value">{{ top.mae if top else '—' }}{% if top %}<span class="unit">°F</span>{% endif %}</p>
+          <p class="kpi__ci">{{ (top.mae_ci ~ ' MAE') if top else 'nothing ranked yet' }}</p>
+          <p class="kpi__foot">{% if top %}{{ top.model_name }}{% else %}n &lt; {{ min_n }} everywhere{% endif %}</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Persistence baseline</p>
+          <p class="kpi__value">{{ pers.mae if pers else '—' }}{% if pers %}<span class="unit">°F</span>{% endif %}</p>
+          <p class="kpi__ci">{{ pers.mae_ci if pers else 'no baseline in this view' }}</p>
+          <p class="kpi__foot">yesterday's observation — the bar every model has to clear</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Scored days</p>
+          <p class="kpi__value">{{ top.n if top else (pers.n if pers else '—') }}</p>
+          <p class="kpi__ci">{{ n_stations }} stations · {{ n_systems }} systems</p>
+          <p class="kpi__foot">in {{ window_label }}, lead day {{ headline.lead if headline else 1 }}</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Systems ranked</p>
+          <p class="kpi__value">{{ headline.n_ranked if headline else 0 }}<span class="unit">/{{ n_systems }}</span></p>
+          <p class="kpi__ci">next update {{ next_update }}</p>
+          <p class="kpi__foot">below n = {{ min_n }}: published, greyed, unranked</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-{{ m.switcher(variants) }}
+{{ m.switcher(variants, n_views ~ ' views · each has its own permalink') }}
 
 {% if not boards %}
-<p class="empty">No scores yet for this combination of window, initialization, interpolation and
-variable. Try another view above, or see <a href="/status/">status</a> for what the pipeline holds.</p>
+<div class="empty-state">
+<h3>Nothing scored in this view yet</h3>
+<p>No scores yet for this combination of window, initialization, interpolation and variable. Try
+another view above, or see <a href="/status/">status</a> for what the pipeline holds.</p>
+</div>
+{% endif %}
+
+{% if mae_fig %}
+<section class="panel">
+  <div class="panel__body">
+    <figure class="fig">
+      <h2 class="fig__title">Mean absolute error with 95 % confidence intervals</h2>
+      <p class="fig__sub">Lead day {{ headline.lead }} · {{ window_label }} · {{ n_stations }}
+      stations pooled · {{ init_hour }}Z · {{ method }} · {{ variable_label }}. Whiskers are
+      moving-block bootstrap intervals; models whose whiskers overlap are not distinguishable at
+      this sample size. Baselines are drawn in grey and never ranked.</p>
+      <div class="fig__body">{{ mae_fig }}</div>
+      <p class="fig__source">Source: CastCheck {{ castcheck_version }}, methodology
+      v{{ methodology_version }} · ECMWF open data, NOAA/NCEP GFS, NOAA/CIRA AIWP, NWS ASOS ·
+      data through {{ data_through }} · CC&nbsp;BY&nbsp;4.0.
+      <span class="readout">Hover a bar for its value.</span></p>
+    </figure>
+  </div>
+</section>
 {% endif %}
 
 {% for b in boards %}
-<section>
-<h2 id="lead{{ b.lead }}">Lead day {{ b.lead }} — {{ variable_label }}</h2>
-<div class="scroll">
-<table class="scores">
-<caption>{{ window_label }}, all stations pooled, {{ init_hour }}Z initialization,
-{{ method }} interpolation, forecast against {{ variable_truth }}.
-Lower MAE is better; bias is positive when the model is too warm.
-Every number links to its permanent page.
-<em>Skill</em> is <span class="mono">1 − MAE ÷ MAE(persistence)</span> computed on the days both
-have a value — the small print in that column is that denominator and the size of the intersection,
-so the number can be checked against the persistence row rather than contradicting it. The
-persistence row's own <em>n</em> is its whole record, marked <em>all days</em>.
-<em>Skill, debiased (out-of-sample)</em> repeats the score after removing a bias estimated on the
-30 scored days <em>before</em> each day and applied forward, never on the day itself.
-An interval reads <strong>—</strong> when the bootstrap could not run: fewer than
-{{ ci_min_n }} scored days or fewer than {{ ci_min_blocks }} blocks. Hit-rate intervals are Wilson
-score intervals, not bootstraps.
-{% if not b.any_ranked %}<strong>—</strong> in the rank column means fewer than {{ min_n }} scored
-days, so the group is published but not ranked.{% endif %}</caption>
-<thead><tr>
-<th scope="col">rank</th><th scope="col">Model</th>
-<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
-<th scope="col" class="num">±3 °F</th>
-<th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence), both on the same common days. Positive means better than yesterday's observation.">Skill</abbr></th>
-<th scope="col" class="num"><abbr title="The same skill score after removing a bias estimated on the previous 30 scored days and applied forward — an out-of-sample correction, never fitted on the day being scored.">Skill, debiased (out-of-sample)</abbr></th>
-<th scope="col" class="num">n</th><th scope="col">vs leader</th>
-</tr></thead>
-<tbody>
+<section class="panel" id="lead{{ b.lead }}">
+  <div class="panel__head">
+    <h2 class="panel__title">Lead day {{ b.lead }}<span class="lead-tag">target = init + {{ b.lead }} d</span></h2>
+    <span class="panel__tail"><a href="{{ canonical_path }}#lead{{ b.lead }}">permalink</a></span>
+{% if loop.first %}
+    <p class="panel__sub">{{ window_label|capitalize }}, all {{ n_stations }} stations pooled,
+    {{ init_hour }}Z initialization, {{ method }} interpolation, {{ variable_label }} against
+    {{ variable_truth }}. Lower MAE is better; bias is positive when the model is too warm. Every
+    number links to its permanent page.</p>
+    <p class="panel__sub"><em>Skill</em> is <span class="mono">1 − MAE ÷ MAE(persistence)</span>
+    computed on the days both have a value — the small print in that column is that denominator
+    and the size of the intersection, so the number can be checked against the persistence row
+    rather than contradicting it. The persistence row's own <em>n</em> is its whole record, marked
+    <em>all days</em>. <em>Skill, debiased (out-of-sample)</em> repeats the score after removing a
+    bias estimated on the 30 scored days <em>before</em> each day and applied forward, never on the
+    day itself. An interval reads <strong>—</strong> when the bootstrap could not run: fewer than
+    {{ ci_min_n }} scored days or fewer than {{ ci_min_blocks }} blocks. Hit-rate intervals are
+    Wilson score intervals, not bootstraps.{% if not b.any_ranked %} <strong>—</strong> in the rank
+    column means fewer than {{ min_n }} scored days, so the group is published but not ranked.{% endif %}</p>
+{% else %}
+    <p class="panel__sub">Same sampling as lead day {{ boards[0].lead }}. Skill is
+    <span class="mono">1 − MAE ÷ MAE(persistence)</span> on the days both have a value.</p>
+{% endif %}
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <caption class="sr">Lead day {{ b.lead }}, {{ window_label }}, {{ init_hour }}Z,
+      {{ method }}, {{ variable_label }}.</caption>
+      <thead><tr>
+      <th scope="col" class="is-num">Rank</th><th scope="col">Model</th>
+      <th scope="col" class="is-num">MAE °F</th><th scope="col" class="is-num">Bias °F</th>
+{% if loop.first %}<th scope="col" class="is-num">±3 °F</th>{% endif %}
+      <th scope="col" class="is-num"><abbr title="1 − MAE ÷ MAE(persistence), both on the same common days. Positive means better than yesterday's observation.">Skill</abbr></th>
+{% if loop.first %}<th scope="col" class="is-num"><abbr title="The same skill score after removing a bias estimated on the previous 30 scored days and applied forward — an out-of-sample correction, never fitted on the day being scored.">Skill, debiased (out-of-sample)</abbr></th>{% endif %}
+      <th scope="col" class="is-num">n</th><th scope="col">vs leader</th>
+      </tr></thead>
+      <tbody>
+{% set full = loop.first %}
 {% for r in b.rows %}
-<tr class="{{ 'low-n' if r.low_n }}{{ ' baseline' if r.baseline }}">
-<td class="num">{{ r.rank or '—' }}</td>
-<td><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}{% if r.baseline %} · baseline{% endif %}</span></td>
-<td class="num{{ ' best' if r.best_mae }}"><a href="{{ r.permalink }}">{{ r.mae }}</a> <span class="ci">{{ r.mae_ci }}</span></td>
-<td class="num bias"><i class="c {{ r.bias_class }}"></i><a href="{{ r.permalink }}">{{ r.bias }}</a> <span class="ci">{{ r.bias_ci }}</span></td>
-<td class="num"><a href="{{ r.permalink }}">{{ r.hit3f }}</a></td>
-<td class="num{{ ' best' if r.best_skill }}"><a href="{{ r.permalink }}">{{ r.skill }}</a>
-{% if not r.baseline %}<span class="ci">{{ r.skill_ci }}</span><span class="sub">{{ r.skill_vs }}</span>{% endif %}</td>
-<td class="num">{{ r.skill_debiased }}{% if r.n_debiased != '—' and not r.baseline %}<span class="sub">n={{ r.n_debiased }}</span>{% endif %}</td>
-<td class="num">{{ r.n }}<span class="sub">{% if r.n_note %}{{ r.n_note }}{% else %}{{ r.n_stations }} stns{% endif %}{% if r.n_flagged %} · {{ r.n_flagged }} QC{% endif %}</span></td>
-<td class="sig">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span><span class="sr"> {{ r.mark_title }}</span>{% endif %}</td>
-</tr>
+      <tr class="{{ 'is-lown ' if r.low_n }}{{ 'is-baseline ' if r.baseline }}{{ 'is-leader' if r.rank == 1 }}">
+        <td class="is-num"><span class="rank{{ ' rank--1' if r.rank == 1 }}">{{ r.rank or '—' }}</span></td>
+        <th scope="row" class="model-cell"><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}{% if r.baseline %} · baseline{% endif %}</span></th>
+        <td class="is-num{{ ' is-best' if r.best_mae }}"><span class="val"><a href="{{ r.permalink }}">{{ r.mae }}</a></span><span class="ci">{{ r.mae_ci }}</span></td>
+        <td class="is-num bias"><span class="val"><a href="{{ r.permalink }}">{{ r.bias }}</a></span><span class="ci">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
+{% if full %}<td class="is-num"><span class="val"><a href="{{ r.permalink }}">{{ r.hit3f }}</a></span></td>{% endif %}
+        <td class="is-num{{ ' is-best' if r.best_skill }}"><span class="val"><a href="{{ r.permalink }}">{{ r.skill }}</a></span>{% if not r.baseline %}<span class="ci">{{ r.skill_ci }}</span><span class="sub">{{ r.skill_vs }}</span>{% if r.skill_w %}<i class="meter"><i style="width:{{ r.skill_w }}%"></i></i>{% endif %}{% endif %}</td>
+{% if full %}<td class="is-num"><span class="val">{{ r.skill_debiased }}</span>{% if r.n_debiased != '—' and not r.baseline %}<span class="ci">n={{ r.n_debiased }}</span>{% endif %}</td>{% endif %}
+        <td class="is-num"><span class="val">{{ r.n }}</span><span class="sub">{% if r.n_note %}{{ r.n_note }}{% else %}{{ r.n_stations }} stns{% endif %}{% if r.n_flagged %} · {{ r.n_flagged }} QC{% endif %}</span></td>
+        <td class="mark{% if r.mark == '★' %} mark--best{% elif r.mark == '▼' %} mark--worse{% endif %}">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span><span class="sr"> {{ r.mark_title }}</span>{% endif %}</td>
+      </tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
-{% if loop.first %}{{ m.legend(min_n, b.holm) }}{% endif %}
+      </tbody>
+    </table></div>
+  </div>
+{% if loop.first %}<div class="panel__foot">{{ m.legend(min_n, b.holm) }}</div>{% endif %}
 </section>
 {% endfor %}
 
 {% if sampled %}
 <section>
-<h2 id="sampled">The same four samples as a daily maximum and minimum</h2>
-<p class="note">Lead day {{ sampled_lead }}, {{ window_label }}, {{ init_hour }}Z, {{ method }}.
-Here the forecast's max/min of the four samples is scored against the <strong>observation's</strong>
-max/min of the same four instants. Like for like: whatever the four-sample definition misses, it
-misses on both sides. The comparison against the true NWS daily extremes is a different question
-and lives on the <a href="/stations/">station</a> and permanent-link pages.</p>
+  <div class="section-head">
+    <h2 id="sampled">The same four samples as a daily maximum and minimum</h2>
+    <p>Lead day {{ sampled_lead }}, {{ window_label }}, {{ init_hour }}Z, {{ method }}. Here the
+    forecast's max/min of the four samples is scored against the <strong>observation's</strong>
+    max/min of the same four instants. Like for like: whatever the four-sample definition misses,
+    it misses on both sides. The comparison against the true NWS daily extremes is a different
+    question and lives on the <a href="/stations/">station</a> and permanent-link pages.</p>
+  </div>
 {% for b in sampled %}
-<h3 id="{{ b.variable }}">{{ b.variable_label }}</h3>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">rank</th><th scope="col">Model</th>
-<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
-<th scope="col" class="num">Skill</th><th scope="col" class="num">n</th>
-<th scope="col">vs leader</th></tr></thead>
-<tbody>
+  <section class="panel" id="{{ b.variable }}" style="margin-top:var(--sp-3)">
+    <div class="panel__head"><h3 class="panel__title">{{ b.variable_label }}<span class="lead-tag">{{ b.variable }}</span></h3></div>
+    <div class="panel__body panel__body--flush">
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th scope="col" class="is-num">Rank</th><th scope="col">Model</th>
+        <th scope="col" class="is-num">MAE °F</th><th scope="col" class="is-num">Bias °F</th>
+        <th scope="col" class="is-num">Skill</th><th scope="col" class="is-num">n</th>
+        <th scope="col">vs leader</th></tr></thead>
+        <tbody>
 {% for r in b.rows %}
-<tr class="{{ 'low-n' if r.low_n }}{{ ' baseline' if r.baseline }}">
-<td class="num">{{ r.rank or '—' }}</td>
-<td><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a></td>
-<td class="num{{ ' best' if r.best_mae }}"><a href="{{ r.permalink }}">{{ r.mae }}</a> <span class="ci">{{ r.mae_ci }}</span></td>
-<td class="num bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }} <span class="ci">{{ r.bias_ci }}</span></td>
-<td class="num">{{ r.skill }}{% if not r.baseline %}<span class="sub">{{ r.skill_vs }}</span>{% endif %}</td>
-<td class="num">{{ r.n }}{% if r.n_note %}<span class="sub">{{ r.n_note }}</span>{% endif %}</td>
-<td class="sig">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span>{% endif %}</td></tr>
+        <tr class="{{ 'is-lown ' if r.low_n }}{{ 'is-baseline ' if r.baseline }}{{ 'is-leader' if r.rank == 1 }}">
+          <td class="is-num"><span class="rank{{ ' rank--1' if r.rank == 1 }}">{{ r.rank or '—' }}</span></td>
+          <th scope="row" class="model-cell"><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}</span></th>
+          <td class="is-num{{ ' is-best' if r.best_mae }}"><span class="val"><a href="{{ r.permalink }}">{{ r.mae }}</a></span><span class="ci">{{ r.mae_ci }}</span></td>
+          <td class="is-num bias"><span class="val">{{ r.bias }}</span><span class="ci">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
+          <td class="is-num"><span class="val">{{ r.skill }}</span>{% if not r.baseline %}<span class="ci">{{ r.skill_vs }}</span>{% endif %}</td>
+          <td class="is-num"><span class="val">{{ r.n }}</span>{% if r.n_note %}<span class="sub">{{ r.n_note }}</span>{% endif %}</td>
+          <td class="mark{% if r.mark == '★' %} mark--best{% elif r.mark == '▼' %} mark--worse{% endif %}">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span>{% endif %}</td>
+        </tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
 {% endfor %}
 </section>
 {% endif %}
 
 {% if matrix %}
-<section>
-<h2 id="matrix">Every model × every lead day</h2>
-<p class="note">MAE in °F with the bias underneath, {{ window_label }}, {{ init_hour }}Z,
-{{ method }}, {{ variable_label }}. The sparkline is the same model's MAE across lead days
-{{ spark_leads[0] }}–{{ spark_leads[-1] }} on a shared vertical scale.</p>
-<div class="scroll">
-<table class="scores grid">
-<thead><tr><th scope="col">Model</th>
-{% for l in matrix.leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
-<th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
-<tbody>
+<section class="panel" id="matrix">
+  <div class="panel__head">
+    <h2 class="panel__title">Every model × every lead day</h2>
+    <p class="panel__sub">MAE in °F with the bias and n underneath, {{ window_label }},
+    {{ init_hour }}Z, {{ method }}, {{ variable_label }}. The sparkline is the same model's MAE
+    across lead days {{ spark_leads[0] }}–{{ spark_leads[-1] }} on a shared vertical scale.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th>
+      {% for l in matrix.leads %}<th scope="col" class="is-num">d{{ l }}</th>{% endfor %}
+      <th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
+      <tbody>
 {% for row in matrix.rows %}
-<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.model_id }}/" title="{{ row.model_id }}">{{ row.name }}</a><span class="sub mono">{{ row.model_id }}</span></th>
-{% for c in row.cells %}
-{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
-{% else %}<td class="low-n">—</td>{% endif %}
+      <tr class="{{ 'is-baseline' if row.baseline }}"><th scope="row" class="model-cell"><a href="/model/{{ row.model_id }}/" title="{{ row.model_id }}">{{ row.name }}</a><span class="sub mono">{{ row.model_id }}</span></th>
+      {% for c in row.cells %}{{ m.grid_cell(c) }}{% endfor %}
+      <td class="sparkcell">{{ row.spark_svg }}</td></tr>
 {% endfor %}
-<td class="sparkcell">{{ row.spark_svg }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
 {% if maps %}
 <section>
-<h2 id="map">Where the errors are</h2>
-<p class="note">Both maps show a <em>fixed</em> quantity per station. Neither shows which model
-wins where: on samples this short the per-station winner is mostly noise, and a map of winners
-would invite a comparison the data cannot carry.</p>
+  <div class="section-head">
+    <h2 id="map">Where the errors are</h2>
+    <p>Both maps show a <em>fixed</em> quantity per station. Neither shows which model wins where:
+    on samples this short the per-station winner is mostly noise, and a map of winners would invite
+    a comparison the data cannot carry.</p>
+  </div>
 {% for mp in maps %}
-<figure class="chart" id="map-{{ mp.key }}">
-{{ mp.svg }}
-<figcaption>{{ mp.caption }} Dot area grows with the number of scored days; fill is the mean bias
-(warm = model too warm, cool = too cold{% if mp.per_model %}, grey = interval includes zero{% endif %}).
-The frame is a latitude/longitude graticule on an Albers projection.
-<span class="readout">Hover a dot for its numbers.</span></figcaption>
-</figure>
-<details class="data-behind">
-<summary>{{ mp.title }} as a table</summary>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Station</th><th scope="col">{{ 'Model' if mp.per_model else 'Models' }}</th>
-<th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
-<th scope="col" class="num">n</th></tr></thead>
-<tbody>
+  <div class="panel" id="map-{{ mp.key }}" style="margin-top:var(--sp-3)">
+    <div class="panel__body">
+      <figure class="fig">
+        <h3 class="fig__title">{{ mp.title }}</h3>
+        <p class="fig__sub">{{ mp.caption }} Dot area grows with the number of scored days; fill is
+        the mean bias (warm = model too warm, cool = too cold{% if mp.per_model %}, grey = interval
+        includes zero{% endif %}). The frame is a latitude/longitude graticule on an Albers
+        projection.</p>
+        <div class="fig__body">{{ mp.svg }}</div>
+        <p class="fig__source">Source: CastCheck · station coordinates NWS/NOAA · Albers conic
+        projection · <a href="/data/stations.csv">stations.csv</a>.
+        <span class="readout">Hover a dot for its numbers.</span></p>
+      </figure>
+      <p class="legend" style="margin-top:var(--sp-4)">
+        <span><i class="swatch is-cool-2"></i> model too cold</span>
+        <span><i class="swatch is-flat"></i> interval includes zero</span>
+        <span><i class="swatch is-warm-2"></i> model too warm</span>
+        <span>dot area ∝ scored days</span>
+      </p>
+    </div>
+    <details class="behind">
+      <summary>{{ mp.title }} as a table</summary>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th scope="col">Station</th><th scope="col">{{ 'Model' if mp.per_model else 'Models' }}</th>
+        <th scope="col" class="is-num">MAE °F</th><th scope="col" class="is-num">Bias °F</th>
+        <th scope="col" class="is-num">n</th></tr></thead>
+        <tbody>
 {% for r in mp.rows %}
-<tr class="{{ 'low-n' if r.low_n }}"><th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a> {{ r.name }}</th>
-<td>{{ r.note }}</td><td class="num">{{ r.mae }}</td>
-<td class="num bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }}</td>
-<td class="num">{{ r.n }}</td></tr>
+        <tr class="{{ 'is-lown' if r.low_n }}"><th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a> {{ r.name }}</th>
+        <td>{{ r.note }}</td><td class="is-num"><span class="val">{{ r.mae }}</span></td>
+        <td class="is-num bias"><span class="val">{{ r.bias }}</span><i class="bias__bar {{ r.bias_class }}"></i></td>
+        <td class="is-num"><span class="val">{{ r.n }}</span></td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
-</details>
+        </tbody>
+      </table></div>
+    </details>
+  </div>
 {% endfor %}
 </section>
 {% endif %}
 
 {% if availability %}
-<section>
-<h2 id="availability">Data availability</h2>
-<p class="note">Each model is scored only over its own available period ({{ avail_start }} →
-{{ avail_end }}); the windows above are therefore not identical across models. Pairwise
-comparisons on the permanent-link pages use common days only.</p>
-<div class="scroll">
-<table class="scores avail">
-<thead><tr><th scope="col">Model</th><th scope="col">Period</th>
-<th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
-<tbody>
+<section class="panel" id="availability">
+  <div class="panel__head">
+    <h2 class="panel__title">Data availability</h2>
+    <p class="panel__sub">Each model is scored only over its own available period
+    ({{ avail_start }} → {{ avail_end }}); the windows above are therefore not identical across
+    models. Pairwise comparisons on the permanent-link pages use common days only.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th><th scope="col">Period</th>
+      <th scope="col" class="is-num">Scored days</th><th scope="col">Coverage</th></tr></thead>
+      <tbody>
 {% for a in availability %}
-<tr><th scope="row"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
-<td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
-<td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
+      <tr><th scope="row" class="model-cell"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
+      <td class="period">{{ a.period }}</td><td class="is-num"><span class="val">{{ a.n }}</span></td>
+      <td class="avail-cell"><div class="avail"><div class="avail__track"><i class="avail__span" style="left:{{ a.left }}%;width:{{ a.width }}%"></i></div><div class="avail__scale"><span>{{ avail_start }}</span><span>{{ avail_end }}</span></div></div></td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
-<section>
-<h2 id="stations">Stations</h2>
-<ul class="cols">
+<section class="panel" id="stations">
+  <div class="panel__head">
+    <h2 class="panel__title">Stations<span class="lead-tag">{{ station_links|length }}</span></h2>
+    <span class="panel__tail"><a href="/stations/">full station table</a></span>
+  </div>
+  <div class="panel__body">
+    <ul class="cols">
 {% for s in station_links %}<li><a href="/station/{{ s.id }}/">{{ s.id }}</a> — {{ s.name }}</li>{% endfor %}
-</ul>
+    </ul>
+  </div>
 </section>
 {% endblock %}

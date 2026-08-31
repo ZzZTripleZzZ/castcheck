@@ -1,168 +1,242 @@
 {% extends "base.html" %}
+{% set nav_current = 'status' %}
 {% block title %}Status — CastCheck{% endblock %}
 {% block description %}CastCheck pipeline status: model-run and truth completeness for the last 90 days, current gaps and the last run time.{% endblock %}
 {% block content %}
-<h1>Pipeline status</h1>
-{% if not report %}
-<p class="empty">No status report has been generated yet.</p>
-{% else %}
-<div class="headline">
-<p class="verdict"><span class="{{ 'ok' if overall == 'ok' else ('bad' if overall == 'bad' else 'warnc') }}">
-{{ '●' if overall == 'ok' else '▲' }} {{ overall_text }}</span></p>
-<ul class="meta">
-  <li>as of <b>{{ report.as_of }}</b></li>
-  <li>last run <b>{{ report.generated_at }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-  <li>window <b>last {{ report.days }} days</b></li>
-  <li>stations <b>{{ report.n_stations }}</b></li>
-  <li>gaps in window <b>{{ report.n_gaps }}</b></li>
-{% if report.uptime and report.uptime.truth_instant is not none %}
-  <li>observed instants <b>{{ report.uptime.truth_instant }}%</b></li>
-{% endif %}
-</ul>
-<p class="note">A model run counts as complete only when every station has a value at every
-expected forecast step (the analysis step f000 is not one); nothing is silently skipped
-(methodology §6). Truth is the first final NWS Daily Climate Report, which can only exist from the
-day after the climatological day.</p>
-<p class="note">Completeness is counted <strong>from each model's own period start</strong> — the
-first initialization CastCheck ever held for it — and only over initializations the upstream
-archive actually produced. The NOAA/CIRA 0.25° AIWP bucket publishes the GFS-initialized models on
-alternating cycles, so about half of their nominal 00Z/12Z slots were never produced upstream;
-those are drawn as empty slots, marked <em>not produced upstream</em>, and are not counted as
-downtime. Days before a model entered the record are treated the same way.</p>
-</div>
-
-<section>
-<h2 id="runs">Model runs — last {{ report.days }} days</h2>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Model</th><th scope="col">Init</th>
-<th scope="col" class="num">Complete</th><th scope="col">Last {{ report.days }} days</th>
-<th scope="col">Since</th><th scope="col">Latest init held</th></tr></thead>
-<tbody>
-{% for m in model_bars %}
-<tr><th scope="row"><a href="/model/{{ m.model_id }}/" title="{{ m.model_id }}">{{ m.display }}</a></th>
-<td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
-<td class="num">{{ m.uptime }}</td>
-<td>{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete, {{ m.n_na }} not expected</span></td>
-<td class="tiny">{{ m.period_start or '—' }}{% if m.n_na %}<span class="sub">{{ m.n_counted }} of {{ report.days }} slots expected</span>{% endif %}</td>
-<td class="tiny">{{ m.latest_init or '—' }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-<p class="legend"><span class="swatch" style="background:var(--ok)"></span> complete ·
-<span class="swatch" style="background:var(--warn)"></span> partial ·
-<span class="swatch" style="background:var(--bad)"></span> missing ·
-<span class="swatch" style="background:var(--grid)"></span> not expected (before this model's
-period start, or an initialization the upstream archive never produced — excluded from the
-percentage). Oldest day on the left.</p>
-<details class="data-behind">
-<summary>Day-by-day grid</summary>
-<div class="scroll tall">
-<table class="scores avail-grid">
-<thead><tr><th scope="col">Model</th><th scope="col">Init</th>
-{% for d in report.dates %}<th scope="col" class="tiny">{{ d[5:] }}</th>{% endfor %}</tr></thead>
-<tbody>
-{% for m in report.models %}
-<tr><th scope="row">{{ m.model_id }}</th><td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
-{% for d in m.days %}<td class="cellbox {{ 'na' if d.expected is defined and not d.expected else ('yes' if d.complete else ('part' if d.stations_any else 'no')) }}"
-title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values{% if d.reason == 'not_produced_upstream' %} — not produced upstream{% elif d.reason == 'before_start' %} — before this model entered the record{% endif %}"><span class="sr">{{ d.date }} {{ 'not expected' if d.expected is defined and not d.expected else ('complete' if d.complete else ('partial' if d.stations_any else 'missing')) }}</span></td>{% endfor %}
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-</details>
+<section class="hero">
+  <p class="eyebrow">Operations</p>
+  <h1 class="hero__title">Pipeline status</h1>
 </section>
 
-<section>
-<h2 id="truth">Truth (first-final NWS CLI) — last {{ report.days }} days</h2>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Station</th><th scope="col" class="num">Available</th>
-<th scope="col">Last {{ report.days }} days</th><th scope="col" class="num">Missing</th></tr></thead>
-<tbody>
-{% for t in truth_bars %}
-<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a> <span class="sub">{{ t.name }}</span></th>
-<td class="num">{{ t.uptime }}</td>
-<td>{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}</td>
-<td class="num">{{ t.n_missing }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
+{% if not report %}
+<div class="empty-state">
+  <h3>No status report yet</h3>
+  <p>No status report has been generated yet. It appears as soon as the pipeline has run once.</p>
 </div>
+{% else %}
+
+<div class="statusbar is-{{ overall }}">
+  <span class="statusbar__dot" aria-hidden="true"></span>
+  <p class="statusbar__text">{{ overall_text }}</p>
+  <dl class="statusbar__meta">
+    <div><dt>Last run</dt><dd>{{ report.generated_at }}</dd></div>
+    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Window</dt><dd>{{ report.days }} days</dd></div>
+    <div><dt>Stations</dt><dd>{{ report.n_stations }}</dd></div>
+    <div><dt>Gaps</dt><dd>{{ report.n_gaps }}</dd></div>
+  </dl>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi">
+    <p class="kpi__label">Run completeness</p>
+    <p class="kpi__value">{{ kpi_runs }}<span class="unit">%</span></p>
+    <p class="kpi__ci">across {{ model_bars|length }} model runs</p>
+    <p class="kpi__foot">every station at every expected step</p>
+  </div>
+  <div class="kpi">
+    <p class="kpi__label">Truth completeness</p>
+    <p class="kpi__value">{{ kpi_truth }}<span class="unit">%</span></p>
+    <p class="kpi__ci">first-final NWS CLI</p>
+    <p class="kpi__foot">{{ report.n_stations }} stations · {{ report.days }} days</p>
+  </div>
+  <div class="kpi">
+    <p class="kpi__label">Observed instants</p>
+    <p class="kpi__value">{{ kpi_instants }}<span class="unit">%</span></p>
+    <p class="kpi__ci">00/06/12/18 UTC METAR</p>
+    <p class="kpi__foot">a day counts only with all four</p>
+  </div>
+  <div class="kpi">
+    <p class="kpi__label">Latest init held</p>
+    <p class="kpi__value">{{ latest_init }}</p>
+    <p class="kpi__ci">as of {{ report.as_of }}</p>
+    <p class="kpi__foot">{{ report.n_current_gaps if report.n_current_gaps is defined else 0 }} item(s) open for the current day</p>
+  </div>
+</div>
+
+<section class="panel" id="runs">
+  <div class="panel__head">
+    <h2 class="panel__title">Model runs<span class="lead-tag">last {{ report.days }} days</span></h2>
+    <p class="panel__sub">A model run counts as complete only when every station has a value at
+    every expected forecast step (the analysis step f000 is not one); nothing is silently skipped
+    (methodology §6). Truth is the first final NWS Daily Climate Report, which can only exist from
+    the day after the climatological day.</p>
+    <p class="panel__sub">Completeness is counted <strong>from each model's own period start</strong>
+    — the first initialization CastCheck ever held for it — and only over initializations the
+    upstream archive actually produced. The NOAA/CIRA 0.25° AIWP bucket publishes the
+    GFS-initialized models on alternating cycles, so about half of their nominal 00Z/12Z slots were
+    never produced upstream; those are drawn as empty slots,
+    marked <em>not produced upstream</em>, and are not counted as downtime. Days before a model entered the record are
+    treated the same way. Oldest day on the left.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th><th scope="col">Init</th>
+      <th scope="col" class="is-num">Complete</th><th scope="col">Last {{ report.days }} days</th>
+      <th scope="col">Since</th><th scope="col">Latest init held</th>
+      <th scope="col">State</th></tr></thead>
+      <tbody>
+{% for m in model_bars %}
+      <tr><th scope="row" class="model-cell"><a href="/model/{{ m.model_id }}/" title="{{ m.model_id }}">{{ m.display }}</a><span class="sub mono">{{ m.model_id }}</span></th>
+      <td class="keycell">{{ '%02d'|format(m.init_hour) }}Z</td>
+      <td class="is-num"><span class="val">{{ m.uptime }}</span><span class="ci">{{ m.n_counted }} slots counted</span></td>
+      <td class="avail-cell">{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete, {{ m.n_na }} not expected</span></td>
+      <td class="period">{{ m.period_start or '—' }}{% if m.n_na %}<span class="sub">{{ m.n_counted }} of {{ report.days }} slots expected</span>{% endif %}</td>
+      <td class="period">{{ m.latest_init or '—' }}</td>
+      <td><span class="badge badge--{{ m.state }}">{{ m.state_text }}</span></td></tr>
+{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="panel__foot"><p class="legend">
+    <span><i class="swatch is-ok"></i> complete</span>
+    <span><i class="swatch is-warn"></i> partial</span>
+    <span><i class="swatch is-bad"></i> missing</span>
+    <span><i class="swatch is-na"></i> not expected — before this model's period start, or an
+    initialization the upstream archive never produced (excluded from the percentage)</span>
+  </p></div>
+</section>
+
+<section class="panel" id="grid">
+  <div class="panel__head">
+    <h2 class="panel__title">Day-by-day grid<span class="lead-tag">{{ report.models|length }} runs × {{ report.days }} days</span></h2>
+    <p class="panel__sub">One cell per climatological day, oldest on the left. Hover a cell for its
+    date and state. This grid is the same data as the bars above, at full resolution.</p>
+  </div>
+  <div class="panel__body">
+    <div class="table-wrap">
+      <table class="data uptime-grid">
+        <caption class="sr">Daily run completeness by model, last {{ report.days }} days</caption>
+        <thead><tr><th scope="col" class="monthlbl">Model</th>
+{% for g in month_groups %}<th scope="col" class="monthlbl" colspan="{{ g.span }}">{{ g.label }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+{% for m in report.models %}
+        <tr><th scope="row">{{ m.model_id }} {{ '%02d'|format(m.init_hour) }}Z</th>
+{% for d in m.days %}<td><span class="cell {{ 'is-na' if d.expected is defined and not d.expected else ('is-yes' if d.complete else ('is-part' if d.stations_any else 'is-no')) }}" title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values{% if d.reason == 'not_produced_upstream' %} — not produced upstream{% elif d.reason == 'before_start' %} — before this model entered the record{% endif %}"><span class="sr">{{ d.date }} {{ 'not expected' if d.expected is defined and not d.expected else ('complete' if d.complete else ('partial' if d.stations_any else 'missing')) }}</span></span></td>{% endfor %}
+        </tr>
+{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="panel__foot"><p class="legend">
+    <span><i class="swatch is-ok"></i> complete</span>
+    <span><i class="swatch is-warn"></i> partial</span>
+    <span><i class="swatch is-bad"></i> missing</span>
+    <span><i class="swatch is-na"></i> not expected</span>
+  </p></div>
+</section>
+
+<section class="panel" id="truth">
+  <div class="panel__head">
+    <h2 class="panel__title">Truth (first-final NWS CLI)<span class="lead-tag">last {{ report.days }} days</span></h2>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Station</th><th scope="col" class="is-num">Available</th>
+      <th scope="col">Last {{ report.days }} days</th><th scope="col" class="is-num">Missing</th></tr></thead>
+      <tbody>
+{% for t in truth_bars %}
+      <tr><th scope="row" class="model-cell"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a><span class="sub">{{ t.name }}</span></th>
+      <td class="is-num"><span class="val">{{ t.uptime }}</span></td>
+      <td class="avail-cell">{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}</td>
+      <td class="is-num"><span class="val">{{ t.n_missing }}</span></td></tr>
+{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
 </section>
 
 {% if instant_bars %}
-<section>
-<h2 id="instants">Observed instants — last {{ report.days }} days</h2>
-<p class="note">The truth of the headline <code>t2</code> score is the routine METAR nearest each
-of 00/06/12/18&nbsp;UTC, within &plusmn;35&nbsp;minutes (<code>truth_instant</code>). A day counts
-as complete only with all four: a station that quietly loses one instant a day loses a quarter of
-its headline sample without anything else turning red. Today is never counted — its 18Z instant
-has not happened — and neither are the days before a station's own archive begins.</p>
-<div class="scroll">
-<table class="scores">
-<thead><tr><th scope="col">Station</th><th scope="col" class="num">Complete</th>
-<th scope="col">Last {{ report.days }} days</th><th scope="col">Since</th>
-<th scope="col" class="num">Incomplete</th></tr></thead>
-<tbody>
+<section class="panel" id="instants">
+  <div class="panel__head">
+    <h2 class="panel__title">Observed instants<span class="lead-tag">last {{ report.days }} days</span></h2>
+    <p class="panel__sub">The truth of the headline <code>t2</code> score is the routine METAR
+    nearest each of 00/06/12/18&nbsp;UTC, within &plusmn;35&nbsp;minutes
+    (<code>truth_instant</code>). A day counts as complete only with all four: a station that
+    quietly loses one instant a day loses a quarter of its headline sample without anything else
+    turning red. Today is never counted — its 18Z instant has not happened — and neither are the
+    days before a station's own archive begins.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Station</th><th scope="col" class="is-num">Complete</th>
+      <th scope="col">Last {{ report.days }} days</th><th scope="col">Since</th>
+      <th scope="col" class="is-num">Incomplete</th></tr></thead>
+      <tbody>
 {% for t in instant_bars %}
-<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a>
-<span class="sub">{{ t.name }}{% if t.iem_id %} · IEM {{ t.iem_id }}{% endif %}</span></th>
-<td class="num">{{ t.uptime }}</td>
-<td>{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ t.n_expected }} days expected, {{ t.n_missing }} incomplete</span></td>
-<td class="tiny">{{ t.period_start or '—' }}</td>
-<td class="num">{{ t.n_missing }}</td></tr>
+      <tr><th scope="row" class="model-cell"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a><span class="sub">{{ t.name }}{% if t.iem_id %} · IEM {{ t.iem_id }}{% endif %}</span></th>
+      <td class="is-num"><span class="val">{{ t.uptime }}</span></td>
+      <td class="avail-cell">{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ t.n_expected }} days expected, {{ t.n_missing }} incomplete</span></td>
+      <td class="period">{{ t.period_start or '—' }}</td>
+      <td class="is-num"><span class="val">{{ t.n_missing }}</span></td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
 </section>
 {% endif %}
 
 {% if report.current_gaps %}
-<section>
-<h2 id="gaps">Current gaps</h2>
-<div class="scroll tall">
-<table class="scores">
-<thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
-<tbody>
+<section class="panel" id="gaps">
+  <div class="panel__head"><h2 class="panel__title">Current gaps<span class="lead-tag">{{ report.current_gaps|length }}</span></h2></div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap table-wrap--tall"><table class="data">
+      <thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
 {% for g in report.current_gaps %}
-<tr><td>{{ g.type }}</td>
-<td>{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
-<td>{{ g.date }}</td><td>{{ g.detail }}</td></tr>
+      <tr><td>{{ g.type }}</td>
+      <td class="keycell">{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
+      <td class="keycell">{{ g.date }}</td><td>{{ g.detail }}</td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+{% else %}
+<section>
+  <div class="section-head">
+    <h2 id="incidents">Nothing is silently skipped</h2>
+    <p>Truth is the first final NWS Daily Climate Report, which can only exist from the day after
+    the climatological day. If a report is revised later, CastCheck keeps the first final value and
+    records the revision separately.</p>
+  </div>
+  <div class="empty-state">
+    <h3>No open incidents</h3>
+    <p>When a source is unavailable for more than one cycle it appears here with the affected
+    models, stations and dates, and stays until the backfill completes.</p>
+  </div>
 </section>
 {% endif %}
 
 {% if report.gaps and report.gaps|length > report.current_gaps|length %}
-<section>
-<h2 id="allgaps">All gaps in the window ({{ report.n_gaps }})</h2>
-<details class="data-behind">
-<summary>Show the full list</summary>
-<div class="scroll tall">
-<table class="scores">
-<thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
-<tbody>
+<section class="panel" id="allgaps">
+  <div class="panel__head"><h2 class="panel__title">All gaps in the window<span class="lead-tag">{{ report.n_gaps }}</span></h2></div>
+  <details class="behind">
+    <summary>Show the full list</summary>
+    <div class="table-wrap table-wrap--tall"><table class="data">
+      <thead><tr><th scope="col">Type</th><th scope="col">What</th><th scope="col">Day</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
 {% for g in report.gaps[:200] %}
-<tr><td>{{ g.type }}</td>
-<td>{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
-<td>{{ g.date }}</td><td>{{ g.detail }}</td></tr>
+      <tr><td>{{ g.type }}</td>
+      <td class="keycell">{{ g.model_id or g.station_id }}{% if g.init_hour is defined and g.init_hour is not none %} {{ '%02d'|format(g.init_hour) }}Z{% endif %}</td>
+      <td class="keycell">{{ g.date }}</td><td>{{ g.detail }}</td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
-{% if report.n_gaps > 200 %}<p class="note">The 200 most recent of {{ report.n_gaps }}. The day-by-day grids above are the complete record; <a href="/api/v1/status.json">status.json</a> carries the same list.</p>{% endif %}
-</details>
+      </tbody>
+    </table></div>
+  </details>
+{% if report.n_gaps > 200 %}
+  <div class="panel__foot"><p>The 200 most recent of {{ report.n_gaps }}. The day-by-day grid above
+  is the complete record; <a href="/api/v1/status.json">status.json</a> carries the same list.</p></div>
+{% endif %}
 </section>
 {% endif %}
 
-<p class="downloads"><a href="/api/v1/status.json">status.json</a>
-<a href="/feed.xml">Atom feed</a> <a href="/data/">data &amp; licences</a></p>
+<ul class="downloads">
+  <li><a href="/api/v1/status.json"><span class="fmt">JSON</span> status.json</a></li>
+  <li><a href="/feed.xml"><span class="fmt">ATOM</span> feed</a></li>
+  <li><a href="/data/"><span class="fmt">DATA</span> data &amp; licences</a></li>
+</ul>
 {% endif %}
 {% endblock %}

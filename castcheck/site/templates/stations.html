@@ -1,52 +1,77 @@
 {% extends "base.html" %}
+{% set nav_current = 'stations' %}
 {% block title %}Stations — CastCheck{% endblock %}
 {% block description %}The {{ rows|length }} U.S. first-order stations CastCheck verifies against, with their truth product, standard time offset, elevation and current sample size.{% endblock %}
 {% block content %}
-<h1>Stations</h1>
-<p class="lede">Every station is a first-order NWS site that issues a Daily Climate Report (CLI)
-and reports routine hourly METARs. The stations are not a random sample: all 23 are major city
-airports chosen because a daily temperature contract settles on them, which biases the set towards
-the dry south-west and the north-east corridor
-(<a href="/methodology/#1-scope">methodology §1</a>). The climatological day is local <em>standard</em> time all
-year, so each station carries a fixed UTC offset and daylight saving is never applied
-(<a href="/methodology/#21-climatological-day">methodology §2.1</a>).</p>
-<ul class="meta">
-  <li>stations <b>{{ rows|length }}</b></li>
-  <li>data through <b>{{ data_through }}</b></li>
-  <li>updated <b>{{ built_at }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-</ul>
-<div class="scroll tall">
-<table class="scores">
-<caption>Scored days are for lead day 1, {{ window_label }}, {{ init_hour }}Z, {{ method }},
-{{ variable_label }} — the default view, counting forecast systems only (the persistence baseline
-is not one). A station with no number has no scored day in that view yet.
-<em>&Delta;z</em> is the station elevation minus the mean elevation of the 0.25° cell it sits in;
-<em>|&Delta;z|&times;6.5&nbsp;K/km</em> is the first-order temperature offset that difference
-implies — a representativeness error charged to the model that no forecast can remove.</caption>
-<thead><tr><th scope="col">ICAO</th><th scope="col">Name</th><th scope="col">Truth product</th>
-<th scope="col">Time zone</th><th scope="col" class="num">Std offset</th>
-<th scope="col" class="num">Elevation</th>
-<th scope="col" class="num"><abbr title="Mean elevation of the 0.25° grid cell containing the station (ETOPO 2022, public domain)">Grid elev.</abbr></th>
-<th scope="col" class="num">&Delta;z</th>
-<th scope="col" class="num">|&Delta;z|&times;6.5&nbsp;K/km</th>
-<th scope="col">Market city</th>
-<th scope="col" class="num">Scored days</th>
-<th scope="col" class="num">Models</th></tr></thead>
-<tbody>
+<section class="hero">
+  <p class="eyebrow">Reference</p>
+  <h1 class="hero__title">Stations</h1>
+  <p class="hero__scope hero__scope--lede">Every station is a first-order NWS site that issues a
+  Daily Climate Report (CLI) and reports routine hourly METARs. The stations are not a random
+  sample: all {{ rows|length }} are major city airports chosen because a daily temperature contract
+  settles on them, which biases the set towards the dry south-west and the north-east corridor
+  (<a href="/methodology/#1-scope">methodology §1</a>). The climatological day is local
+  <em>standard</em> time all year, so each station carries a fixed UTC offset and daylight saving is
+  never applied (<a href="/methodology/#21-climatological-day">methodology §2.1</a>).</p>
+  <dl class="metastrip">
+    <div><dt>Stations</dt><dd>{{ rows|length }}</dd></div>
+    <div><dt>Window</dt><dd>{{ window_label }}</dd></div>
+    <div><dt>Init</dt><dd>{{ init_hour }}Z</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
+    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel">
+  <div class="panel__head">
+    <h2 class="panel__title">Every station CastCheck scores<span class="lead-tag">{{ rows|length }} sites</span></h2>
+    <span class="panel__tail"><a href="/station/ALL/">cross-station aggregate</a></span>
+    <p class="panel__sub">Scored days are for lead day 1, {{ window_label }}, {{ init_hour }}Z,
+    {{ method }}, {{ variable_label }} — the default view, counting forecast systems only (the
+    persistence baseline is not one). A station with no number has no scored day in that view yet.
+    <em>&Delta;z</em> is the station elevation minus the mean elevation of the 0.25° cell it sits
+    in; <em>|&Delta;z|&times;6.5&nbsp;K/km</em> is the first-order temperature offset that
+    difference implies — a representativeness error charged to the model that no forecast can
+    remove.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap table-wrap--tall"><table class="data">
+      <thead><tr><th scope="col">ICAO</th><th scope="col">Name</th>
+      <th scope="col">Truth product</th><th scope="col">Time zone</th>
+      <th scope="col" class="is-num">Std offset</th>
+      <th scope="col" class="is-num">Elevation</th>
+      <th scope="col" class="is-num"><abbr title="Mean elevation of the 0.25° grid cell containing the station (ETOPO 2022, public domain)">Grid elev.</abbr></th>
+      <th scope="col" class="is-num">&Delta;z</th>
+      <th scope="col" class="is-num">|&Delta;z|&times;6.5&nbsp;K/km</th>
+      <th scope="col">Market city</th>
+      <th scope="col" class="is-num">Scored days</th>
+      <th scope="col" class="is-num">Models</th></tr></thead>
+      <tbody>
 {% for r in rows %}
-<tr class="{{ 'low-n' if r.low_n }}">
-<th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a></th>
-<td>{{ r.name }}</td><td class="mono">{{ r.cli_pil }}</td><td class="tiny">{{ r.tz }}</td>
-<td class="num">UTC{{ r.offset }}</td><td class="num">{{ r.elev }}</td>
-<td class="num">{{ r.grid_elev }}</td><td class="num">{{ r.dz }}</td>
-<td class="num">{{ r.lapse }}</td><td class="tiny">{{ r.market_city }}</td>
-<td class="num">{{ r.n }}</td><td class="num">{{ r.n_models }}</td></tr>
+      <tr class="{{ 'is-lown' if r.low_n }}">
+      <th scope="row" class="model-cell"><a href="/station/{{ r.id }}/">{{ r.id }}</a></th>
+      <td>{{ r.name }}</td>
+      <td class="keycell">{{ r.cli_pil }}</td>
+      <td class="tiny">{{ r.tz }}</td>
+      <td class="is-num"><span class="val">UTC{{ r.offset }}</span></td>
+      <td class="is-num"><span class="val">{{ r.elev }}</span></td>
+      <td class="is-num"><span class="val">{{ r.grid_elev }}</span></td>
+      <td class="is-num"><span class="val">{{ r.dz }}</span></td>
+      <td class="is-num"><span class="val">{{ r.lapse }}</span></td>
+      <td class="tiny">{{ r.market_city }}</td>
+      <td class="is-num"><span class="val">{{ r.n }}</span></td>
+      <td class="is-num"><span class="val">{{ r.n_models }}</span></td></tr>
 {% endfor %}
-</tbody>
-</table>
-</div>
-<p class="downloads"><a href="/data/stations.csv">stations.csv</a>
-<a href="/api/v1/stations.json">stations.json</a>
-<a href="/station/ALL/">cross-station aggregate</a></p>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="panel__foot">
+    <ul class="downloads">
+      <li><a href="/data/stations.csv"><span class="fmt">CSV</span> stations.csv</a></li>
+      <li><a href="/api/v1/stations.json"><span class="fmt">JSON</span> stations.json</a></li>
+      <li><a href="/station/ALL/"><span class="fmt">ALL</span> cross-station aggregate</a></li>
+    </ul>
+  </div>
+</section>
 {% endblock %}

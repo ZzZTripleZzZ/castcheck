@@ -385,12 +385,16 @@ def plausibility_qc(
                             key[0], key[1], col, out.at[i, col], how, bound, fix)
             out.at[i, col] = fix
             out.at[i, c_col] = f_to_c(fix)
-            # the published value changed under a later rule than the one that wrote the row, so
-            # the row now describes itself by the methodology that decided it
-            out.at[i, "methodology_version"] = METHODOLOGY_VERSION
             flags += [QC_IMPLAUSIBLE, token]
             counts[token] += 1
-        out.at[i, "qc_flag"] = _join_flags(*flags)
+        joined = _join_flags(*flags)
+        out.at[i, "qc_flag"] = joined
+        if QC_IMPLAUSIBLE in joined:
+            # This row's published value is whatever this check decided it should be, so the row
+            # describes itself by the methodology that decided it. Keyed off the *flag* rather than
+            # off "did this pass change something", because a repaired value passes the check on
+            # every later pass and would otherwise keep the version of the rule it no longer obeys.
+            out.at[i, "methodology_version"] = METHODOLOGY_VERSION
     if any(counts.values()):
         LOG.info("plausibility QC: %d revised, %d CF6, %d dropped",
                  counts[QC_REVISED_USED], counts[QC_CF6_USED], counts[QC_DROPPED])

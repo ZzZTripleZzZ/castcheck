@@ -30,13 +30,21 @@ step() {   # step <name> <command...>
 : >"$RUN_LOG"
 git pull --rebase --quiet || true
 
+deploy_snapshot() {  # deploy a snapshot of public/ so a concurrent rebuild cannot pull files from under wrangler
+  local snap; snap=$(mktemp -d)/public; mkdir -p "$snap"; rsync -a --delete public/ "$snap"/
+  npx --yes wrangler pages deploy "$snap" --project-name castcheck --branch main --commit-dirty=true >/dev/null
+  local rc=$?; rm -rf "$(dirname "$snap")"; return $rc
+}
+
+scripts/clean_conflict_copies.sh >/dev/null 2>&1 || true
+
 step fetch-latest .venv/bin/castcheck fetch-latest --workers 2
 step truth        .venv/bin/castcheck truth
 step truth-instant .venv/bin/castcheck truth-instant
 step truth-instant-iem .venv/bin/castcheck truth-instant-backfill "$(date -u -v-10d +%F)" "$(date -u -v-2d +%F)"
 step truth-qc     .venv/bin/castcheck truth-qc --start "$(date -u -v-15d +%F)"
 step daily        .venv/bin/castcheck daily
-step deploy       npx --yes wrangler pages deploy public --project-name castcheck --branch main --commit-dirty=true
+step deploy       deploy_snapshot
 step commit       scripts/commit_data.sh "[data] local $STAMP"
 
 if (( ${#failures[@]} )); then

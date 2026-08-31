@@ -1,70 +1,82 @@
-{# Shared table fragments. Every number is a link to its permanent page; every CI is written
-   compactly next to the value it belongs to; every bias carries a colour chip *and* a sign. #}
+{# Shared fragments. Every number is a link to its permanent page; every CI is written compactly
+   on its own line under the value it belongs to; every bias carries a sign *and* a diverging
+   rule, so the colour is redundant rather than load-bearing. #}
 
-{% macro switcher(groups) -%}
-<nav class="switch" aria-label="View">
+{% macro switcher(groups, tail='') -%}
+<nav class="filterbar" aria-label="View">
 {% for g in groups %}
-  <span class="k">{{ g.title }}</span>
-  {% for it in g.opts %}<a href="{{ it.href }}"{% if it.current %} class="current" aria-current="page"{% endif %}>{{ it.label }}</a>{% endfor %}
+  <div class="filterbar__group">
+    <span class="filterbar__label" id="fb-{{ g.key }}">{{ g.title }}</span>
+    <span class="segmented" role="group" aria-labelledby="fb-{{ g.key }}">
+      {% for it in g.opts %}<a class="chip{{ ' is-active' if it.current }}" href="{{ it.href }}"{% if it.current %} aria-current="page"{% endif %}>{{ it.label }}</a>{% endfor %}
+    </span>
+  </div>
 {% endfor %}
+{% if tail %}<span class="filterbar__tail">{{ tail }}</span>{% endif %}
 </nav>
 {%- endmacro %}
 
 {% macro meta_list(as_of, data_through, built_at, next_update, extra) -%}
-<ul class="meta">
-  <li>window <b>{{ extra.window_label }}</b></li>
+<dl class="metastrip">
+  <div><dt>Window</dt><dd>{{ extra.window_label }}</dd></div>
 {% if extra.variable_label %}
-  <li>variable <b>{{ extra.variable_label }}</b></li>
+  <div><dt>Variable</dt><dd>{{ extra.variable_label }}</dd></div>
 {% endif %}
-  <li>init <b>{{ extra.init_hour }}Z</b></li>
-  <li>interpolation <b>{{ extra.method }}</b></li>
-  <li>data through <b>{{ data_through }}</b></li>
-  <li>updated <b>{{ built_at }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-</ul>
+  <div><dt>Init</dt><dd>{{ extra.init_hour }}Z</dd></div>
+  <div><dt>Interpolation</dt><dd>{{ extra.method }}</dd></div>
+  <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+  <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
+  <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+</dl>
 {%- endmacro %}
 
 {% macro bias_cell(cell) -%}
-<td class="num bias{{ ' low-n' if cell.low_n else '' }}"><i class="c {{ cell.bias_class }}"></i>{{ cell.bias }}</td>
+<td class="is-num bias{{ ' is-lown' if cell.low_n else '' }}"><span class="val">{{ cell.bias }}</span><i class="bias__bar {{ cell.bias_class }}"></i></td>
+{%- endmacro %}
+
+{# The numeric MAE-over-bias cell used by every model × lead grid. #}
+{% macro grid_cell(c) -%}
+{% if c %}<td class="is-num{{ ' is-lown' if c.low_n }}"><span class="val"><a href="{{ c.permalink }}">{{ c.mae }}</a></span><span class="ci">{{ c.bias }} · n={{ c.n }}</span><i class="bias__bar {{ c.bias_class }}"></i></td>
+{% else %}<td class="is-num is-lown"><span class="val">—</span></td>{% endif %}
 {%- endmacro %}
 
 {% macro legend(min_n, holm=true) -%}
 <p class="legend">
-<i class="swatch b-warm-2"></i>+ model too warm ·
-<i class="swatch b-cool-2"></i>− model too cold ·
-<i class="swatch b-flat"></i> bias interval includes zero ·
-★ lowest MAE ·
-{% if holm %}= not distinguishable from the leader · ▼ worse than the leader · ▲ better than the
-leader — all three <strong>Holm-corrected within this table</strong>, over the family of
-comparisons against the leader; the uncorrected verdict for every pair is published in the
-pairwise table of each permanent link and in
-<a href="/data/#download">pairwise_latest.csv.gz</a>{% else %}· no Holm-corrected comparison is
-available in this build, so no model is marked as distinguishable from the leader{% endif %} ·
-n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked · CI is a 95 % moving-block bootstrap interval on
-the group's own days, and reads — when it could not be computed.
+<span><i class="swatch is-warm-2"></i> + model too warm</span>
+<span><i class="swatch is-cool-2"></i> &minus; model too cold</span>
+<span><i class="swatch is-flat"></i> bias interval includes zero</span>
+<span>★ lowest MAE</span>
+{% if holm %}<span>= not distinguishable from the leader</span>
+<span>▼ worse than the leader</span>
+<span>▲ better than the leader — all three <strong>Holm-corrected within this table</strong>, over
+the family of comparisons against the leader; the uncorrected verdict for every pair is published
+in the pairwise table of each permanent link and in
+<a href="/data/#download">pairwise_latest.csv.gz</a></span>{% else %}<span>no Holm-corrected
+comparison is available in this build, so no model is marked as distinguishable from the
+leader</span>{% endif %}
+<span>n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked</span>
+<span>CI is a 95 % moving-block bootstrap interval on the group's own days, and reads — when it
+could not be computed</span>
 </p>
 {%- endmacro %}
 
-{# One MAE-by-lead-day grid. `kind` is what the rows are: "model" (a station page) or
-   "station" (a model page); everything else about the table is identical. #}
+{# One MAE-by-lead-day grid inside a panel. `kind` is what the rows are: "model" (a station page)
+   or "station" (a model page); everything else about the table is identical. #}
 {% macro grid_table(b, leads, spark_leads, window_label, init_hour, method, kind) -%}
-<div class="scroll">
-<table class="scores grid">
+<div class="table-wrap">
+<table class="data">
 <caption>{{ window_label }}, {{ init_hour }}Z, {{ method }}. MAE with the bias and n underneath;
 every cell links to its permanent page. The sparkline shows the same row across lead days
 {{ spark_leads[0] }}&ndash;{{ spark_leads[-1] }} on a scale shared within this table.</caption>
 <thead><tr><th scope="col">{{ 'Model' if kind == 'model' else 'Station' }}</th>
-{% for l in leads %}<th scope="col" class="num">d{{ l }}</th>{% endfor %}
+{% for l in leads %}<th scope="col" class="is-num">d{{ l }}</th>{% endfor %}
 <th scope="col">lead {{ spark_leads[0] }}&ndash;{{ spark_leads[-1] }}</th></tr></thead>
 <tbody>
 {% for row in b.rows %}
-<tr class="{{ 'baseline' if row.baseline }}"><th scope="row">
+<tr class="{{ 'is-baseline' if row.baseline }}"><th scope="row" class="model-cell">
 {% if kind == 'model' %}<a href="/model/{{ row.key }}/" title="{{ row.key }}">{{ row.name }}</a><span class="sub mono">{{ row.key }}</span>
 {% else %}<a href="/station/{{ row.key }}/">{{ row.key }}</a>{% endif %}</th>
-{% for c in row.cells %}
-{% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
-{% else %}<td class="low-n">—</td>{% endif %}
-{% endfor %}
+{% for c in row.cells %}{{ grid_cell(c) }}{% endfor %}
 <td class="sparkcell">{{ row.spark_svg }}</td></tr>
 {% endfor %}
 </tbody>
@@ -75,12 +87,18 @@ every cell links to its permanent page. The sparkline shows the same row across 
 {# The secondary block: the four forecast samples against the true NWS daily extremes. #}
 {% macro cli_section(blocks, leads, spark_leads, window_label, init_hour, method, kind, caveat) -%}
 {% if blocks %}
-<section class="secondary">
-<h2 id="vs-cli">Against the NWS daily extremes (secondary)</h2>
-<p class="note">{{ caveat }}</p>
+<section class="secondary" id="vs-cli-wrap">
+<div class="section-head">
+  <h2 id="vs-cli">Against the NWS daily extremes (secondary)</h2>
+  <p>{{ caveat }}</p>
+</div>
 {% for b in blocks %}
-<h3 id="{{ b.variable }}">{{ b.label }}</h3>
-{{ grid_table(b, leads, spark_leads, window_label, init_hour, method, kind) }}
+<section class="panel" id="{{ b.variable }}" style="margin-top:var(--sp-4)">
+  <div class="panel__head"><h3 class="panel__title">{{ b.label }}</h3></div>
+  <div class="panel__body panel__body--flush">
+  {{ grid_table(b, leads, spark_leads, window_label, init_hour, method, kind) }}
+  </div>
+</section>
 {% endfor %}
 </section>
 {% endif %}

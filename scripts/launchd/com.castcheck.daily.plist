@@ -6,8 +6,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.castcheck.daily</string>
-  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>/Users/zifanzhang/Documents/GitHub/castcheck/scripts/run_daily.sh</string></array>
-  <key>WorkingDirectory</key><string>/Users/zifanzhang/Documents/GitHub/castcheck</string>
+  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>/Users/zifanzhang/castcheck/scripts/run_daily.sh</string></array>
+  <key>WorkingDirectory</key><string>/Users/zifanzhang/castcheck</string>
   <!-- launchd starts with a bare PATH; run_daily.sh extends it, but node/npx must be findable for wrangler. -->
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
@@ -20,6 +20,6 @@
        at 07:45 still gets its daily run. -->
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/Users/zifanzhang/Documents/GitHub/castcheck/data/raw/launchd.log</string>
-  <key>StandardErrorPath</key><string>/Users/zifanzhang/Documents/GitHub/castcheck/data/raw/launchd.err</string>
+  <key>StandardOutPath</key><string>/Users/zifanzhang/castcheck/data/raw/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/zifanzhang/castcheck/data/raw/launchd.err</string>
 </dict></plist>

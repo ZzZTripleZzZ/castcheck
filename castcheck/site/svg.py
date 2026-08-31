@@ -26,6 +26,7 @@ __all__ = [
     "bias_class",
     "histogram",
     "line_chart",
+    "mae_bars",
     "sparkline",
     "us_map",
 ]
@@ -37,11 +38,11 @@ _BIAS_STEPS = ((2.0, 3), (1.0, 2), (0.25, 1))
 
 
 def bias_class(bias_f: float | None, significant: bool = True) -> str:
-    """CSS class for a bias value in °F: ``b-warm-3`` … ``b-cool-3``, or ``b-null``."""
+    """CSS class for a bias value in °F: ``is-warm-3`` … ``is-cool-3``, or ``is-null``."""
     if bias_f is None or (isinstance(bias_f, float) and math.isnan(bias_f)):
-        return "b-null"
+        return "is-null"
     if not significant:
-        return "b-flat"
+        return "is-flat"
     a = abs(float(bias_f))
     level = 0
     for thr, lv in _BIAS_STEPS:
@@ -49,8 +50,8 @@ def bias_class(bias_f: float | None, significant: bool = True) -> str:
             level = lv
             break
     if level == 0:
-        return "b-flat"
-    return f"b-{'warm' if bias_f > 0 else 'cool'}-{level}"
+        return "is-flat"
+    return f"is-{'warm' if bias_f > 0 else 'cool'}-{level}"
 
 
 def _fmt(x: float, digits: int = 1) -> str:
@@ -69,7 +70,7 @@ def _nice(v: float) -> float:
     return 10 * base
 
 
-def _open(width: float, height: float, label: str, cls: str = "fig") -> list[str]:
+def _open(width: float, height: float, label: str, cls: str = "chart") -> list[str]:
     return [
         f'<svg class="{cls}" viewBox="0 0 {_fmt(width)} {_fmt(height)}" role="img" '
         f'preserveAspectRatio="xMidYMid meet" aria-label="{escape(label)}">',
@@ -77,7 +78,7 @@ def _open(width: float, height: float, label: str, cls: str = "fig") -> list[str
     ]
 
 
-def _text(x, y, s, *, anchor="start", cls="lbl", extra="") -> str:
+def _text(x, y, s, *, anchor="start", cls="c-tick", extra="") -> str:
     return (
         f'<text x="{_fmt(x)}" y="{_fmt(y)}" text-anchor="{anchor}" class="{cls}"{extra}>'
         f"{escape(str(s))}</text>"
@@ -105,7 +106,7 @@ def line_chart(
     """
     n = len(values)
     if n == 0:
-        return f'<p class="empty">{escape(label)}: no scored days yet.</p>'
+        return f'<p class="dimtext">{escape(label)}: no scored days yet.</p>'
 
     left, right, top, bottom = 44.0, 12.0, 12.0, 30.0
     iw, ih = width - left - right, height - top - bottom
@@ -121,7 +122,7 @@ def line_chart(
     out = _open(width, height, label)
     for t in (m, m / 2, 0.0, -m / 2, -m):
         y = py(t)
-        cls = "zero" if t == 0 else "grid"
+        cls = "c-zero" if t == 0 else "c-grid"
         out.append(f'<line class="{cls}" x1="{_fmt(left)}" x2="{_fmt(width - right)}" '
                    f'y1="{_fmt(y)}" y2="{_fmt(y)}"/>')
         out.append(_text(left - 6, y + 3.5, ("+" if t > 0 else "") + _fmt(t), anchor="end"))
@@ -136,7 +137,7 @@ def line_chart(
         seg.append(("L" if started else "M") + f"{_fmt(px(i), 1)} {_fmt(py(v), 1)}")
         started = True
     if seg:
-        out.append(f'<path class="series" d="{" ".join(seg)}"/>')
+        out.append(f'<path class="c-series" d="{" ".join(seg)}"/>')
 
     # centred moving average, only where the window is full
     if ma_window > 1 and n >= ma_window:
@@ -156,13 +157,13 @@ def line_chart(
             ma_pts.append(("L" if started else "M") + f"{_fmt(px(i), 1)} {_fmt(py(avg), 1)}")
             started = True
         if ma_pts:
-            out.append(f'<path class="series-ma" d="{" ".join(ma_pts)}"/>')
+            out.append(f'<path class="c-series-ma" d="{" ".join(ma_pts)}"/>')
 
     for i, v in enumerate(values):
         if v is None:
             continue
         out.append(
-            f'<circle class="pt" cx="{_fmt(px(i), 1)}" cy="{_fmt(py(v), 1)}" r="1.8">'
+            f'<circle class="c-pt" cx="{_fmt(px(i), 1)}" cy="{_fmt(py(v), 1)}" r="1.8">'
             f"<title>{escape(dates[i])}: {'+' if v > 0 else ''}{_fmt(v, 2)} {unit}</title></circle>"
         )
 
@@ -171,7 +172,7 @@ def line_chart(
         if n > 1:
             out.append(_text(width - right, height - 8, dates[-1], anchor="end"))
     out.append(_text(width - right, top + 10, f"{unit}, forecast − observed", anchor="end",
-                     cls="lbl dim"))
+                     cls="c-tick dim"))
     out.append("</svg>")
     return "".join(out)
 
@@ -196,7 +197,7 @@ def histogram(
     """
     vals = [float(v) for v in values if v is not None and not math.isnan(float(v))]
     if not vals:
-        return f'<p class="empty">{escape(label)}: no scored days yet.</p>', []
+        return f'<p class="dimtext">{escape(label)}: no scored days yet.</p>', []
 
     m = _nice(max(abs(v) for v in vals)) or 1.0
     lo, hi = -m, m
@@ -225,39 +226,41 @@ def histogram(
         return left + (v - lo) / (hi - lo) * iw
 
     out = _open(width, height, label)
-    out.append(f'<line class="grid" x1="{_fmt(left)}" x2="{_fmt(width - right)}" '
+    out.append(f'<line class="c-grid" x1="{_fmt(left)}" x2="{_fmt(width - right)}" '
                f'y1="{_fmt(top + ih)}" y2="{_fmt(top + ih)}"/>')
     bw = iw / bins
     for i, c in enumerate(counts):
         h = ih * c / top_count
         x = left + i * bw
         centre = lo + (i + 0.5) * step
-        cls = "bar-warm" if centre > 0 else "bar-cool"
+        cls = "c-hist is-warm" if centre > 0 else "c-hist is-cool"
         out.append(
             f'<rect class="{cls}" x="{_fmt(x + 0.4, 2)}" y="{_fmt(top + ih - h, 2)}" '
             f'width="{_fmt(max(bw - 0.8, 0.5), 2)}" height="{_fmt(h, 2)}">'
             f"<title>{_fmt(lo + i * step, 2)} to {_fmt(lo + (i + 1) * step, 2)} {unit}: "
             f"{c} day{'' if c == 1 else 's'}</title></rect>"
         )
-    out.append(f'<line class="zero" x1="{_fmt(px(0))}" x2="{_fmt(px(0))}" '
+    out.append(f'<line class="c-zero" x1="{_fmt(px(0))}" x2="{_fmt(px(0))}" '
                f'y1="{_fmt(top)}" y2="{_fmt(top + ih)}"/>')
     for v in (p50, p90):
         for sgn in (1, -1):
             x = px(sgn * v)
-            out.append(f'<line class="mark" x1="{_fmt(x)}" x2="{_fmt(x)}" y1="{_fmt(top)}" '
+            out.append(f'<line class="c-mark" x1="{_fmt(x)}" x2="{_fmt(x)}" y1="{_fmt(top)}" '
                        f'y2="{_fmt(top + ih)}"/>')
     # One caption line instead of two labels that would collide when P50 and P90 are close.
     out.append(_text(width - right, top - 10,
                      f"dashed: P50 |e| {_fmt(p50, 2)} · P90 |e| {_fmt(p90, 2)} {unit}",
-                     anchor="end", cls="lbl dim"))
+                     anchor="end", cls="c-tick dim"))
     out.append(_text(left, height - 8, f"{_fmt(lo, 1)}"))
     out.append(_text(px(0), height - 8, "0", anchor="middle"))
     out.append(_text(width - right, height - 8, f"+{_fmt(hi, 1)} {unit}", anchor="end"))
-    out.append(_text(left, top - 10, f"n = {len(vals)} days", cls="lbl dim"))
+    out.append(_text(left, top - 10, f"n = {len(vals)} days", cls="c-tick dim"))
     out.append("</svg>")
 
+    # the typographic minus, so the bin edges line up with the numbers everywhere else
     rows = [
-        {"from": f"{lo + i * step:+.2f}", "to": f"{lo + (i + 1) * step:+.2f}", "n": c}
+        {"from": f"{lo + i * step:+.2f}".replace("-", "\u2212"),
+         "to": f"{lo + (i + 1) * step:+.2f}".replace("-", "\u2212"), "n": c}
         for i, c in enumerate(counts)
     ]
     return "".join(out), rows
@@ -290,7 +293,7 @@ def sparkline(
     def py(v: float) -> float:
         return height - pad - (v / hi) * (height - 2 * pad)
 
-    out = _open(width, height, label, cls="spark")
+    out = _open(width, height, label, cls="sparkline")
     seg, started = [], False
     for i, v in enumerate(values):
         if v is None:
@@ -298,10 +301,10 @@ def sparkline(
             continue
         seg.append(("L" if started else "M") + f"{_fmt(px(i), 1)} {_fmt(py(v), 1)}")
         started = True
-    out.append(f'<path class="series" d="{" ".join(seg)}"/>')
+    out.append(f'<path class="s-line" d="{" ".join(seg)}"/>')
     last = next((i for i in range(n - 1, -1, -1) if values[i] is not None), None)
     if last is not None:
-        out.append(f'<circle class="pt" cx="{_fmt(px(last), 1)}" '
+        out.append(f'<circle class="s-dot" cx="{_fmt(px(last), 1)}" '
                    f'cy="{_fmt(py(values[last]), 1)}" r="1.8"/>')
     out.append("</svg>")
     return "".join(out)
@@ -356,7 +359,7 @@ def us_map(points: list[dict], *, label: str, width: float = 760.0,
     every point repeats its numbers in the table underneath.
     """
     if not points:
-        return f'<p class="empty">{escape(label)}: no stations scored yet.</p>'
+        return f'<p class="dimtext">{escape(label)}: no stations scored yet.</p>'
 
     lons = [-125.0, -115.0, -105.0, -95.0, -85.0, -75.0, -65.0]
     lats = [25.0, 30.0, 35.0, 40.0, 45.0, 50.0]
@@ -376,29 +379,29 @@ def us_map(points: list[dict], *, label: str, width: float = 760.0,
         x, y = _albers(lon, lat)
         return ox + (x - x0) * s, oy + (y1 - y) * s
 
-    out = _open(width, height, label, cls="fig map")
+    out = _open(width, height, label, cls="chart map")
     for ring in US_OUTLINE:
         d = " ".join(("M" if i == 0 else "L") + "%.1f %.1f" % proj(lon, lat)
                      for i, (lon, lat) in enumerate(ring))
-        out.append(f'<path class="coast" d="{d} Z" fill="none"/>')
+        out.append(f'<path class="m-coast" d="{d} Z" fill="none"/>')
     for lo in lons:
         d = " ".join(
             ("M" if i == 0 else "L") + "%.1f %.1f" % proj(lo, la)
             for i, la in enumerate([25.0 + 0.5 * k for k in range(51)])
         )
-        out.append(f'<path class="grid" d="{d}" fill="none"/>')
+        out.append(f'<path class="m-frame" d="{d}" fill="none"/>')
     for la in lats:
         d = " ".join(
             ("M" if i == 0 else "L") + "%.1f %.1f" % proj(lo, la)
             for i, lo in enumerate([-125.0 + 1.0 * k for k in range(61)])
         )
-        out.append(f'<path class="grid" d="{d}" fill="none"/>')
+        out.append(f'<path class="m-frame" d="{d}" fill="none"/>')
     for lo in lons:
         x, y = proj(lo, 24.6)
-        out.append(_text(x, y, f"{abs(int(lo))}°W", anchor="middle", cls="lbl dim"))
+        out.append(_text(x, y, f"{abs(int(lo))}°W", anchor="middle", cls="m-lbl"))
     for la in lats:
         x, y = proj(-126.5, la)
-        out.append(_text(x, y + 3, f"{int(la)}°N", anchor="end", cls="lbl dim"))
+        out.append(_text(x, y + 3, f"{int(la)}°N", anchor="end", cls="c-tick dim"))
 
     nmax = max((p.get("n") or 0) for p in points) or 1
     for p in points:
@@ -406,15 +409,93 @@ def us_map(points: list[dict], *, label: str, width: float = 760.0,
             continue
         x, y = proj(float(p["lon"]), float(p["lat"]))
         r = 4.0 + 7.0 * math.sqrt((p.get("n") or 0) / nmax)
-        cls = p.get("bias_class", "b-null")
+        cls = p.get("bias_class", "is-null")
         sign = p.get("sign", "")
         out.append(
-            f'<a href="{escape(p["href"])}"><circle class="dot {cls}" cx="{_fmt(x, 1)}" '
+            f'<a href="{escape(p["href"])}"><circle class="m-dot {cls}" cx="{_fmt(x, 1)}" '
             f'cy="{_fmt(y, 1)}" r="{_fmt(r, 1)}"><title>{escape(p["id"])} {escape(p["name"])}: '
             f'bias {escape(str(p.get("bias", "—")))} °F, n = {p.get("n", 0)}</title></circle>'
-            f'{_text(x, y - r - 3, p["id"], anchor="middle", cls="lbl map-lbl")}</a>'
+            f'{_text(x, y - r - 3, p["id"], anchor="middle", cls="m-id")}</a>'
         )
         if sign:
-            out.append(_text(x, y + 3, sign, anchor="middle", cls="lbl map-sign"))
+            out.append(_text(x, y + 3, sign, anchor="middle", cls="m-sign"))
+    out.append("</svg>")
+    return "".join(out)
+
+
+# ------------------------------------------------------------------------------------------
+# leaderboard: MAE with bootstrap intervals
+# ------------------------------------------------------------------------------------------
+
+def mae_bars(
+    rows: list[dict],
+    *,
+    label: str,
+    unit: str = "°F",
+    width: float = 760.0,
+    row_h: float = 30.0,
+    name_w: float = 210.0,
+) -> str:
+    """Horizontal MAE bars with 95 % whiskers, ranked, the leader picked out in the accent.
+
+    ``rows`` carry ``name``, ``mae`` and optionally ``ci_low``/``ci_high``, ``best``, ``baseline``
+    and ``low_n``.  Only horizontal position encodes the number; the value is printed at the end
+    of every bar so the picture is never the only place it appears.
+    """
+    pts = [r for r in rows if r.get("mae") is not None]
+    if not pts:
+        return f'<p class="dimtext">{escape(label)}: no scored days yet.</p>'
+
+    top, bottom = 18.0, 26.0
+    height = top + row_h * len(pts) + bottom
+    val_w = 46.0
+    left = name_w
+    right = width - val_w - 6.0
+    hi = max(
+        max((float(r["mae"]) for r in pts), default=1.0),
+        max((float(r.get("ci_high") or 0.0) for r in pts), default=0.0),
+    )
+    m = _nice(hi * 1.06) or 1.0
+
+    def px(v: float) -> float:
+        return left + (v / m) * (right - left)
+
+    out = _open(width, height, label)
+    # `_nice` returns 1/2/2.5/5/10 x 10^k, so five equal steps always land on round labels.
+    ticks = 5
+    step = m / ticks
+    for k in range(ticks + 1):
+        v = k * step
+        x = px(v)
+        out.append(f'<line class="c-grid" x1="{_fmt(x, 1)}" y1="{_fmt(top - 4)}" '
+                   f'x2="{_fmt(x, 1)}" y2="{_fmt(height - bottom + 2)}"/>')
+        out.append(_text(x, height - bottom + 16, _fmt(v, 2), anchor="middle"))
+    out.append(_text((left + right) / 2, height - 3, f"mean absolute error, {unit}",
+                     anchor="middle", cls="c-axis-title"))
+
+    for i, r in enumerate(pts):
+        cy = top + row_h * i + row_h / 2
+        cls = "c-bar"
+        if r.get("baseline"):
+            cls += " is-baseline"
+        elif r.get("low_n"):
+            cls += " is-lown"
+        elif r.get("best"):
+            cls += " is-best"
+        lbl_cls = "c-lbl is-baseline" if r.get("baseline") else "c-lbl"
+        out.append(_text(left - 12, cy + 4, r["name"], anchor="end", cls=lbl_cls))
+        x1 = px(float(r["mae"]))
+        out.append(f'<rect class="{cls}" x="{_fmt(left, 1)}" y="{_fmt(cy - 5.5, 1)}" '
+                   f'width="{_fmt(max(x1 - left, 0.5), 1)}" height="11" rx="1.5">'
+                   f'<title>{escape(r["name"])}: {_fmt(float(r["mae"]), 2)} {unit}</title></rect>')
+        lo, hh = r.get("ci_low"), r.get("ci_high")
+        if lo is not None and hh is not None:
+            a, b = px(float(lo)), px(float(hh))
+            out.append(f'<line class="c-ci" x1="{_fmt(a, 1)}" y1="{_fmt(cy, 1)}" '
+                       f'x2="{_fmt(b, 1)}" y2="{_fmt(cy, 1)}"/>')
+            for xx in (a, b):
+                out.append(f'<line class="c-ci" x1="{_fmt(xx, 1)}" y1="{_fmt(cy - 4, 1)}" '
+                           f'x2="{_fmt(xx, 1)}" y2="{_fmt(cy + 4, 1)}"/>')
+        out.append(_text(width - 6, cy + 4, _fmt(float(r["mae"]), 2), anchor="end", cls="c-val"))
     out.append("</svg>")
     return "".join(out)

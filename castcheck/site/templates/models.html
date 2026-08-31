@@ -1,42 +1,120 @@
 {% extends "base.html" %}
+{% set nav_current = 'models' %}
 {% block title %}Models — CastCheck{% endblock %}
 {% block description %}Every forecast system CastCheck scores: source, initial conditions, version segment and the period of record.{% endblock %}
 {% block content %}
-<h1>Models</h1>
-<p class="lede">Each system is scored on the identical sampling — instantaneous 2 m temperature at
-00/06/12/18 UTC, interpolated to the station from the native 0.25° grid, with no post-processing.
-Scores cover only the newest model-version segment, so an upgrade upstream starts a new record
-rather than being averaged into the old one
-(<a href="/methodology/#7-fairness-statement">methodology §7</a>).</p>
-<ul class="meta">
-  <li>systems <b>{{ rows|length }}</b></li>
-  <li>data through <b>{{ data_through }}</b></li>
-  <li>updated <b>{{ built_at }}</b></li>
-  <li>next update <b>{{ next_update }}</b></li>
-</ul>
-<div class="scroll tall">
-<table class="scores">
-<caption>Scored days are for lead day 1, all stations pooled, {{ window_label }}, {{ init_hour }}Z,
-{{ method }}, {{ variable_label }}.</caption>
-<thead><tr><th scope="col">Model</th><th scope="col">Source</th><th scope="col">Initial conditions</th>
-<th scope="col">Version segment</th><th scope="col">Period of record</th>
-<th scope="col" class="num">Scored days</th></tr></thead>
-<tbody>
+{% set n_ranked = rows | rejectattr('baseline') | rejectattr('low_n') | list | length %}
+{% set n_base = rows | selectattr('baseline') | list | length %}
+<section class="hero">
+  <p class="eyebrow">Reference</p>
+  <h1 class="hero__title">Models</h1>
+  <p class="hero__scope hero__scope--lede">Every system CastCheck scores, on the identical
+  sampling: instantaneous 2 m temperature at 00/06/12/18 UTC, interpolated to the station from the
+  native 0.25° grid, with no post-processing. Scores cover only the newest model-version segment,
+  so an upgrade upstream starts a new record rather than being averaged into the old one
+  (<a href="/methodology/#7-fairness-statement">methodology §7</a>).</p>
+  <dl class="metastrip">
+    <div><dt>Systems</dt><dd>{{ rows|length }}</dd></div>
+    <div><dt>Ranked</dt><dd>{{ n_ranked }}</dd></div>
+    <div><dt>Baselines</dt><dd>{{ n_base }}</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
+    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+  </dl>
+</section>
+
+<nav class="filterbar" aria-label="Filter">
+  <div class="filterbar__group">
+    <span class="filterbar__label" id="mb-s">Source</span>
+    <span class="segmented" role="group" aria-labelledby="mb-s">
+      <a class="chip is-active" href="/models/" aria-current="page">All</a>
+{% for src in rows | map(attribute='source') | select | unique | sort %}{% if src %}
+      <a class="chip" href="/models/#src-{{ src }}">{{ src }}</a>
+{% endif %}{% endfor %}
+    </span>
+  </div>
+  <div class="filterbar__group">
+    <span class="filterbar__label" id="mb-i">Initial conditions</span>
+    <span class="segmented" role="group" aria-labelledby="mb-i">
+      <a class="chip is-active" href="/models/" aria-current="page">All</a>
+{% for f in rows | map(attribute='init_field') | select | unique | sort %}{% if f %}
+      <a class="chip" href="/models/#init-{{ f }}">{{ f }}</a>
+{% endif %}{% endfor %}
+    </span>
+  </div>
+  <span class="filterbar__tail">Scored days are lead day 1, {{ window_label }}, {{ init_hour }}Z, {{ method }}</span>
+</nav>
+
+{% set ns = namespace(src=[], init=[]) %}
+<div class="model-grid">
 {% for r in rows %}
-<tr class="{{ 'low-n ' if r.low_n }}{{ 'baseline' if r.baseline }}">
-<th scope="row"><a href="/model/{{ r.model_id }}/">{{ r.name }}</a>
-<span class="sub mono">{{ r.model_id }}</span></th>
-<td>{{ r.source }}{% if r.product %} · <span class="mono">{{ r.product }}</span>{% endif %}</td>
-<td>{{ r.init_field or '—' }}</td>
-<td class="mono tiny">{{ r.model_version or '—' }}{% if r.segment_start %}<span class="sub">from {{ r.segment_start }}</span>{% endif %}</td>
-<td class="period">{{ r.period }}</td>
-<td class="num">{{ r.n }}</td></tr>
+{% set first_src = r.source and r.source not in ns.src %}
+{% set first_init = r.init_field and r.init_field not in ns.init %}
+{% if first_src %}{% set ns.src = ns.src + [r.source] %}{% endif %}
+{% if first_init %}{% set ns.init = ns.init + [r.init_field] %}{% endif %}
+  <article class="mcard{{ ' is-baseline' if r.baseline }}{{ ' is-empty' if not r.has_spark }}"{% if first_src %} id="src-{{ r.source }}"{% endif %}>
+    <div class="mcard__top">
+      <div>
+        <h3 class="mcard__name"><a href="/model/{{ r.model_id }}/">{{ r.name }}</a><span class="mcard__id">{{ r.model_id }}</span></h3>
+      </div>
+      <div class="mcard__spark"><span class="k">MAE, lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</span>{% if r.has_spark %}{{ r.spark_svg }}{% else %}<span class="sub mono">no data</span>{% endif %}</div>
+    </div>
+    <div class="mcard__tags"><span class="badge badge--mono">{{ r.source }}</span>
+{% if r.init_field %}<span class="badge"{% if first_init %} id="init-{{ r.init_field }}"{% endif %}>{{ r.init_field }} init</span>{% endif %}
+{% if r.baseline %}<span class="badge">baseline</span>{% endif %}
+{% if not r.has_spark %}<span class="badge badge--warn">awaiting data</span>{% endif %}
+{% if r.low_n and not r.baseline and r.has_spark %}<span class="badge badge--warn">n &lt; {{ min_n }}</span>{% endif %}</div>
+    <dl class="mcard__facts">
+      <div><dt>Upstream</dt><dd>{{ r.product or '—' }}</dd></div>
+      <div><dt>Version segment</dt><dd>{{ r.model_version or '—' }}{% if r.segment_start %}<span class="sub">from {{ r.segment_start }}</span>{% endif %}</dd></div>
+    </dl>
+    <div class="avail">
+      <div class="avail__track">{% if r.avail_width %}<i class="avail__span{{ ' is-baseline' if r.baseline }}" style="left:{{ r.avail_left }}%;width:{{ r.avail_width }}%"></i>{% endif %}</div>
+      <div class="avail__scale"><span>{{ r.period_start }}</span><span>{{ r.period_end }}</span></div>
+    </div>
+    <div class="mcard__foot">
+      <span>{{ r.n }} scored day{{ '' if r.n_raw == 1 else 's' }} · lead 1</span>
+      <span class="mcard__cta"><a href="/model/{{ r.model_id }}/">Model page&nbsp;&rarr;</a></span>
+    </div>
+  </article>
 {% endfor %}
-</tbody>
-</table>
 </div>
-<p class="legend">Rows in italic are baselines, not forecast systems: they are the bar every model
-has to clear, never a competitor in the ranking.</p>
-<p class="downloads"><a href="/data/models.csv">models.csv</a>
-<a href="/api/v1/models.json">models.json</a></p>
+
+<section class="panel">
+  <div class="panel__head">
+    <h2 class="panel__title">The same list as a table</h2>
+    <span class="panel__tail"><a href="/data/models.csv">models.csv</a> · <a href="/api/v1/models.json">models.json</a></span>
+    <p class="panel__sub">Scored days are for lead day 1, all stations pooled, {{ window_label }},
+    {{ init_hour }}Z, {{ method }}, {{ variable_label }}. Rows in italic are baselines, not
+    forecast systems: they are the bar every model has to clear, never a competitor in the
+    ranking. The availability bars on the cards above and the periods here are drawn on the same
+    scale, {{ avail_start }} → {{ avail_end }}.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th><th scope="col">Source</th>
+      <th scope="col">Initial conditions</th><th scope="col">Version segment</th>
+      <th scope="col">Period of record</th>
+      <th scope="col" class="is-num">Scored days</th></tr></thead>
+      <tbody>
+{% for r in rows %}
+      <tr class="{{ 'is-lown ' if r.low_n }}{{ 'is-baseline' if r.baseline }}">
+      <th scope="row" class="model-cell"><a href="/model/{{ r.model_id }}/">{{ r.name }}</a><span class="sub mono">{{ r.model_id }}</span></th>
+      <td>{{ r.source }}{% if r.product %}<span class="sub mono">{{ r.product }}</span>{% endif %}</td>
+      <td>{{ r.init_field or '—' }}</td>
+      <td class="keycell">{{ r.model_version or '—' }}{% if r.segment_start %}<span class="sub">from {{ r.segment_start }}</span>{% endif %}</td>
+      <td class="period">{{ r.period }}</td>
+      <td class="is-num"><span class="val">{{ r.n }}</span></td></tr>
+{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="panel__foot">
+    <ul class="downloads">
+      <li><a href="/data/models.csv"><span class="fmt">CSV</span> models.csv</a></li>
+      <li><a href="/api/v1/models.json"><span class="fmt">JSON</span> models.json</a></li>
+      <li><a href="/data/"><span class="fmt">DATA</span> downloads &amp; licences</a></li>
+    </ul>
+  </div>
+</section>
 {% endblock %}

@@ -2,21 +2,21 @@
   "commands": {
     "backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.053,
+      "duration_s": 6203.542,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:05:29+00:00",
-      "last_success_at": "2026-08-31T04:05:29+00:00",
-      "started_at": "2026-08-31T04:05:29+00:00",
+      "finished_at": "2026-08-31T05:34:03+00:00",
+      "last_success_at": "2026-08-31T05:34:03+00:00",
+      "started_at": "2026-08-31T03:50:39+00:00",
       "status": "ok",
-      "summary": "gfs 2026-08-01..2026-08-30: 0/0 runs with data"
+      "summary": "graphcast_ifs 2026-01-01..2026-07-31: 332/413 runs with data"
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 309.498,
+      "duration_s": 206.762,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:49:11+00:00",
-      "last_success_at": "2026-08-31T04:49:11+00:00",
-      "started_at": "2026-08-31T04:44:01+00:00",
+      "finished_at": "2026-08-31T06:31:31+00:00",
+      "last_success_at": "2026-08-31T06:31:31+00:00",
+      "started_at": "2026-08-31T06:28:04+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
@@ -32,13 +32,13 @@
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 4.569,
+      "duration_s": 3.442,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:42:29+00:00",
-      "last_success_at": "2026-08-31T04:42:29+00:00",
-      "started_at": "2026-08-31T04:42:24+00:00",
+      "finished_at": "2026-08-31T06:27:33+00:00",
+      "last_success_at": "2026-08-31T06:27:33+00:00",
+      "started_at": "2026-08-31T06:27:30+00:00",
       "status": "ok",
-      "summary": "1484282 values (full) -> 209394 daily rows"
+      "summary": "2016134 values (full) -> 330654 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -62,21 +62,21 @@
     },
     "publish-hf": {
       "castcheck_version": "0.1.0",
-      "duration_s": 18.75,
+      "duration_s": 21.668,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:54:52+00:00",
-      "last_success_at": "2026-08-31T04:54:52+00:00",
-      "started_at": "2026-08-31T04:54:33+00:00",
+      "finished_at": "2026-08-31T06:34:54+00:00",
+      "last_success_at": "2026-08-31T06:34:54+00:00",
+      "started_at": "2026-08-31T06:34:32+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.1.0",
-      "duration_s": 34.281,
+      "duration_s": 31.217,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:55:28+00:00",
-      "last_success_at": "2026-08-31T04:55:28+00:00",
-      "started_at": "2026-08-31T04:54:53+00:00",
+      "finished_at": "2026-08-31T06:35:25+00:00",
+      "last_success_at": "2026-08-31T06:35:25+00:00",
+      "started_at": "2026-08-31T06:34:54+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
@@ -122,24 +122,24 @@
     },
     "truth-qc": {
       "castcheck_version": "0.1.0",
-      "duration_s": 4.818,
+      "duration_s": 0.376,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:55:15+00:00",
-      "last_success_at": "2026-08-31T04:55:15+00:00",
-      "started_at": "2026-08-31T04:55:11+00:00",
+      "finished_at": "2026-08-31T04:56:18+00:00",
+      "last_success_at": "2026-08-31T04:56:18+00:00",
+      "started_at": "2026-08-31T04:56:17+00:00",
       "status": "ok",
-      "summary": "22420 checked, 14 implausible, 4 revised, 0 cf6, 10 dropped"
+      "summary": "2094 checked, 2 implausible, 0 revised, 0 cf6, 2 dropped"
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 36.111,
+      "duration_s": 29.94,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:43:05+00:00",
-      "last_success_at": "2026-08-31T04:43:05+00:00",
-      "started_at": "2026-08-31T04:42:29+00:00",
+      "finished_at": "2026-08-31T06:28:04+00:00",
+      "last_success_at": "2026-08-31T06:28:04+00:00",
+      "started_at": "2026-08-31T06:27:34+00:00",
       "status": "ok",
-      "summary": "scores=231136 pairwise=713584 as_of=2026-08-31"
+      "summary": "scores=244100 pairwise=739520 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T04:55:28+00:00"
+  "updated_at": "2026-08-31T06:35:25+00:00"
 }

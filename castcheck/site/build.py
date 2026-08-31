@@ -418,19 +418,30 @@ def _f(c) -> float | None:
     return None if _isnan(c) else float(c) * C_TO_F_DELTA
 
 
+#: A displayed negative uses the typographic minus, which is the width of a digit in the mono
+#: face and therefore keeps a column of signed numbers aligned. Downloads and the API keep the
+#: ASCII hyphen: this substitution is display-only and happens nowhere else.
+MINUS = "\u2212"
+
+
+def _minus(text: str) -> str:
+    return text.replace("-", MINUS)
+
+
 def f_delta(c, digits: int = 2) -> str:
-    return "—" if _isnan(c) else f"{float(c) * C_TO_F_DELTA:.{digits}f}"
+    return "—" if _isnan(c) else _minus(f"{float(c) * C_TO_F_DELTA:.{digits}f}")
 
 
 def f_signed(c, digits: int = 2) -> str:
-    return "—" if _isnan(c) else f"{float(c) * C_TO_F_DELTA:+.{digits}f}"
+    return "—" if _isnan(c) else _minus(f"{float(c) * C_TO_F_DELTA:+.{digits}f}")
 
 
 def f_ci(lo, hi, digits: int = 2) -> str:
     """The compact interval notation of docs/05 §A: ``[1.9, 2.3]``."""
     if _isnan(lo) or _isnan(hi):
         return "—"
-    return f"[{float(lo) * C_TO_F_DELTA:.{digits}f}, {float(hi) * C_TO_F_DELTA:.{digits}f}]"
+    return _minus(
+        f"[{float(lo) * C_TO_F_DELTA:.{digits}f}, {float(hi) * C_TO_F_DELTA:.{digits}f}]")
 
 
 def f_pct(x) -> str:
@@ -438,14 +449,14 @@ def f_pct(x) -> str:
 
 
 def f_skill(x) -> str:
-    return "—" if _isnan(x) else f"{float(x):+.2f}"
+    return "—" if _isnan(x) else _minus(f"{float(x):+.2f}")
 
 
 def f_skill_ci(lo, hi) -> str:
     """A skill interval: a ratio, so it stays unitless (no °F conversion)."""
     if _isnan(lo) or _isnan(hi):
         return "—"
-    return f"[{float(lo):+.2f}, {float(hi):+.2f}]"
+    return _minus(f"[{float(lo):+.2f}, {float(hi):+.2f}]")
 
 
 def f_int(x) -> str:
@@ -574,10 +585,16 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
         "n": int(r["n"]),
         "low_n": int(r["n"]) < MIN_N,
         "mae": f_delta(r["mae"]),
+        # `_f` already converts to °F, so the value and its interval are on one scale — the error
+        # bars on the home page draw the bar from one and the whiskers from the other.
         "mae_f": _f(r["mae"]),
-        "mae_ci": f_ci(r["mae_ci_low"], r["mae_ci_high"]),
+        "mae_ci_low_f": _f(r.get("mae_ci_low")),
+        "mae_ci_high_f": _f(r.get("mae_ci_high")),
         "bias": f_signed(r["bias"]),
         "bias_f": bias_f,
+        # Width of the diverging rule under the bias, on the same scale as the colour ramp: full
+        # bar at the top step of `_BIAS_STEPS`, so length and hue never disagree.
+        "bias_w": 0 if bias_f is None else min(100, round(abs(bias_f) / 2.0 * 100)),
         "bias_ci": f_ci(r["bias_ci_low"], r["bias_ci_high"]),
         "bias_class": svg.bias_class(bias_f, bias_sig),
         "bias_significant": bias_sig,
@@ -586,6 +603,8 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
         "hit2f": f_pct(r["hit2f"]),
         "hit3f": f_pct(r["hit3f"]),
         "skill": f_skill(r["skill_persistence"]),
+        # the raw skill, because the displayed one carries a typographic minus
+        "skill_f": _f(r["skill_persistence"]),
         "period": f_period(r["period_start"], r["period_end"]),
         "permalink": permalink_url(station_id, model_id, lead),
     }
@@ -618,7 +637,8 @@ def _view_href(base: str, view: tuple) -> str:
     return f"{base}v/{view_slug(view[0], view[1])}/"
 
 
-_WINDOW_OPTS = [(w, "all history" if w == "all" else f"last {w[:-1]} days") for w in WINDOWS]
+# Compact labels: the switcher is a segmented control, and "last 365 days" wrapped it on a phone.
+_WINDOW_OPTS = [(w, "All" if w == "all" else f"{w[:-1]} d") for w in WINDOWS]
 _INIT_OPTS = [(i, f"{i:02d}Z") for i in INITS]
 _METHOD_OPTS = [(m, m) for m in METHODS]
 _VAR_OPTS = [(v, VAR_SHORT.get(v, v)) for v in VARIABLES]
@@ -1174,6 +1194,17 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         board["variable_label"] = _sentence(VAR_LABEL.get(var, var))
         sampled.append(board)
 
+    mae_fig = ""
+    if headline:
+        bars = [{
+            "name": r["model_name"], "mae": r["mae_f"],
+            "ci_low": r["mae_ci_low_f"], "ci_high": r["mae_ci_high_f"],
+            "best": r["best_mae"], "baseline": r["baseline"], "low_n": r["low_n"],
+        } for r in headline["rows"]]
+        mae_fig = Markup(svg.mae_bars(
+            bars, label=f"MAE by model with 95 % confidence intervals, lead day "
+                        f"{headline['lead']}, {window}, {int(init_hour):02d}Z, {method}"))
+
     matrix = _lead_matrix(sub, model_idx, leads)
     avail = sc[
         (sc["station_id"] == ALL_STATIONS) & (sc["window"] == "all")
@@ -1190,6 +1221,10 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         sampled_lead=lead2,
         spark_leads=list(SPARK_LEADS),
         headline=headline,
+        mae_fig=mae_fig,
+        n_systems=len(model_idx),
+        n_views=len(VIEWS),
+        canonical_path=_view_href("/", view),
         matrix=matrix,
         window=window,
         window_label="all available history" if window == "all" else f"the last {window[:-1]} days",
@@ -1224,9 +1259,8 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
     best_mae = min((r["mae_f"] for r in ranked if r["mae_f"] is not None), default=None)
     best_skill = None
     for r in ranked:
-        try:
-            s = float(r["skill"])
-        except (TypeError, ValueError):
+        s = r.get("skill_f")
+        if s is None:
             continue
         best_skill = s if best_skill is None else max(best_skill, s)
     for i, r in enumerate(ranked):
@@ -1234,8 +1268,16 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
         r["mark"] = "★" if r["model_id"] == leader else marks.get(r["model_id"], "·")
         r["mark_title"] = _MARK_TITLE.get(r["mark"], "")
         r["best_mae"] = best_mae is not None and r["mae_f"] is not None and abs(r["mae_f"] - best_mae) < 1e-9
-        r["best_skill"] = (best_skill is not None and r["skill"] not in ("—",)
-                           and abs(float(r["skill"]) - best_skill) < 1e-9)
+        r["best_skill"] = (best_skill is not None and r["skill_f"] is not None
+                           and abs(r["skill_f"] - best_skill) < 1e-9)
+    # The skill meter is a within-table comparison: full bar = the best skill on show.
+    for r in rows:
+        r["skill_w"] = 0
+        if r["baseline"] or best_skill is None or best_skill <= 0:
+            continue
+        sv = r.get("skill_f")
+        if sv is not None and sv > 0:
+            r["skill_w"] = min(100, round(100 * sv / best_skill))
     for r in others:
         r["rank"] = None
         r["mark"] = ""
@@ -1669,7 +1711,7 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
         series_rows = []
         if ser:
             series_rows = [
-                {"date": d, "err": "—" if v is None else f"{v:+.2f}"}
+                {"date": d, "err": "—" if v is None else _minus(f"{v:+.2f}")}
                 for d, v in zip(ser["dates"], ser["values"])
             ][::-1]
         base = f"station/{sid}/model/{mid}/lead/{lead}"
@@ -1876,8 +1918,52 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
                 f"{report.get('n_gaps', 0)} over the last {days} days.")
     else:  # pragma: no cover - defensive
         overall, text = "warn", "Degraded."
+
+    # A per-model state badge, so a reader scanning the column sees the shape before the numbers.
+    for b in model_bars:
+        pct = _pct_of(b["uptime"])
+        b["state"] = "ok" if pct is not None and pct >= 99.0 else (
+            "warn" if pct is not None and pct >= 90.0 else "bad")
+        b["state_text"] = {"ok": "healthy", "warn": "degraded", "bad": "gaps"}[b["state"]]
+
+    # The month bands over the day-by-day grid.
+    month_groups = []
+    for d in report.get("dates", []):
+        label = _MONTH_LABEL(d)
+        if month_groups and month_groups[-1]["label"] == label:
+            month_groups[-1]["span"] += 1
+        else:
+            month_groups.append({"label": label, "span": 1})
+
+    def _mean(vals):
+        vals = [v for v in vals if v is not None]
+        return None if not vals else sum(vals) / len(vals)
+
+    kpi_runs = _mean([_pct_of(b["uptime"]) for b in model_bars])
+    kpi_truth = _mean([_pct_of(b["uptime"]) for b in truth_bars])
+    kpi_instants = _mean([_pct_of(b["uptime"]) for b in instant_bars])
+    latest = sorted({m.get("latest_init") for m in model_bars if m.get("latest_init")})
     return {"model_bars": model_bars, "truth_bars": truth_bars, "instant_bars": instant_bars,
-            "overall": overall, "overall_text": text}
+            "overall": overall, "overall_text": text, "month_groups": month_groups,
+            "kpi_runs": "—" if kpi_runs is None else f"{kpi_runs:.1f}",
+            "kpi_truth": "—" if kpi_truth is None else f"{kpi_truth:.1f}",
+            "kpi_instants": "—" if kpi_instants is None else f"{kpi_instants:.1f}",
+            "latest_init": latest[-1] if latest else "—"}
+
+
+def _pct_of(text: str) -> float | None:
+    """``"92.6%"`` back to ``92.6`` — the bars print the string, the KPIs average the number."""
+    try:
+        return float(str(text).rstrip("%"))
+    except ValueError:
+        return None
+
+
+def _MONTH_LABEL(iso: str) -> str:  # noqa: N802 - a formatting helper, not a constant
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%B %Y")
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return str(iso)[:7]
 
 
 #: 6.5 K per km is the standard-atmosphere lapse rate; the first-order magnitude of the
@@ -1963,7 +2049,6 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
             with gzip.open(err_dir / f"{sid}.csv.gz", "wt", encoding="utf-8", newline="") as f:
                 grp.round(4).to_csv(f, index=False)
             shards.append((str(sid), len(grp)))
-    n_err = sum(n for _, n in shards)
     for sid, n in shards:
         add(f"daily_errors/{sid}.csv.gz",
             f"every scored value at {sid}: one row per model, initialization, lead day, method, "
@@ -2150,6 +2235,16 @@ def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
             "low_n": n < MIN_N,
         })
 
+    # The shared availability scale the per-card progress bars are drawn against.
+    span_lo = span_hi = None
+    if scores is not None and len(scores):
+        allrows = scores[scores["window"] == "all"]
+        if len(allrows):
+            span_lo = pd.to_datetime(allrows["period_start"], errors="coerce").min()
+            span_hi = pd.to_datetime(allrows["period_end"], errors="coerce").max()
+    span_days = max(((span_hi - span_lo).days if span_lo is not None
+                     and span_hi is not None else 0), 1)
+
     md_rows = []
     for mid in sorted(model_idx, key=lambda k: (model_idx[k].get("baseline", False), names[k])):
         info = model_idx[mid]
@@ -2159,19 +2254,50 @@ def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
         if scores is not None and len(scores):
             allw = scores[(scores["model_id"] == mid) & (scores["window"] == "all")]
         n = int(part["n"].max()) if len(part) else 0
+        # MAE across lead days, on the default view: the shape of the card's sparkline.
+        spark = []
+        sp_src = pd.DataFrame()
+        if scores is not None and len(scores):
+            sp_src = scores[(scores["model_id"] == mid) & (scores["station_id"] == ALL_STATIONS)
+                            & (scores["window"] == DEFAULT_WINDOW)
+                            & (scores["init_hour"].astype(int) == DEFAULT_INIT)
+                            & (scores["method"] == DEFAULT_METHOD)
+                            & (scores["variable"] == variable)]
+        for ld in SPARK_LEADS:
+            hit = sp_src[sp_src["lead_day"].astype(int) == ld] if len(sp_src) else sp_src
+            spark.append(_f(hit["mae"].iloc[0]) if len(hit) else None)
+        left = width = 0.0
+        p_start = p_end = ""
+        if len(allw):
+            s0 = pd.to_datetime(allw["period_start"], errors="coerce").min()
+            e0 = pd.to_datetime(allw["period_end"], errors="coerce").max()
+            if pd.notna(s0) and pd.notna(e0) and span_lo is not None:
+                p_start, p_end = s0.date().isoformat(), e0.date().isoformat()
+                left = round(100.0 * (s0 - span_lo).days / span_days, 2)
+                width = round(min(max(100.0 * ((e0 - s0).days + 1) / span_days, 1.0),
+                                  100.0 - left), 2)
         md_rows.append({
             "model_id": mid, "name": names[mid], "source": info.get("source", ""),
             "product": info.get("product", ""), "init_field": info.get("init_field"),
             "baseline": info.get("baseline", False),
-            "n": n or "—", "low_n": n < MIN_N,
+            "n": n or "—", "n_raw": n, "low_n": n < MIN_N,
             "period": f_period(allw["period_start"].min(), allw["period_end"].max())
             if len(allw) else "—",
+            "period_start": p_start or "—", "period_end": p_end or "—",
+            "avail_left": left, "avail_width": width,
+            "spark_svg": Markup(svg.sparkline(
+                spark, label=f"{names[mid]} MAE by lead day "
+                             f"{SPARK_LEADS[0]} to {SPARK_LEADS[-1]}", width=112.0)),
+            "has_spark": any(v is not None for v in spark),
             **_segment_note(allw),
         })
 
     shared = {"window_label": f"the last {DEFAULT_WINDOW[:-1]} days",
               "init_hour": f"{DEFAULT_INIT:02d}", "method": DEFAULT_METHOD,
-              "variable": variable, "variable_label": VAR_LABEL.get(variable, variable)}
+              "variable": variable, "variable_label": VAR_LABEL.get(variable, variable),
+              "spark_leads": list(SPARK_LEADS),
+              "avail_start": span_lo.date().isoformat() if span_lo is not None else "—",
+              "avail_end": span_hi.date().isoformat() if span_hi is not None else "—"}
     w.write("stations/index.html",
             env.get_template("stations.html").render(**base_ctx, **shared, rows=st_rows))
     w.write("models/index.html",
