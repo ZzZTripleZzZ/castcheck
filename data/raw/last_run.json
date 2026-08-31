@@ -2,21 +2,21 @@
   "commands": {
     "backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 6203.542,
+      "duration_s": 52.169,
       "exit_code": 0,
-      "finished_at": "2026-08-31T05:34:03+00:00",
-      "last_success_at": "2026-08-31T05:34:03+00:00",
-      "started_at": "2026-08-31T03:50:39+00:00",
+      "finished_at": "2026-08-31T06:36:18+00:00",
+      "last_success_at": "2026-08-31T06:36:18+00:00",
+      "started_at": "2026-08-31T06:35:26+00:00",
       "status": "ok",
-      "summary": "graphcast_ifs 2026-01-01..2026-07-31: 332/413 runs with data"
+      "summary": "graphcast_ifs 2026-01-01..2026-07-31: 2/83 runs with data"
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 206.762,
+      "duration_s": 100.992,
       "exit_code": 0,
-      "finished_at": "2026-08-31T06:31:31+00:00",
-      "last_success_at": "2026-08-31T06:31:31+00:00",
-      "started_at": "2026-08-31T06:28:04+00:00",
+      "finished_at": "2026-08-31T07:17:08+00:00",
+      "last_success_at": "2026-08-31T07:17:08+00:00",
+      "started_at": "2026-08-31T07:15:27+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
@@ -141,5 +141,5 @@
       "summary": "scores=244100 pairwise=739520 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T06:35:25+00:00"
+  "updated_at": "2026-08-31T07:17:08+00:00"
 }

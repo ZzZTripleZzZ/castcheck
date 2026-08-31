@@ -19,11 +19,12 @@
   <span class="statusbar__dot" aria-hidden="true"></span>
   <p class="statusbar__text">{{ overall_text }}</p>
   <dl class="statusbar__meta">
-    <div><dt>Last run</dt><dd>{{ report.generated_at }}</dd></div>
-    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Last run</dt><dd><time datetime="{{ report.generated_at }}">{{ last_run_human }}</time></dd></div>
+    <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
     <div><dt>Window</dt><dd>{{ report.days }} days</dd></div>
     <div><dt>Stations</dt><dd>{{ report.n_stations }}</dd></div>
     <div><dt>Gaps</dt><dd>{{ report.n_gaps }}</dd></div>
+    <div><dt>Not due yet</dt><dd>{{ report.n_pending if report.n_pending is defined else 0 }}</dd></div>
   </dl>
 </div>
 
@@ -50,7 +51,7 @@
     <p class="kpi__label">Latest init held</p>
     <p class="kpi__value">{{ latest_init }}</p>
     <p class="kpi__ci">as of {{ report.as_of }}</p>
-    <p class="kpi__foot">{{ report.n_current_gaps if report.n_current_gaps is defined else 0 }} item(s) open for the current day</p>
+    <p class="kpi__foot">{{ report.n_current_gaps if report.n_current_gaps is defined else 0 }} due item(s) open for the current day{% if n_pending %} · {{ n_pending }} not due yet{% endif %}</p>
   </div>
 </div>
 
@@ -81,7 +82,7 @@
       <td class="keycell">{{ '%02d'|format(m.init_hour) }}Z</td>
       <td class="is-num"><span class="val">{{ m.uptime }}</span><span class="ci">{{ m.n_counted }} slots counted</span></td>
       <td class="avail-cell">{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete, {{ m.n_na }} not expected</span></td>
-      <td class="period">{{ m.period_start or '—' }}{% if m.n_na %}<span class="sub">{{ m.n_counted }} of {{ report.days }} slots expected</span>{% endif %}</td>
+      <td class="period">{{ m.period_start or '—' }}{% if m.n_na or m.n_wait %}<span class="sub">{{ m.n_counted }} of {{ report.days }} slots due{% if m.n_wait %}, {{ m.n_wait }} not due yet{% endif %}</span>{% endif %}</td>
       <td class="period">{{ m.latest_init or '—' }}</td>
       <td><span class="badge badge--{{ m.state }}">{{ m.state_text }}</span></td></tr>
 {% endfor %}
@@ -92,6 +93,8 @@
     <span><i class="swatch is-ok"></i> complete</span>
     <span><i class="swatch is-warn"></i> partial</span>
     <span><i class="swatch is-bad"></i> missing</span>
+    <span><i class="swatch is-wait"></i> not due yet — the run's publication deadline
+    (initialization + this source's availability delay) has not passed</span>
     <span><i class="swatch is-na"></i> not expected — before this model's period start, or an
     initialization the upstream archive never produced (excluded from the percentage)</span>
   </p></div>
@@ -113,7 +116,7 @@
         <tbody>
 {% for m in report.models %}
         <tr><th scope="row">{{ m.model_id }} {{ '%02d'|format(m.init_hour) }}Z</th>
-{% for d in m.days %}<td><span class="cell {{ 'is-na' if d.expected is defined and not d.expected else ('is-yes' if d.complete else ('is-part' if d.stations_any else 'is-no')) }}" title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values{% if d.reason == 'not_produced_upstream' %} — not produced upstream{% elif d.reason == 'before_start' %} — before this model entered the record{% endif %}"><span class="sr">{{ d.date }} {{ 'not expected' if d.expected is defined and not d.expected else ('complete' if d.complete else ('partial' if d.stations_any else 'missing')) }}</span></span></td>{% endfor %}
+{% for d in m.days %}<td><span class="cell {{ 'is-wait' if d.reason == 'not_due_yet' else ('is-na' if d.expected is defined and not d.expected else ('is-yes' if d.complete else ('is-part' if d.stations_any else 'is-no'))) }}" title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations, {{ d.values }} values{% if d.reason == 'not_due_yet' %} — not due yet, published upstream from {{ d.due_at }}{% elif d.reason == 'not_produced_upstream' %} — not produced upstream{% elif d.reason == 'before_start' %} — before this model entered the record{% endif %}"><span class="sr">{{ d.date }} {{ 'not due yet' if d.reason == 'not_due_yet' else ('not expected' if d.expected is defined and not d.expected else ('complete' if d.complete else ('partial' if d.stations_any else 'missing'))) }}</span></span></td>{% endfor %}
         </tr>
 {% endfor %}
         </tbody>
@@ -124,6 +127,7 @@
     <span><i class="swatch is-ok"></i> complete</span>
     <span><i class="swatch is-warn"></i> partial</span>
     <span><i class="swatch is-bad"></i> missing</span>
+    <span><i class="swatch is-wait"></i> not due yet</span>
     <span><i class="swatch is-na"></i> not expected</span>
   </p></div>
 </section>
@@ -131,6 +135,11 @@
 <section class="panel" id="truth">
   <div class="panel__head">
     <h2 class="panel__title">Truth (first-final NWS CLI)<span class="lead-tag">last {{ report.days }} days</span></h2>
+    <p class="panel__sub">The first final Daily Climate Report is issued after the station's
+    <em>local</em> midnight, one to four hours after it, so the deadline is per station: at
+    06&nbsp;UTC yesterday's report exists for New York and cannot exist yet for Los Angeles. Days
+    whose deadline has not passed are drawn grey and are neither a gap nor part of the
+    percentage.</p>
   </div>
   <div class="panel__body panel__body--flush">
     <div class="table-wrap"><table class="data">
@@ -141,7 +150,7 @@
       <tr><th scope="row" class="model-cell"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a><span class="sub">{{ t.name }}</span></th>
       <td class="is-num"><span class="val">{{ t.uptime }}</span></td>
       <td class="avail-cell">{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}</td>
-      <td class="is-num"><span class="val">{{ t.n_missing }}</span></td></tr>
+      <td class="is-num"><span class="val">{{ t.n_missing }}</span>{% if t.n_wait %}<span class="ci">{{ t.n_wait }} not due yet</span>{% endif %}</td></tr>
 {% endfor %}
       </tbody>
     </table></div>

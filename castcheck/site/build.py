@@ -45,6 +45,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from .. import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
+from ..api import SKILL_MIN_COMMON
 from ..config import (
     PUBLIC_DIR,
     REPO_ROOT,
@@ -89,6 +90,8 @@ __all__ = [
     "changelog_entries",
     "citation",
     "citation_long",
+    "human_time",
+    "minify_html",
     "next_update",
     "source_commit",
     "view_slug",
@@ -518,6 +521,24 @@ def next_update(from_iso: str) -> str:
     return nxt.isoformat()
 
 
+def human_time(iso: str | None) -> str:
+    """``"2026-08-31T05:46:12+00:00"`` -> ``"2026-08-31 05:46 UTC"``.
+
+    The machine-readable form stays in the ``datetime`` attribute of a ``<time>`` element, so the
+    page is still parseable; what a reader sees is a clock time with a zone, not an RFC 3339
+    string with a ``+00:00`` tail they have to decode.
+    """
+    if not iso:
+        return "—"
+    try:
+        t = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return str(iso)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=UTC)
+    return t.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _human_size(n: int) -> str:
     x = float(n)
     for unit in ("B", "kB", "MB", "GB"):
@@ -534,6 +555,11 @@ def _human_size(n: int) -> str:
 def _mname(model_idx: dict | None, model_id: str) -> str:
     """The human label for a model id; the id itself is the fallback and the subtitle."""
     return (model_idx or {}).get(model_id, {}).get("display") or model_id
+
+
+#: ``svg.bias_class`` name -> the one- or two-character alias used by the compact tables (`.bb`).
+_BIAS_SHORT = {"is-warm-3": "w3", "is-warm-2": "w2", "is-warm-1": "w1", "is-cool-1": "k1",
+               "is-cool-2": "k2", "is-cool-3": "k3", "is-flat": "f0", "is-null": "z0"}
 
 
 def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | None = None) -> dict:
@@ -555,12 +581,22 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
             skill_vs += f" (n={int(float(n_common))})"
     elif not _isnan(n_common):
         skill_vs = f"n={int(float(n_common))}"
+    # A skill score is a ratio of two MAEs over the *intersection* of the two records.  On a
+    # handful of common days that ratio moves several tenths when one day changes, which is not a
+    # number to publish as if it meant something: below SKILL_MIN_COMMON the site prints "—" and
+    # leaves the sample size visible next to it, so the reader sees why.  The value itself stays
+    # in the JSON, flagged `skill_reliable: false`.
+    skill_reliable = (not _isnan(n_common)) and int(float(n_common)) >= SKILL_MIN_COMMON
     variable = r["variable"]
     return {
         "model_name": _mname(model_idx, model_id),
         "mae_debiased": f_delta(r.get("mae_debiased")),
-        "skill_debiased": f_skill(r.get("skill_persistence_debiased")),
-        "skill_ci": f_skill_ci(r.get("skill_ci_low"), r.get("skill_ci_high")),
+        "skill_debiased": (f_skill(r.get("skill_persistence_debiased"))
+                           if skill_reliable else "—"),
+        "skill_ci": (f_skill_ci(r.get("skill_ci_low"), r.get("skill_ci_high"))
+                     if skill_reliable else "—"),
+        "skill_reliable": skill_reliable,
+        "skill_min_common": SKILL_MIN_COMMON,
         "skill_vs": skill_vs,
         "n_common": f_int(n_common),
         "n_debiased": f_int(r.get("n_debiased")),
@@ -585,6 +621,9 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
         "n": int(r["n"]),
         "low_n": int(r["n"]) < MIN_N,
         "mae": f_delta(r["mae"]),
+        # The MAE interval was never given a display string, so `{{ r.mae_ci }}` rendered empty
+        # everywhere it was used — the permanent-link table and the home page's leader KPI.
+        "mae_ci": f_ci(r.get("mae_ci_low"), r.get("mae_ci_high")),
         # `_f` already converts to °F, so the value and its interval are on one scale — the error
         # bars on the home page draw the bar from one and the whiskers from the other.
         "mae_f": _f(r["mae"]),
@@ -597,14 +636,16 @@ def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | No
         "bias_w": 0 if bias_f is None else min(100, round(abs(bias_f) / 2.0 * 100)),
         "bias_ci": f_ci(r["bias_ci_low"], r["bias_ci_high"]),
         "bias_class": svg.bias_class(bias_f, bias_sig),
+        "bias_short": _BIAS_SHORT.get(svg.bias_class(bias_f, bias_sig), "z0"),
         "bias_significant": bias_sig,
         "rmse": f_delta(r["rmse"]),
         "hit1f": f_pct(r["hit1f"]),
         "hit2f": f_pct(r["hit2f"]),
         "hit3f": f_pct(r["hit3f"]),
-        "skill": f_skill(r["skill_persistence"]),
-        # the raw skill, because the displayed one carries a typographic minus
-        "skill_f": _f(r["skill_persistence"]),
+        "skill": f_skill(r["skill_persistence"]) if skill_reliable else "—",
+        # the raw skill, because the displayed one carries a typographic minus; `None` when the
+        # common sample is too small, so no figure or "best skill" mark can use it either
+        "skill_f": _f(r["skill_persistence"]) if skill_reliable else None,
         "period": f_period(r["period_start"], r["period_end"]),
         "permalink": permalink_url(station_id, model_id, lead),
     }
@@ -661,15 +702,88 @@ def _env() -> Environment:
     )
 
 
+#: Elements whose text is significant: whitespace inside them is never touched.
+_PRESERVE = re.compile(r"(?is)(<(?:pre|textarea|script|style)\b[^>]*>.*?</(?:pre|textarea|script|"
+                       r"style)>)")
+_TAG = re.compile(r"<[^>]*>")
+_TAG_NAME = re.compile(r"^</?\s*([a-zA-Z][a-zA-Z0-9]*)")
+
+#: Elements between which whitespace has no rendering effect.  Everything else — ``span``, ``a``,
+#: ``i``, ``em``, ``code``, ``time`` … — is inline, where a newline in the source *is* the space
+#: between two words, so it is collapsed to one space rather than dropped.
+_BLOCK_TAGS = frozenset((
+    "html", "head", "body", "meta", "link", "title", "base",
+    "main", "header", "footer", "nav", "section", "article", "aside", "div", "p", "hr",
+    "blockquote", "figure", "figcaption",
+    "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd", "details", "summary",
+    "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col",
+    "form", "fieldset", "legend", "select", "option", "optgroup",
+))
+
+_HAS_NEWLINE = re.compile(r"\n")
+
+
+def _elem(tag: str) -> str:
+    m = _TAG_NAME.match(tag)
+    return m.group(1).lower() if m else ""
+
+
+def minify_html(html: str) -> str:
+    """Strip the generator's indentation without changing what the page renders.
+
+    The permanent-link pages are the bulk of the site — one file per station × model × lead day,
+    each carrying a table of every window, initialization, interpolation and variable — and the
+    template's indentation is a tenth of their bytes.  Two rules, both rendering-neutral:
+
+    * whitespace that sits **between two block-level tags** (a ``</td>`` and the next ``<td>``, a
+      ``</li>`` and the next ``<li>``) is dropped: the HTML layout model ignores it;
+    * every other run of newline-plus-indent collapses to a **single space**, because next to an
+      inline element that whitespace is the space between two words —
+      ``<em>a</em>\n<em>b</em>`` renders "a b", not "ab".
+
+    ``<pre>``, ``<textarea>``, ``<script>`` and ``<style>`` are passed through untouched.
+    """
+    parts = _PRESERVE.split(html)
+    for i in range(0, len(parts), 2):  # even indices are outside the preserved elements
+        chunk = parts[i]
+        if "\n" not in chunk:
+            continue
+        out: list[str] = []
+        prev_tag = ""
+        pos = 0
+        for m in _TAG.finditer(chunk):
+            text = chunk[pos:m.start()]
+            if text and not text.strip() and _HAS_NEWLINE.search(text):
+                nxt = _elem(m.group(0))
+                drop = _elem(prev_tag) in _BLOCK_TAGS and nxt in _BLOCK_TAGS
+                out.append("" if drop else " ")
+            elif text:
+                out.append(_INDENT_RUN.sub(" ", text))
+            out.append(m.group(0))
+            prev_tag = m.group(0)
+            pos = m.end()
+        tail = chunk[pos:]
+        out.append(_INDENT_RUN.sub(" ", tail) if tail.strip() else
+                   ("" if _elem(prev_tag) in _BLOCK_TAGS else tail))
+        parts[i] = "".join(out)
+    return "".join(parts)
+
+
+_INDENT_RUN = re.compile(r"\s*\n\s*")
+
+
 class _Writer:
     def __init__(self, out: Path):
         self.out = out
         self.n = 0
+        self.bytes = 0
 
     def write(self, relpath: str, html: str, count: bool = True) -> Path:
         path = self.out / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(html, encoding="utf-8")
+        body = minify_html(html)
+        path.write_text(body, encoding="utf-8")
+        self.bytes += len(body.encode("utf-8"))
         if count:
             self.n += 1
         return path
@@ -840,8 +954,11 @@ def build_site(
         "as_of": as_of_s,
         "data_through": data_through,
         "built_at": built_at,
+        "built_at_human": human_time(built_at),
         "next_update": next_update(built_at),
+        "next_update_human": human_time(next_update(built_at)),
         "min_n": MIN_N,
+        "skill_min_common": SKILL_MIN_COMMON,
         "ci_min_n": CI_MIN_N,
         "ci_min_blocks": CI_MIN_BLOCKS,
         "site_url": SITE_URL,
@@ -1109,6 +1226,7 @@ def _error_indices(errors: pd.DataFrame, variable: str = DEFAULT_VARIABLE):
             "month": month, "n": int(r["n"]),
             "mae": f"{r['mae']:.2f}", "bias": f"{r['bias']:+.2f}",
             "bias_class": svg.bias_class(float(r["bias"])),
+            "bias_short": _BIAS_SHORT.get(svg.bias_class(float(r["bias"])), "z0"),
         })
     return series, months, allday
 
@@ -1465,6 +1583,7 @@ def _map_rows(sub: pd.DataFrame, station_idx: dict, model_idx: dict | None,
             "n": n, "n_models": n_models, "note": note,
             "mae": mae_s, "bias": "—" if bias_c is None else f_signed(bias_c),
             "bias_class": svg.bias_class(bias_f, sig),
+            "bias_short": _BIAS_SHORT.get(svg.bias_class(bias_f, sig), "z0"),
             "sign": "" if not bias_f else ("+" if bias_f > 0 else "−"),
             "href": f"/station/{sid}/",
             "low_n": n < MIN_N,
@@ -1567,7 +1686,9 @@ def _var_blocks(part, variables, leads, model_idx, row_key, station_fixed, model
                     nf = r.get("n_flagged")
                     cells.append({
                         "mae": f_delta(r["mae"]), "bias": f_signed(r["bias"]),
-                        "bias_class": svg.bias_class(bias_f), "n": int(r["n"]),
+                        "bias_class": svg.bias_class(bias_f),
+                        "bias_short": _BIAS_SHORT.get(svg.bias_class(bias_f), "z0"),
+                        "n": int(r["n"]),
                         "low_n": int(r["n"]) < MIN_N,
                         "n_flagged": 0 if _isnan(nf) else int(nf),
                         "permalink": permalink_url(sid, mid, lead),
@@ -1667,6 +1788,41 @@ _VARIABLE_ORDER = {v: i for i, v in enumerate(
     (HEADLINE_VARIABLE, *HOUR_VARIABLES, *SAMPLED_VARIABLES, *CLI_VARIABLES))}
 
 
+#: Everything a reader compares between two rows of the permanent-link table.  Two rows that are
+#: identical on all of it are the same numbers computed over the same days, printed twice.
+_ROW_SIGNATURE = ("n", "n_flagged", "mae", "mae_ci", "mae_debiased", "bias", "bias_ci", "rmse",
+                  "rmse_ci", "hit1f", "hit1f_ci", "hit2f", "hit3f", "skill", "skill_ci",
+                  "skill_vs", "skill_debiased", "n_debiased", "period", "low_n")
+
+
+def _merge_equal_windows(rows: list[dict]) -> list[dict]:
+    """Print one row where two windows cover exactly the same days.
+
+    While the record is shorter than a year, ``365d`` and ``all`` are the *same set of days*, so
+    the table repeats every number for them; the same happens to ``90d`` in the first three
+    months.  Rows arrive sorted by (variable, initialization, interpolation, window), so identical
+    neighbours are adjacent: they are collapsed into one row whose key names both windows.  The
+    moment the record outgrows a window the rows differ again and the merge stops happening, with
+    no threshold to maintain.
+    """
+    out: list[dict] = []
+    for r in rows:
+        prev = out[-1] if out else None
+        if (prev is not None
+                and prev["variable"] == r["variable"]
+                and prev["init_hour"] == r["init_hour"]
+                and prev["method"] == r["method"]
+                and all(prev[k] == r[k] for k in _ROW_SIGNATURE)):
+            prev["windows"].append(r["window"])
+            prev["window_label"] = " · ".join(prev["windows"])
+            continue
+        row = dict(r)
+        row["windows"] = [r["window"]]
+        row["window_label"] = r["window"]
+        out.append(row)
+    return out
+
+
 def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, series_idx,
                       month_idx, allday_idx, as_of_s, data_through) -> int:
     chart_variable = base_ctx.get("chart_variable", DEFAULT_VARIABLE)
@@ -1691,8 +1847,8 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
                          _v=grp["variable"].map(_VARIABLE_ORDER).fillna(99))
         all_rows = [_row_view(r, sid, mid, lead, model_idx) for _, r in
                     grp.sort_values(["_v", "variable", "init_hour", "method", "_w"]).iterrows()]
-        rows = [r for r in all_rows if not r["secondary"]]
-        secondary_rows = [r for r in all_rows if r["secondary"]]
+        rows = _merge_equal_windows([r for r in all_rows if not r["secondary"]])
+        secondary_rows = _merge_equal_windows([r for r in all_rows if r["secondary"]])
         pairs = _pair_views(pw_idx.get((sid, lead)), mid, model_idx)
         st = station_idx.get(sid)
         st_name = st.name if st else ("All stations (mean of daily station errors)"
@@ -1738,7 +1894,9 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
             availability=_availability(grp[(grp["window"] == "all")
                                            & (grp["variable"] == chart_variable)],
                                        model_idx)[0],
-            json_url=f"/api/v1/scores/{sid}/{mid}/{lead}.json",
+            # The per-card JSON is a fragment of the station's bundle: one file instead of the
+            # 1 800 that each repeated the envelope and the station's whole scores table.
+            json_url=f"/station/{sid}/cards.json#{mid}-{lead}",
             csv_url=f"/{base}/errors.csv",
             citation=citation(sid, mid, lead, as_of_s),
             citation_long=citation_long(sid, st_name, mid, lead, data_through, as_of_s),
@@ -1758,7 +1916,7 @@ def _write_permalink_csv(path: Path, sid: str, mid: str, lead: int, ser: dict | 
             if v is None:
                 continue
             lines.append(f"{sid},{mid},{lead},{DEFAULT_INIT},{DEFAULT_METHOD},"
-                         f"{variable},{d},{v:.4f}")
+                         f"{variable},{d},{v:.2f}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1871,27 +2029,34 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
     """Turn the raw completeness report into uptime bars and a headline state."""
     if not report:
         return {"model_bars": [], "truth_bars": [], "instant_bars": [], "overall": "unknown",
+                "last_run_human": "—", "n_pending": 0,
                 "overall_text": "No status report has been generated yet."}
     days = report.get("days", 0)
 
     def bar(rows, key_yes, key_part, label):
-        # A day the model was never expected to have — before it entered the record, or an
-        # initialization the upstream archive did not produce — is drawn as an empty slot and
-        # left out of the percentage entirely (review B8).
+        # A day the model was never expected to have — before it entered the record, an
+        # initialization the upstream archive did not produce, or one whose publication deadline
+        # has not passed yet — is drawn as an empty slot and left out of the percentage entirely
+        # (review B8; `not_due_yet` from castcheck.schedule).
         flags = []
         for d in rows:
-            if d.get("expected", True) is False:
+            if d.get("reason") == "not_due_yet":
+                flags.append("wait")
+            elif d.get("expected", True) is False:
                 flags.append("na")
             elif d.get(key_yes):
                 flags.append("yes")
             else:
                 flags.append("part" if d.get(key_part) else "no")
-        counted = [f for f in flags if f != "na"]
+        counted = [f for f in flags if f not in ("na", "wait")]
         pct = 100.0 * sum(1 for f in counted if f == "yes") / max(len(counted), 1)
         return {"svg": Markup(svg.availability_row(flags, label=label)),
                 "uptime": f"{pct:.1f}%" if counted else "—", "flags": flags,
-                "n_counted": len(counted), "n_na": len(flags) - len(counted)}
+                "n_counted": len(counted),
+                "n_wait": sum(1 for f in flags if f == "wait"),
+                "n_na": sum(1 for f in flags if f == "na")}
 
+    last_run_human = human_time(report.get("generated_at"))
     names = names or display_names()
     model_bars = []
     for m in report.get("models", []):
@@ -1910,12 +2075,21 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
                 f"{t['station_id']} observed-instant coverage, last {days} days")
         instant_bars.append({**t, **b})
 
-    if report.get("ok"):
+    # "Missing" means *due and absent*.  A 12Z run at 13 UTC, or a Los Angeles climate report at
+    # 06 UTC, has not been published yet by anyone and is not a fault of this pipeline; those are
+    # counted as pending, and the bar stays green while it says so (castcheck.schedule).
+    n_pending = int(report.get("n_pending", 0) or 0)
+    if report.get("ok") and n_pending:
+        overall = "ok"
+        text = (f"All due runs present — nothing that should exist yet is missing. "
+                f"{n_pending} item(s) for the current day are not due yet.")
+    elif report.get("ok"):
         overall, text = "ok", "All systems operational — nothing is missing for the current day."
     elif report.get("n_current_gaps", 0) > 0:
         overall = "bad"
-        text = (f"{report['n_current_gaps']} item(s) missing for the current day; "
-                f"{report.get('n_gaps', 0)} over the last {days} days.")
+        text = (f"{report['n_current_gaps']} due item(s) missing for the current day; "
+                f"{report.get('n_gaps', 0)} over the last {days} days"
+                + (f"; {n_pending} more are not due yet." if n_pending else "."))
     else:  # pragma: no cover - defensive
         overall, text = "warn", "Degraded."
 
@@ -1948,6 +2122,8 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
             "kpi_runs": "—" if kpi_runs is None else f"{kpi_runs:.1f}",
             "kpi_truth": "—" if kpi_truth is None else f"{kpi_truth:.1f}",
             "kpi_instants": "—" if kpi_instants is None else f"{kpi_instants:.1f}",
+            "n_pending": n_pending,
+            "last_run_human": last_run_human,
             "latest_init": latest[-1] if latest else "—"}
 
 
@@ -2009,23 +2185,31 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
     (d / "scores_latest.csv").unlink(missing_ok=True)
     with gzip.open(d / "scores_latest.csv.gz", "wt", encoding="utf-8", newline="") as f:
         if scores is not None and len(scores):
-            # 4 dp in °C is 0.0001 °C — far finer than anything measurable here, and it keeps the
-            # published CSV a third smaller than float64 repr would.
-            scores.round(4).to_csv(f, index=False)
+            # 3 dp in °C is 0.001 °C — the same precision the JSON API publishes, two orders of
+            # magnitude finer than the whole-°F truth, and it keeps the published CSV a third
+            # smaller than float64 repr would.
+            scores.round(3).to_csv(f, index=False)
         else:
             f.write(",".join(SCORE_COLUMNS) + "\n")
     add("scores_latest.csv.gz", "every published aggregate: station × model × init × lead × "
         "variable × method × window, with n, MAE, bias, RMSE, hit rates, skill and bootstrap "
         "intervals (values in °C).", len(scores) if scores is not None else 0)
 
-    with gzip.open(d / "pairwise_latest.csv.gz", "wt", encoding="utf-8", newline="") as f:
-        if pairwise is not None and len(pairwise):
-            pairwise.round(4).to_csv(f, index=False)
-        else:
-            f.write(",".join(PAIRWISE_COLUMNS) + "\n")
-    add("pairwise_latest.csv.gz", "paired model-vs-model MAE differences on common days, with the "
-        "bootstrap interval and the significance flag (°C).",
-        len(pairwise) if pairwise is not None else 0)
+    # The full pairwise table is 6 MB compressed and grows as the square of the model count; it
+    # is a bulk archive, not something a page needs, so it is published on Hugging Face and the
+    # slice the site actually shows (station_id=ALL) stays here as JSON at
+    # /api/v1/pairwise/latest.json.  Delete a copy left by an earlier build.
+    (d / "pairwise_latest.csv.gz").unlink(missing_ok=True)
+    (d / "pairwise_latest.csv").unlink(missing_ok=True)
+    items.append({
+        "name": "pairwise_latest.csv.gz", "href": f"{HF_FILES_URL}/pairwise", "external": True,
+        "what": "paired model-vs-model MAE differences on common days, with the bootstrap "
+                "interval, the bootstrap p-value and the Holm verdict (°C). Published on Hugging "
+                "Face: it grows as the square of the model count and nothing on this site reads "
+                "it. The station_id=ALL slice the leaderboards use is at "
+                "/api/v1/pairwise/latest.json.",
+        "size": "on Hugging Face",
+        "rows": len(pairwise) if pairwise is not None else 0})
 
     # One file per station, not one file for everything: the combined table reached 25 MB — the
     # size at which Cloudflare Pages refuses a file outright — as soon as the pooled t2 variable
@@ -2047,13 +2231,15 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
         e["climo_date"] = pd.to_datetime(e["climo_date"]).dt.date
         for sid, grp in e.groupby("station_id", observed=True):
             with gzip.open(err_dir / f"{sid}.csv.gz", "wt", encoding="utf-8", newline="") as f:
-                grp.round(4).to_csv(f, index=False)
+                # 2 dp in °C is 0.01 °C — a fiftieth of the whole-°F step the observations are
+                # reported in, and a quarter smaller on disk than the 4 dp this used to carry.
+                grp.round(2).to_csv(f, index=False)
             shards.append((str(sid), len(grp)))
     for sid, n in shards:
         add(f"daily_errors/{sid}.csv.gz",
             f"every scored value at {sid}: one row per model, initialization, lead day, method, "
             f"variable and climatological day (four rows a day for the pooled t2), with the "
-            f"forecast, the observation and the signed error (°C). Download all "
+            f"forecast, the observation and the signed error (°C, 2 dp). Download all "
             f"{len(shards)} to recompute anything.", n)
 
     st_lines = ["station_id,name,cli_pil,iem_id,tz,std_offset_h,lat,lon,elev_m,grid_elev_m,dz_m,"
@@ -2131,17 +2317,19 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
         ("scores/index.json", "the index of the sharded scores export: which stations, models, "
          "leads and views exist and where each shard is",
          api_written.get("scores/index.json", 1)),
-        ("scores/by-station/{station}.json", "every score for one station, one file per station "
-         "(the shards the index points at)",
-         api_written.get("scores/by-station/{station}.json", "—")),
+        ("/station/{station}/cards.json", "the shard the index points at: every score for one "
+         "station, plus one card per model and lead day (its pairwise table and daily error "
+         "series). /api/v1/scores/by-station/{station}.json points here",
+         api_written.get("station/{station}/cards.json", "—")),
         ("scores/leaderboard.json", "the station_id=ALL slice used by the front page",
          api_written.get("scores/leaderboard.json", "—")),
         ("leaderboard/{window}-{init}z-{method}-{variable}.json",
          "one pre-built file per leaderboard view (32 of them)",
          api_written.get("leaderboard/{view}.json", "—")),
-        ("scores/{station}/{model}/{lead}.json",
-         "one permanent-link card plus the last 90 days of daily errors",
-         api_written.get("scores/{station}/{model}/{lead}.json", "—")),
+        ("/station/{station}/cards.json#{model}-{lead}",
+         "one permanent-link card inside that bundle: its pairwise table and the last 90 days of "
+         "daily errors",
+         api_written.get("cards", "—")),
         ("pairwise/latest.json", "model-vs-model paired bootstrap (station_id=ALL)",
          api_written.get("pairwise/latest.json", len(pairwise))),
         ("stations.json", "station metadata", api_written.get("stations.json", "—")),
@@ -2287,7 +2475,8 @@ def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
             "avail_left": left, "avail_width": width,
             "spark_svg": Markup(svg.sparkline(
                 spark, label=f"{names[mid]} MAE by lead day "
-                             f"{SPARK_LEADS[0]} to {SPARK_LEADS[-1]}", width=112.0)),
+                             f"{SPARK_LEADS[0]} to {SPARK_LEADS[-1]}", width=112.0,
+                muted=n < MIN_N)),
             "has_spark": any(v is not None for v in spark),
             **_segment_note(allw),
         })

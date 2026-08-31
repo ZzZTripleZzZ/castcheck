@@ -11,14 +11,24 @@ uptime window the site draws) days:
    headline ``t2`` score is computed against, so a hole there silently shrinks the headline;
 4. what is the newest initialization we hold per model.
 
-Two kinds of day are **not** downtime and are excluded from the uptime denominator (review B8):
+Three kinds of day are **not** downtime and are excluded from the uptime denominator:
 
 * days before a model's own ``period_start`` — the first initialization CastCheck ever held for it.
-  A model that entered the record three weeks ago cannot have been "down" for the 69 days before;
+  A model that entered the record three weeks ago cannot have been "down" for the 69 days before
+  (review B8);
 * AIWP initializations that the upstream archive never produced.  The NOAA/CIRA 0.25° bucket
   publishes the GFS-initialized models on alternating cycles (00Z one day, 12Z the next), so the
   nominal 2 runs/day is not the upstream contract.  ``AiwpSource.available_inits`` is asked what
-  actually exists and the rest are marked ``not produced upstream``.
+  actually exists and the rest are marked ``not produced upstream``;
+* **runs and reports that are not due yet.**  A 12Z ECMWF run does not exist at 13 UTC, and the
+  first final CLI for a Los Angeles climatological day does not exist at 06 UTC — local midnight
+  there has not happened.  The deadlines come from :mod:`castcheck.schedule`, the same module the
+  fetcher plans from, so the status page can never call a run missing that ``fetch-latest`` has
+  quite correctly not asked for.  These days are drawn grey (``not_due_yet``) and are excluded from
+  both the gap list and the uptime denominator.
+
+``report["ok"]`` — and the red bar the site draws from it — therefore mean "everything **due** for
+the current day is present", which is what an operator wants to know at 07 UTC.
 
 ``exit_code()`` implements the CLI contract: **non-zero when something that should already exist for
 the current day is missing**, so that the scheduled workflow fails loudly instead of silently
@@ -32,7 +42,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
+from . import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__, schedule
 from .config import PUBLIC_DIR, ModelSpec, Station, load_models, load_stations
 
 __all__ = ["DEFAULT_DAYS", "EXIT_GAPS", "EXIT_OK", "MAX_LISTED_GAPS", "build", "exit_code",
@@ -101,11 +111,19 @@ def build(
     stations: list[Station] | None = None,
     models: list[ModelSpec] | None = None,
     upstream: bool = True,
+    now: datetime | None = None,
 ) -> dict:
-    """Build the completeness report.  Reads ``data/`` unless ``values``/``truth`` are supplied."""
+    """Build the completeness report.  Reads ``data/`` unless ``values``/``truth`` are supplied.
+
+    ``now`` is the instant every "is this due yet?" question is asked against; it defaults to the
+    real clock and is passed explicitly by the tests.
+    """
     stations = list(stations) if stations is not None else load_stations()
     models = list(models) if models is not None else load_models()
-    as_of_d = _as_date(as_of) if as_of is not None else datetime.now(UTC).date()
+    now = now or schedule.now_utc()
+    if now.tzinfo is None:  # pragma: no cover - defensive
+        now = now.replace(tzinfo=UTC)
+    as_of_d = _as_date(as_of) if as_of is not None else now.date()
     window = [as_of_d - timedelta(days=i) for i in range(days - 1, -1, -1)]
     station_ids = [s.id for s in stations]
 
@@ -127,8 +145,9 @@ def build(
         "schema_version": SCHEMA_VERSION,
         "methodology_version": METHODOLOGY_VERSION,
         "as_of": as_of_d.isoformat(),
-        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
-        "last_run": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "now": now.replace(microsecond=0).isoformat(),
+        "generated_at": now.replace(microsecond=0).isoformat(),
+        "last_run": now.replace(microsecond=0).isoformat(),
         "days": days,
         "dates": [d.isoformat() for d in window],
         "n_stations": len(stations),
@@ -195,17 +214,23 @@ def build(
                 n_complete = sum(1 for c in per_station if c >= exp)
                 n_any = sum(1 for c in per_station if c > 0)
                 complete = n_complete == len(station_ids) and len(station_ids) > 0
-                # Days that were never expected: before this model entered the record, or an
-                # initialization the upstream archive did not produce.
+                # Days that were never expected: before this model entered the record, an
+                # initialization the upstream archive did not produce, or a run whose publication
+                # deadline has not passed yet (schedule.run_due_at — the same arithmetic the
+                # fetcher plans from, so the two can never disagree).
                 reason = ""
+                due_at = schedule.run_due_at(m, init.to_pydatetime())
                 if start_init is not None and init < start_init:
                     reason = "before_start"
+                elif not complete and due_at > now:
+                    reason = "not_due_yet"
                 elif up is not None and init not in up and not complete:
                     reason = "not_produced_upstream"
                 expected = reason == ""
                 day_rows.append({
                     "date": d.isoformat(),
                     "init_time": init.isoformat(),
+                    "due_at": due_at.isoformat(),
                     "complete": bool(complete),
                     "expected": bool(expected),
                     "reason": reason,
@@ -227,6 +252,7 @@ def build(
                         report["current_gaps"].append(gap)
             n_expected = sum(1 for r in day_rows if r["expected"])
             report["models"].append({
+                "n_not_due_yet": sum(1 for r in day_rows if r["reason"] == "not_due_yet"),
                 "model_id": m.model_id,
                 "family": m.family,
                 "init_hour": int(init_hour),
@@ -257,22 +283,35 @@ def build(
             if (st, d) not in final:
                 partial.add((st, d))
 
-    truth_deadline = as_of_d - timedelta(days=1)  # yesterday's CLI is the newest that can exist
+    # The newest day whose report *could* exist at all.  Whether it actually should exist yet is a
+    # per-station question — the CLI is issued after the station's own local midnight — and is
+    # asked below with ``schedule.truth_is_due``.
+    truth_deadline = as_of_d - timedelta(days=1)
     for s in stations:
         day_rows = []
+        latest_due: date | None = None
         for d in window:
             has = (s.id, d) in final
+            due = schedule.truth_is_due(s, d, now)
+            if due:
+                latest_due = d
             day_rows.append({"date": d.isoformat(), "cli_final": bool(has),
-                             "any_source": bool(has or (s.id, d) in partial)})
-            if not has and d <= truth_deadline:
+                             "any_source": bool(has or (s.id, d) in partial),
+                             "expected": bool(due),
+                             "reason": "" if due else "not_due_yet",
+                             "due_at": schedule.truth_due_at(s, d).isoformat()})
+            if not has and due:
                 gap = {"type": "truth", "station_id": s.id, "date": d.isoformat(),
                        "detail": "no first-final CLI with both tmax and tmin"}
                 report["gaps"].append(gap)
-                if d == truth_deadline:
+                if d >= truth_deadline:
                     report["current_gaps"].append(gap)
         report["truth"].append({
             "station_id": s.id, "name": s.name, "cli_pil": s.cli_pil, "days": day_rows,
-            "n_missing": sum(1 for r in day_rows if not r["cli_final"] and r["date"] <= truth_deadline.isoformat()),
+            "latest_due": latest_due.isoformat() if latest_due is not None else None,
+            "n_not_due_yet": sum(1 for r in day_rows if not r["expected"]),
+            "n_expected": sum(1 for r in day_rows if r["expected"]),
+            "n_missing": sum(1 for r in day_rows if r["expected"] and not r["cli_final"]),
         })
 
     # ---- truth_instant --------------------------------------------------------------------
@@ -299,20 +338,20 @@ def build(
         day_rows = []
         for d in window:
             n = inst_counts.get((st_obj.id, d), 0)
-            expected = d <= truth_deadline and started is not None and d >= started
+            due = schedule.instant_is_due(d, now)
+            expected = due and started is not None and d >= started
             day_rows.append({
                 "date": d.isoformat(), "n_instants": n,
                 "complete": n >= len(INSTANT_HOURS),
                 "any_source": n > 0,
                 "expected": bool(expected),
-                "reason": "" if expected else ("before_start" if d <= truth_deadline
-                                               else "not_due_yet"),
+                "reason": "" if expected else ("not_due_yet" if not due else "before_start"),
             })
             if expected and n < len(INSTANT_HOURS):
                 gap = {"type": "truth_instant", "station_id": st_obj.id, "date": d.isoformat(),
                        "detail": f"{n}/{len(INSTANT_HOURS)} synoptic instants observed"}
                 report["gaps"].append(gap)
-                if d == truth_deadline:
+                if d >= truth_deadline:
                     report["current_gaps"].append(gap)
         report["truth_instant"].append({
             "station_id": st_obj.id, "name": st_obj.name,
@@ -320,6 +359,7 @@ def build(
             "period_start": started.isoformat() if started is not None else None,
             "days": day_rows,
             "n_expected": sum(1 for r in day_rows if r["expected"]),
+            "n_not_due_yet": sum(1 for r in day_rows if r["reason"] == "not_due_yet"),
             "n_missing": sum(1 for r in day_rows if r["expected"] and not r["complete"]),
         })
 
@@ -336,11 +376,28 @@ def build(
     report["gaps_today"] = report["current_gaps"]  # alias used by the CLI
     report["ok"] = report["n_current_gaps"] == 0
 
+    # How much of the current day is simply not due yet.  The site says "all due runs present"
+    # rather than "all systems operational" while this is non-zero, so a reader at 07 UTC is not
+    # told that a 12Z run they cannot possibly have is fine.
+    pending = [
+        {"type": "model_run", "model_id": m["model_id"], "init_hour": m["init_hour"],
+         "date": d["date"], "due_at": d.get("due_at")}
+        for m in report["models"] for d in m["days"]
+        if d["date"] == as_of_d.isoformat() and d["reason"] == "not_due_yet"
+    ] + [
+        {"type": "truth", "station_id": t["station_id"], "date": d["date"],
+         "due_at": d.get("due_at")}
+        for t in report["truth"] for d in t["days"]
+        if d["date"] >= truth_deadline.isoformat() and d["reason"] == "not_due_yet"
+    ]
+    report["pending"] = pending[:MAX_LISTED_GAPS]
+    report["n_pending"] = len(pending)
+
     # GitHub-Status-style headline: share of model-run slots and truth days that are complete.
     # The denominator is the *expected* slots only — days before a model's period_start and
     # initializations the upstream archive never produced are not downtime (review B8).
     slots = [d for m in report["models"] for d in m["days"] if d["expected"]]
-    tdays = [d for t in report["truth"] for d in t["days"]]
+    tdays = [d for t in report["truth"] for d in t["days"] if d["expected"]]
     idays = [d for t in report["truth_instant"] for d in t["days"] if d["expected"]]
     report["uptime"] = {
         "model_runs": round(100.0 * sum(1 for d in slots if d["complete"]) / len(slots), 2)
@@ -350,8 +407,8 @@ def build(
         "truth_instant": round(100.0 * sum(1 for d in idays if d["complete"]) / len(idays), 2)
         if idays else None,
         "window_days": days,
-        "basis": "expected slots only: from each model's period_start, upstream-produced "
-                 "initializations only",
+        "basis": "due slots only: from each model's period_start, upstream-produced "
+                 "initializations only, and only what is past its publication deadline",
     }
     return report
 

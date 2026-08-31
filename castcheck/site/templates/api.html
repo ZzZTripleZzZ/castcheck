@@ -17,7 +17,7 @@
     <div><dt>Schema</dt><dd>v{{ schema_version }}</dd></div>
     <div><dt>Methodology</dt><dd>v{{ methodology_version }}</dd></div>
     <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
   </dl>
 </section>
 
@@ -33,15 +33,20 @@
 <td>the index of the sharded scores export: the shard of every station, the column list, and which
 stations, models, variables, windows and leads exist. <code>scores/latest.json</code> serves the
 same document — before methodology v0.3 it was the whole table in one 21 MB file.</td></tr>
-<tr><td><a href="/api/v1/scores/by-station/ALL.json"><code>scores/by-station/{station}.json</code></a></td>
-<td>every published aggregate for one station, compact <code>{columns, rows}</code> encoding with
-<code>station_id</code> lifted into the envelope.</td></tr>
+<tr><td><a href="/station/ALL/cards.json"><code>/station/{station}/cards.json</code></a></td>
+<td>the per-station shard: every published aggregate for that station under <code>scores</code>,
+compact <code>{columns, rows}</code> encoding with <code>station_id</code> lifted into the
+envelope, plus one entry in <code>cards</code> per model and lead day.
+<a href="/api/v1/scores/by-station/ALL.json"><code>scores/by-station/{station}.json</code></a>
+resolves to a pointer at this file.</td></tr>
 <tr><td><a href="/api/v1/scores/leaderboard.json"><code>scores/leaderboard.json</code></a></td>
 <td>the <code>station_id=ALL</code> slice only.</td></tr>
 <tr><td><a href="/api/v1/leaderboard/90d-00z-bilinear-t2.json"><code>leaderboard/{window}-{init}z-{method}-{variable}.json</code></a></td>
 <td>one pre-built file per site view, ranked, with a <code>permalink</code> per row.</td></tr>
-<tr><td><code>scores/{station}/{model}/{lead}.json</code></td>
-<td>one permanent-link card: every window/init/method/variable, the pairwise table and the daily error series.</td></tr>
+<tr><td><code>/station/{station}/cards.json#{model}-{lead}</code></td>
+<td>one permanent-link card inside that bundle: its pairwise comparisons and its daily error
+series. The card's scores are the rows of <code>scores</code> whose <code>model_id</code> and
+<code>lead_day</code> match; they are published once per station rather than once per card.</td></tr>
 <tr><td><a href="/api/v1/pairwise/latest.json"><code>pairwise/latest.json</code></a></td>
 <td>paired model-vs-model MAE differences (<code>station_id=ALL</code>).</td></tr>
 <tr><td><a href="/api/v1/stations.json"><code>stations.json</code></a></td><td>station metadata.</td></tr>
@@ -73,17 +78,24 @@ import pandas as pd
 
 BASE = "{{ site_url }}/api/v1"
 
-def table(path):
-    """Read a compact {columns, rows} endpoint into a DataFrame."""
-    with urllib.request.urlopen(f"{BASE}/{path}") as r:
-        payload = json.load(r)
-    df = pd.DataFrame(payload["rows"], columns=payload["columns"])
+def read(url):
+    with urllib.request.urlopen(url) as r:
+        return json.load(r)
+
+def table(payload, block=None):
+    """A compact {columns, rows} document (or one block of it) as a DataFrame."""
+    t = payload if block is None else payload[block]
+    df = pd.DataFrame(t["rows"], columns=t["columns"])
     df.attrs.update({k: payload[k] for k in
                      ("generated_at", "data_through", "units", "method", "truth")})
     return df
 
-# the scores table is sharded: one file per station, listed in scores/index.json
-scores = table("scores/by-station/ALL.json")
+# the scores table is sharded: one bundle per station, listed in scores/index.json.
+# Its label columns are dictionary-encoded, so decode them once:
+bundle = read("{{ site_url }}/station/ALL/cards.json")
+scores = table(bundle, "scores")
+for col, values in bundle["scores"].get("dictionaries", {}).items():
+    scores[col] = scores[col].map(dict(enumerate(values)))
 best = (scores.query("window == '90d' and init_hour == 0 and method == 'bilinear' "
                      "and variable == 't2' and lead_day == 1 and n >= 30")
               .sort_values("mae"))

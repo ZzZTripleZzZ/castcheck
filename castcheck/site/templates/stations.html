@@ -18,8 +18,8 @@
     <div><dt>Window</dt><dd>{{ window_label }}</dd></div>
     <div><dt>Init</dt><dd>{{ init_hour }}Z</dd></div>
     <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-    <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
-    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+    <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
   </dl>
 </section>
 

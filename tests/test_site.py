@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
+from pathlib import Path
 from xml.etree import ElementTree
 
 import pandas as pd
@@ -66,6 +68,12 @@ MODEL_OBJS = [
 ]
 
 
+#: A fixed "now" for every status report in this module.  ``status.build`` asks
+#: ``castcheck.schedule`` whether each run is *due*, so a report built against the real clock
+#: would change its answers as the day goes on.
+NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+
+
 def with_v03_columns(scores, pairwise):
     """The v0.3 tables as ``verify.score`` produces them (kept as a seam for the degrade test)."""
     return scores, pairwise
@@ -86,7 +94,8 @@ def built(dataset, tmp_path_factory):
     daily, truth, instant, scores, pairwise = dataset
     out = tmp_path_factory.mktemp("site")
     report = status_mod.build(as_of="2026-08-30", values=pd.DataFrame(), truth=truth,
-                              stations=STATION_OBJS, models=MODEL_OBJS, upstream=False)
+                              stations=STATION_OBJS, models=MODEL_OBJS, upstream=False,
+                              now=NOW)
     written = export_api(scores, pairwise, STATION_OBJS, MODEL_OBJS, out=out / "api" / "v1",
                          daily=daily, truth=truth, instant=instant, status=report)
     counts = build_site(as_of="2026-08-29", out=out, scores=scores, pairwise=pairwise,
@@ -106,7 +115,9 @@ def test_api_endpoints_exist(built):
         assert (api / rel).exists(), rel
     latest = json.loads((api / "scores" / "index.json").read_text())
     assert latest["methodology_version"] == METHODOLOGY_VERSION
-    assert "station_id" in latest["columns"] and "mae_ci_low" in latest["columns"]
+    # station_id is the shard key, so it is in the envelope, not in the column list
+    assert "station_id" not in latest["columns"] and "mae_ci_low" in latest["columns"]
+    assert latest["permalink_template"].endswith("/model/{model_id}/lead/{lead_day}/")
     # latest.json is the same index: the whole table in one file passed 20 MB
     assert json.loads((api / "scores" / "latest.json").read_text())["shards"] == latest["shards"]
     board = json.loads((api / "scores" / "leaderboard.json").read_text())
@@ -120,32 +131,87 @@ def test_scores_are_sharded_by_station_with_an_index(built):
     api = out / "api" / "v1"
     index = json.loads((api / "scores" / "index.json").read_text())
     assert index["n_rows"] > 0
-    assert len(index["shards"]) == written["scores/by-station/{station}.json"]
+    assert len(index["shards"]) == written["station/{station}/cards.json"]
     assert set(index["available"]["variables"]) >= {HEADLINE_VARIABLE, *SAMPLED_VARIABLES}
     total = 0
     for shard in index["shards"]:
-        path = api / shard["path"]
+        path = out / shard["path"]
         assert path.exists(), shard["path"]
         payload = json.loads(path.read_text())
         assert payload["station_id"] == shard["station_id"]
         # station_id is in the envelope, not repeated on every row
-        assert "station_id" not in payload["columns"]
-        assert len(payload["rows"]) == shard["rows"]
-        total += len(payload["rows"])
+        assert "station_id" not in payload["scores"]["columns"]
+        assert len(payload["scores"]["rows"]) == shard["rows"]
+        total += len(payload["scores"]["rows"])
         assert path.stat().st_size < 25 * 1024 * 1024
+        # the historical shard path still resolves and says where the rows went
+        stub = json.loads((api / "scores" / "by-station"
+                           / f"{shard['station_id']}.json").read_text())
+        assert stub["moved_to"] == shard["href"] and stub["n_rows"] == shard["rows"]
     assert total == index["n_rows"]
+
+
+def test_the_card_bundle_is_one_file_per_station(built):
+    """1 848 card files repeated the envelope, the units block and the whole scores table."""
+    out, _, written, _ = built
+    bundle = json.loads((out / "station" / "KAAA" / "cards.json").read_text())
+    assert bundle["kind"] == "station-cards" and bundle["station_id"] == "KAAA"
+    assert bundle["n_scores"] == len(bundle["scores"]["rows"]) > 0
+    by_id = {c["id"]: c for c in bundle["cards"]}
+    card = by_id["warm1-1"]
+    assert card["permalink"] == "/station/KAAA/model/warm1/lead/1/"
+    assert len(card["pairwise"]["rows"]) > 0
+    # the constants of the card's pairwise slice are in pairwise_scope, not on every row
+    assert not ({"station_id", "lead_day", "window", "init_hour", "method"}
+                & set(card["pairwise"]["columns"]))
+    assert bundle["pairwise_scope"]["window"] and bundle["pairwise_scope"]["method"]
+    # the eleven variables share one date axis instead of repeating it eleven times
+    assert card["series"], "expected a daily error series"
+    assert card["series_dates"]
+    assert all("dates" not in e for e in card["series"])
+    assert len(card["series"][0]["err_c"]) == len(card["series_dates"])
+    # and the page links to its own card by fragment
+    html = (out / "station" / "KAAA" / "model" / "warm1" / "lead" / "1"
+            / "index.html").read_text()
+    assert "/station/KAAA/cards.json#warm1-1" in html
+    # the per-card files are gone
+    assert not (out / "api" / "v1" / "scores" / "KAAA").exists()
+
+
+def test_the_bundle_dictionary_encodes_its_label_columns(built):
+    """Eight short labels repeated on every row were 39 % of the file."""
+    out, _, _, _ = built
+    scores = json.loads((out / "station" / "KAAA" / "cards.json").read_text())["scores"]
+    dicts = scores["dictionaries"]
+    assert set(dicts) >= {"model_id", "variable", "method", "window"}
+    for col, values in dicts.items():
+        i = scores["columns"].index(col)
+        codes = {r[i] for r in scores["rows"]}
+        assert all(isinstance(c, int) for c in codes)
+        assert codes <= set(range(len(values)))
+    # and it round-trips to the values the plain endpoints publish
+    i = scores["columns"].index("variable")
+    decoded = {dicts["variable"][r[i]] for r in scores["rows"]}
+    assert HEADLINE_VARIABLE in decoded
 
 
 def test_permalink_json_has_scores_pairwise_and_series(built):
     out, _, _, _ = built
-    card = json.loads((out / "api" / "v1" / "scores" / "KAAA" / "warm1" / "1.json").read_text())
-    assert card["station_id"] == "KAAA" and card["model_id"] == "warm1" and card["lead_day"] == 1
+    bundle = json.loads((out / "station" / "KAAA" / "cards.json").read_text())
+    assert bundle["station_id"] == "KAAA"
+    card = next(c for c in bundle["cards"] if c["id"] == "warm1-1")
+    assert card["model_id"] == "warm1" and card["lead_day"] == 1
     assert card["permalink"] == "/station/KAAA/model/warm1/lead/1/"
-    assert len(card["scores"]["rows"]) > 0
+    cols = bundle["scores"]["columns"]
+    mi, li = cols.index("model_id"), cols.index("lead_day")
+    vocab = bundle["scores"]["dictionaries"]["model_id"]
+    assert [r for r in bundle["scores"]["rows"]
+            if vocab[r[mi]] == "warm1" and r[li] == 1]
     assert len(card["pairwise"]["rows"]) > 0
     assert card["series"], "expected a daily error series"
-    s = card["series"][0]
-    assert len(s["dates"]) == len(s["err_c"]) <= card["series_days"]
+    e = card["series"][0]
+    dates = e.get("dates") or card["series_dates"]
+    assert len(dates) == len(e["err_c"]) <= bundle["series_days"]
 
 
 def test_every_response_carries_the_documented_envelope(built):
@@ -165,11 +231,13 @@ def test_every_response_carries_the_documented_envelope(built):
 
 
 def test_every_score_row_carries_a_permalink(built):
+    """The leaderboard slices, which are what a casual consumer reads, still carry a literal
+    permalink; the bulk per-station table carries model_id + lead_day and the template."""
     out, _, _, _ = built
-    shard = json.loads(
-        (out / "api" / "v1" / "scores" / "by-station" / "KAAA.json").read_text())
+    shard = json.loads((out / "api" / "v1" / "scores" / "leaderboard.json").read_text())
     i = shard["columns"].index("permalink")
-    assert all(r[i].startswith("/station/KAAA/") and r[i].endswith("/") for r in shard["rows"][:50])
+    assert all(r[i].startswith(f"/station/{ALL_STATIONS}/") and r[i].endswith("/")
+               for r in shard["rows"][:50])
     board = json.loads(
         (out / "api" / "v1" / "leaderboard" / "90d-00z-bilinear-t2.json").read_text())
     assert board["view"] == {"window": "90d", "init_hour": 0, "method": "bilinear",
@@ -197,7 +265,7 @@ def test_openapi_document_describes_the_endpoints(built):
     assert doc == openapi_document()
     for path in ("/scores/index.json", "/scores/latest.json",
                  "/scores/by-station/{station}.json", "/leaderboard/{view}.json",
-                 "/scores/{station}/{model}/{lead}.json", "/status.json"):
+                 "/station/{station}/cards.json", "/status.json"):
         assert path in doc["paths"], path
     assert doc["servers"][0]["url"].endswith("/api/v1")
 
@@ -371,7 +439,7 @@ def test_permalink_page_is_the_whole_score_card(built):
     assert f"{SITE_URL}/station/KAAA/model/warm1/lead/1/" in short
     assert f"methodology v{METHODOLOGY_VERSION}" in short
     assert citation_long("KAAA", "Alpha Regional", "warm1", 1, "2026-08-29", "2026-08-29")[:60] in html
-    assert "/api/v1/scores/KAAA/warm1/1.json" in html
+    assert "/station/KAAA/cards.json#warm1-1" in html
     assert 'href="/station/KAAA/model/warm1/lead/1/errors.csv"' in html
     assert "Skill" in html and "Skill, debiased" in text_of(html)
     assert "Short" in text_of(html) and "Long" in text_of(html)  # the two citation forms
@@ -737,14 +805,168 @@ def test_status_expected_steps_exclude_the_analysis_step():
                       inits=(0,), step_h=6, max_h=12, native_extremes=())
     report = status_mod.build(as_of="2026-08-30", days=1, values=values,
                               truth=pd.DataFrame(), stations=STATION_OBJS[:1], models=[model],
-                              upstream=False)
+                              upstream=False, now=NOW)
     assert report["models"][0]["expected_steps"] == 2
     assert report["models"][0]["days"][0]["complete"] is True
     short = values[values["lead_h"] != 12]
     report = status_mod.build(as_of="2026-08-30", days=1, values=short,
                               truth=pd.DataFrame(), stations=STATION_OBJS[:1], models=[model],
-                              upstream=False)
+                              upstream=False, now=NOW)
     assert report["models"][0]["days"][0]["complete"] is False
+
+
+def test_minify_html_drops_indentation_without_changing_the_rendering():
+    """The generator's indentation was a tenth of the bytes of ~4 000 files."""
+    from castcheck.site.build import minify_html
+
+    out = minify_html(
+        "<div>\n  <p>hello\n     world</p>\n  <ul>\n    <li><a href=\"/a\">A</a>\n"
+        "    <a href=\"/b\">B</a></li>\n  </ul>\n  <table><tbody>\n    <tr>\n"
+        "      <td>1</td>\n      <td>2</td>\n    </tr>\n  </tbody></table>\n</div>\n"
+        "<pre>\n  keep   me\n</pre>")
+    # between block-level tags the whitespace is dropped …
+    assert "<div><p>hello world</p><ul><li>" in out
+    assert "<tr><td>1</td><td>2</td></tr>" in out
+    # … but between two inline elements it is the space between two words
+    assert '<a href="/a">A</a> <a href="/b">B</a>' in out
+    # and preformatted text is untouched
+    assert "<pre>\n  keep   me\n</pre>" in out
+
+
+def test_no_page_scrolls_sideways_on_a_phone():
+    """The visually-hidden spans inside a wide table are absolutely positioned at their static
+    position — a metre off the right edge of the scroller. Without a positioned ancestor their
+    containing block is the page, and the whole document scrolled sideways at 375 px."""
+    css = (Path(__file__).resolve().parents[1] / "castcheck" / "site" / "assets"
+           / "site.css").read_text(encoding="utf-8")
+    rule = next(line for line in css.splitlines() if line.startswith(".table-wrap {"))
+    assert "overflow-x: auto" in rule and "position: relative" in rule
+
+
+def test_skill_is_blank_below_the_minimum_common_sample():
+    """A ratio of two means over a handful of shared days is not a number worth printing."""
+    from castcheck.api import SKILL_MIN_COMMON
+    from castcheck.site.build import _row_view
+
+    base = {"mae": 2.0, "mae_ci_low": None, "mae_ci_high": None, "bias": 0.5,
+            "bias_ci_low": None, "bias_ci_high": None, "rmse": 2.5, "hit1f": 0.3, "hit2f": 0.5,
+            "hit3f": 0.7, "skill_persistence": 0.42, "skill_persistence_debiased": 0.4,
+            "skill_ci_low": 0.1, "skill_ci_high": 0.7, "n": 40, "variable": "t2",
+            "init_hour": 0, "method": "bilinear", "window": "90d",
+            "period_start": "2026-01-01", "period_end": "2026-02-01",
+            "mae_persistence_common": 3.0}
+    plenty = _row_view({**base, "n_common": SKILL_MIN_COMMON}, "KAAA", "gfs", 1)
+    assert plenty["skill_reliable"] is True and plenty["skill"] != "—"
+    assert plenty["skill_f"] is not None
+
+    scarce = _row_view({**base, "n_common": SKILL_MIN_COMMON - 1}, "KAAA", "gfs", 1)
+    assert scarce["skill_reliable"] is False
+    assert scarce["skill"] == "—" and scarce["skill_ci"] == "—"
+    assert scarce["skill_debiased"] == "—" and scarce["skill_f"] is None
+    # the sample size stays visible, so the reader sees why
+    assert f"n={SKILL_MIN_COMMON - 1}" in scarce["skill_vs"]
+
+
+def test_timestamps_are_human_with_a_machine_readable_attribute(built):
+    from castcheck.site.build import human_time
+
+    assert human_time("2026-08-31T05:46:12+00:00") == "2026-08-31 05:46 UTC"
+    assert human_time(None) == "—"
+    out, _, _, _ = built
+    html = (out / "index.html").read_text()
+    assert re.search(r'<time datetime="20[^"]+">\d{4}-\d\d-\d\d \d\d:\d\d UTC</time>', html)
+    assert "last build <time datetime=" in html
+
+
+def test_status_marks_a_run_that_is_not_due_yet_instead_of_missing():
+    """A 12Z ECMWF run does not exist at 13 UTC; the status page must not call that a gap."""
+    model = ModelSpec(model_id="m", family="m", source="ecmwf", product="oper", init_field=None,
+                      inits=(0, 12), step_h=6, max_h=12, native_extremes=())
+    values = pd.DataFrame([
+        {"model_id": "m", "station_id": "KAAA", "init_time": pd.Timestamp("2026-08-30", tz="UTC"),
+         "valid_time": pd.Timestamp("2026-08-30", tz="UTC") + pd.Timedelta(hours=h),
+         "lead_h": h, "variable": "t2", "value_c": 1.0, "missing_reason": "", "method": "bilinear"}
+        for h in (6, 12)
+    ])
+    # 13:00 UTC: the 00Z run is eight hours old and complete, the 12Z run is one hour old.
+    report = status_mod.build(as_of="2026-08-30", days=1, values=values, truth=pd.DataFrame(),
+                              stations=STATION_OBJS[:1], models=[model], upstream=False,
+                              now=datetime(2026, 8, 30, 13, 0, tzinfo=UTC))
+    by_init = {m["init_hour"]: m for m in report["models"]}
+    assert by_init[0]["days"][0]["complete"] is True
+    late = by_init[12]["days"][0]
+    assert late["complete"] is False
+    assert late["expected"] is False and late["reason"] == "not_due_yet"
+    assert late["due_at"] == "2026-08-30T20:00:00+00:00"  # 12Z + 8 h (ECMWF)
+    assert by_init[12]["n_not_due_yet"] == 1
+    # not a gap, so the CLI stays green, and the page says so rather than "34 items missing"
+    assert report["n_current_gaps"] == 0 and report["ok"] is True
+    assert any(p["type"] == "model_run" and p["init_hour"] == 12
+               for p in report["pending"])
+    assert status_mod.exit_code(report) == status_mod.EXIT_OK
+    assert report["uptime"]["model_runs"] == 100.0
+
+    # eight hours later the same absence *is* a gap
+    later = status_mod.build(as_of="2026-08-30", days=1, values=values, truth=pd.DataFrame(),
+                             stations=STATION_OBJS[:1], models=[model], upstream=False,
+                             now=datetime(2026, 8, 30, 21, 0, tzinfo=UTC))
+    assert later["n_current_gaps"] == 1 and later["ok"] is False
+    assert status_mod.exit_code(later) == status_mod.EXIT_GAPS
+
+
+def test_status_truth_deadline_is_per_station_local_midnight():
+    """Yesterday's CLI exists in New York at 06 UTC and cannot exist yet in Chicago."""
+    east = Station(id="KEEE", name="East", cli_pil="CLIEEE", tz="America/New_York",
+                   std_offset_h=-5, lat=40.0, lon=-74.0, elev_m=10.0)
+    west = Station(id="KWWW", name="West", cli_pil="CLIWWW", tz="America/Los_Angeles",
+                   std_offset_h=-8, lat=34.0, lon=-118.0, elev_m=100.0)
+    # 2026-08-30 10:00 UTC = 05:00 EST (four hours past midnight EST, so the report is due)
+    # and 02:00 PST (two hours past midnight PST, so it is not).
+    now = datetime(2026, 8, 30, 10, 0, tzinfo=UTC)
+    report = status_mod.build(as_of="2026-08-30", days=2, values=pd.DataFrame(),
+                              truth=pd.DataFrame(), truth_instant=pd.DataFrame(),
+                              stations=[east, west], models=[], upstream=False, now=now)
+    rows = {t["station_id"]: {d["date"]: d for d in t["days"]} for t in report["truth"]}
+    assert rows["KEEE"]["2026-08-29"]["expected"] is True
+    assert rows["KWWW"]["2026-08-29"]["expected"] is False
+    assert rows["KWWW"]["2026-08-29"]["reason"] == "not_due_yet"
+    # 2026-08-29 + 1 day at 08:00 UTC (00:00 PST) + 4 h
+    assert rows["KWWW"]["2026-08-29"]["due_at"] == "2026-08-30T12:00:00+00:00"
+    gaps = {(g["station_id"], g["date"]) for g in report["gaps"] if g["type"] == "truth"}
+    assert ("KEEE", "2026-08-29") in gaps and ("KWWW", "2026-08-29") not in gaps
+
+
+def test_status_page_says_all_due_runs_present_when_nothing_is_late(tmp_path):
+    """The red "N item(s) missing" bar must not fire on runs that are merely not out yet."""
+    from castcheck.site.build import _status_view
+
+    report = {"days": 1, "ok": True, "n_current_gaps": 0, "n_gaps": 0, "n_pending": 3,
+              "models": [], "truth": [], "truth_instant": [], "dates": ["2026-08-30"]}
+    view = _status_view(report, names={})
+    assert view["overall"] == "ok"
+    assert "All due runs present" in view["overall_text"]
+    assert "3 item(s) for the current day are not due yet" in view["overall_text"]
+    assert _status_view({**report, "n_pending": 0}, names={})["overall_text"].startswith(
+        "All systems operational")
+
+
+def test_schedule_is_the_single_source_of_the_availability_delays():
+    """cli and status must read the same numbers or the page contradicts the fetcher."""
+    from castcheck import cli as cli_mod
+    from castcheck import schedule
+
+    assert cli_mod.AVAILABILITY_DELAY_H is schedule.AVAILABILITY_DELAY_H
+    assert cli_mod.AIWP_DELAY_H_BY_INIT_FIELD is schedule.AIWP_DELAY_H_BY_INIT_FIELD
+    aiwp_ifs = ModelSpec(model_id="a", family="a", source="aiwp", product="p", init_field="IFS",
+                         inits=(0,), step_h=6, max_h=12, native_extremes=())
+    aiwp_gfs = ModelSpec(model_id="b", family="b", source="aiwp", product="p", init_field="GFS",
+                         inits=(0,), step_h=6, max_h=12, native_extremes=())
+    assert cli_mod.availability_delay_h(aiwp_ifs) == 9.5
+    assert cli_mod.availability_delay_h(aiwp_gfs) == 6.0
+    init = datetime(2026, 8, 30, 0, 0, tzinfo=UTC)
+    assert schedule.run_due_at(aiwp_gfs, init) == datetime(2026, 8, 30, 6, 0, tzinfo=UTC)
+    assert schedule.run_is_due(aiwp_gfs, init, datetime(2026, 8, 30, 5, 0, tzinfo=UTC)) is False
+    assert schedule.run_is_due(aiwp_gfs, init, datetime(2026, 8, 30, 6, 0, tzinfo=UTC)) is True
 
 
 def test_status_reports_observed_instant_coverage():
@@ -762,7 +984,8 @@ def test_status_reports_observed_instant_coverage():
     ])
     report = status_mod.build(as_of="2026-08-30", days=2, values=values, truth=pd.DataFrame(),
                               truth_instant=ti, stations=STATION_OBJS[:1], models=MODEL_OBJS[:1],
-                              upstream=False)
+                              upstream=False,
+                              now=datetime(2026, 8, 30, 12, 0, tzinfo=UTC))
     row = report["truth_instant"][0]
     assert row["station_id"] == "KAAA" and row["period_start"] == "2026-08-29"
     day = next(d for d in row["days"] if d["date"] == "2026-08-29")
@@ -914,8 +1137,10 @@ def test_the_pages_are_complete_without_javascript(built):
 def test_the_permalink_collapses_the_view_key_and_marks_the_current_row(built):
     out, _, _, _ = built
     html = (out / "station" / "KAAA" / "model" / "warm1" / "lead" / "1" / "index.html").read_text()
-    # window · init · method as one monospace key instead of four columns
-    assert re.search(r'class="keycell">\s*90d · \d\dZ · \w+', html)
+    # window · init · method as one monospace key instead of four columns.  The compact `k`
+    # class is the permanent-link table's spelling of `keycell` (same rendering, a third of the
+    # bytes across ~1800 pages), and windows covering the same days share a row.
+    assert re.search(r'class=k>[^<]*90d[^<]*· \d\dZ · \w+', html)
     assert 'class="is-current"' in html and "this view" in html
     assert 'class="rowgroup"' in html          # grouped by variable
     assert 'class="chart-pair"' in html        # series and histogram side by side

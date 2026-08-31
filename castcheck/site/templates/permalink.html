@@ -21,7 +21,7 @@
     <div><dt>Model</dt><dd>{{ model_id }}</dd></div>
     <div><dt>Lead</dt><dd>day {{ lead }}</dd></div>
     <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-    <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
     <div><dt>Methodology</dt><dd>v{{ methodology_version }}</dd></div>
   </dl>
   <ul class="downloads" style="margin-top:var(--sp-4)">
@@ -38,7 +38,9 @@
     <p class="panel__sub">All four windows × both initializations × both interpolations × every
     variable. Rows are grouped by variable and the specification is collapsed into one monospace
     key (<span class="mono">window · init · method</span>) so the eye travels straight to the
-    numbers. The row matching the default view is highlighted. Errors are computed in °C and shown
+    numbers. Two windows that cover exactly the same days — while the record is shorter than a
+    year, <span class="mono">365d</span> and <span class="mono">all</span> are the same set —
+    share one row whose key names both, rather than printing the same numbers twice. The row matching the default view is highlighted. Errors are computed in °C and shown
     in °F; CI is a 95 % moving-block bootstrap interval on this group's own days, and reads
     <strong>—</strong> when it could not be computed (fewer than {{ ci_min_n }} scored days or
     fewer than {{ ci_min_blocks }} blocks). The ±1 °F interval is a Wilson score interval, not a
@@ -72,30 +74,26 @@
       <tbody>
 {% for r in rows %}
 {% if loop.changed(r.variable) %}
-      <tr class="rowgroup"><th scope="colgroup" colspan="12">{{ r.variable_label }}
-      <span class="mono">{{ r.variable }}</span> ·
-      {{ rows | selectattr('variable', 'equalto', r.variable) | list | length }} rows</th></tr>
+<tr class="rowgroup"><th scope="colgroup" colspan="12">{{ r.variable_label }} <span class="mono">{{ r.variable }}</span></th></tr>
 {% endif %}
-{% set current = r.window == chart_window and r.init_hour == chart_init and r.method == chart_method and r.variable == chart_variable %}
-      <tr class="{{ 'is-lown ' if r.low_n }}{{ 'is-current' if current }}">
-        <th scope="row" class="keycell">{{ r.window }} · {{ r.init_hour }}Z · {{ r.method }}{% if current %} <span class="badge badge--tight">this view</span>{% endif %}</th>
-        <td class="is-num"><span class="val">{{ r.n }}</span>{% if r.n_flagged %}<span class="ci">{{ r.n_flagged }} QC</span>{% endif %}</td>
-        <td class="is-num"><span class="val">{{ r.mae }}</span><span class="ci{{ ' is-none' if r.mae_ci == '—' }}">{{ r.mae_ci }}</span></td>
-        <td class="is-num"><span class="val">{{ r.mae_debiased }}</span></td>
-        <td class="is-num bias"><span class="val">{{ r.bias }}</span><span class="ci{{ ' is-none' if r.bias_ci == '—' }}">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
-        <td class="is-num"><span class="val">{{ r.rmse }}</span><span class="ci{{ ' is-none' if r.rmse_ci == '—' }}">{{ r.rmse_ci }}</span></td>
-        <td class="is-num"><span class="val">{{ r.hit1f }}</span><span class="ci{{ ' is-none' if r.hit1f_ci == '—' }}">{{ r.hit1f_ci }}</span></td>
-        <td class="is-num"><span class="val">{{ r.hit2f }}</span></td>
-        <td class="is-num"><span class="val">{{ r.hit3f }}</span></td>
-        <td class="is-num"><span class="val">{{ r.skill }}</span><span class="ci{{ ' is-none' if r.skill_ci == '—' }}">{{ r.skill_ci }}</span><span class="sub">{{ r.skill_vs }}</span></td>
-        <td class="is-num"><span class="val">{{ r.skill_debiased }}</span>{% if r.n_debiased != '—' %}<span class="ci">n={{ r.n_debiased }}</span>{% endif %}</td>
-        <td class="period">{{ r.period }}</td>
-      </tr>
+{% set current = chart_window in r.windows and r.init_hour == chart_init and r.method == chart_method and r.variable == chart_variable %}
+<tr class="{{ 'is-lown ' if r.low_n }}{{ 'is-current' if current }}"><th scope=row class=k>{{ r.window_label }} · {{ r.init_hour }}Z · {{ r.method }}{% if current %} <span class="badge badge--tight">this view</span>{% endif %}</th>
+<td class=n>{{ r.n }}{% if r.n_flagged %}<i class=c>{{ r.n_flagged }} QC</i>{% endif %}</td>
+<td class=n>{{ r.mae }}<i class="c{{ ' is-none' if r.mae_ci == '—' }}">{{ r.mae_ci }}</i></td>
+<td class=n>{{ r.mae_debiased }}</td>
+<td class="n bias">{{ r.bias }}<i class="c{{ ' is-none' if r.bias_ci == '—' }}">{{ r.bias_ci }}</i><i class="bb {{ r.bias_short }}" style="width:{{ r.bias_w }}%"></i></td>
+<td class=n>{{ r.rmse }}<i class="c{{ ' is-none' if r.rmse_ci == '—' }}">{{ r.rmse_ci }}</i></td>
+<td class=n>{{ r.hit1f }}<i class="c{{ ' is-none' if r.hit1f_ci == '—' }}">{{ r.hit1f_ci }}</i></td>
+<td class=n>{{ r.hit2f }}</td>
+<td class=n>{{ r.hit3f }}</td>
+<td class=n>{{ r.skill }}<i class="c{{ ' is-none' if r.skill_ci == '—' }}">{{ r.skill_ci }}</i><i class=s>{{ r.skill_vs }}</i></td>
+<td class=n>{{ r.skill_debiased }}{% if r.n_debiased != '—' %}<i class=c>n={{ r.n_debiased }}</i>{% endif %}</td>
+<td class=p>{{ r.period }}</td></tr>
 {% endfor %}
       </tbody>
     </table></div>
   </div>
-  <div class="panel__foot">{{ m.legend(min_n, holm) }}</div>
+  <div class="panel__foot">{{ m.legend(min_n, holm, skill_min_common) }}</div>
 </section>
 
 {% if secondary_rows %}
@@ -115,19 +113,16 @@
         <tbody>
 {% for r in secondary_rows %}
 {% if loop.changed(r.variable) %}
-        <tr class="rowgroup"><th scope="colgroup" colspan="8">{{ r.variable_label }}
-        <span class="mono">{{ r.variable }}</span></th></tr>
+<tr class="rowgroup"><th scope="colgroup" colspan="8">{{ r.variable_label }} <span class="mono">{{ r.variable }}</span></th></tr>
 {% endif %}
-        <tr class="{{ 'is-lown' if r.low_n }}">
-          <th scope="row" class="keycell">{{ r.window }} · {{ r.init_hour }}Z · {{ r.method }}</th>
-          <td class="is-num"><span class="val">{{ r.n }}</span></td>
-          <td class="is-num"><span class="val">{{ r.mae }}</span><span class="ci{{ ' is-none' if r.mae_ci == '—' }}">{{ r.mae_ci }}</span></td>
-          <td class="is-num bias"><span class="val">{{ r.bias }}</span><span class="ci{{ ' is-none' if r.bias_ci == '—' }}">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
-          <td class="is-num"><span class="val">{{ r.rmse }}</span></td>
-          <td class="is-num"><span class="val">{{ r.hit1f }}</span><span class="ci{{ ' is-none' if r.hit1f_ci == '—' }}">{{ r.hit1f_ci }}</span></td>
-          <td class="is-num"><span class="val">{{ r.hit3f }}</span></td>
-          <td class="period">{{ r.period }}</td>
-        </tr>
+<tr class="{{ 'is-lown' if r.low_n }}"><th scope=row class=k>{{ r.window_label }} · {{ r.init_hour }}Z · {{ r.method }}</th>
+<td class=n>{{ r.n }}</td>
+<td class=n>{{ r.mae }}<i class="c{{ ' is-none' if r.mae_ci == '—' }}">{{ r.mae_ci }}</i></td>
+<td class="n bias">{{ r.bias }}<i class="c{{ ' is-none' if r.bias_ci == '—' }}">{{ r.bias_ci }}</i><i class="bb {{ r.bias_short }}" style="width:{{ r.bias_w }}%"></i></td>
+<td class=n>{{ r.rmse }}</td>
+<td class=n>{{ r.hit1f }}<i class="c{{ ' is-none' if r.hit1f_ci == '—' }}">{{ r.hit1f_ci }}</i></td>
+<td class=n>{{ r.hit3f }}</td>
+<td class=p>{{ r.period }}</td></tr>
 {% endfor %}
         </tbody>
       </table></div>
@@ -166,7 +161,7 @@
     <div class="table-wrap table-wrap--tall"><table class="data">
       <thead><tr><th scope="col">Climatological day</th><th scope="col" class="is-num">Error °F</th></tr></thead>
       <tbody>
-{% for r in series_rows %}<tr><td class="keycell">{{ r.date }}</td><td class="is-num"><span class="val">{{ r.err }}</span></td></tr>{% endfor %}
+{% for r in series_rows %}<tr><td class=k>{{ r.date }}</td><td class=n>{{ r.err }}</td></tr>{% endfor %}
       </tbody>
     </table></div>
   </details>
@@ -176,7 +171,7 @@
     <div class="table-wrap"><table class="data">
       <thead><tr><th scope="col">From °F</th><th scope="col">To °F</th><th scope="col" class="is-num">Days</th></tr></thead>
       <tbody>
-{% for r in hist_rows %}<tr><td class="keycell">{{ r.from }}</td><td class="keycell">{{ r.to }}</td><td class="is-num"><span class="val">{{ r.n }}</span></td></tr>{% endfor %}
+{% for r in hist_rows %}<tr><td class=k>{{ r.from }}</td><td class=k>{{ r.to }}</td><td class=n>{{ r.n }}</td></tr>{% endfor %}
       </tbody>
     </table></div>
   </details>
@@ -195,10 +190,7 @@
       <th scope="col" class="is-num">MAE °F</th><th scope="col" class="is-num">Bias °F</th></tr></thead>
       <tbody>
 {% for r in months %}
-      <tr><th scope="row" class="keycell">{{ r.month }}</th>
-      <td class="is-num"><span class="val">{{ r.n }}</span></td>
-      <td class="is-num"><span class="val">{{ r.mae }}</span></td>
-      <td class="is-num bias"><span class="val">{{ r.bias }}</span><i class="bias__bar {{ r.bias_class }}"></i></td></tr>
+<tr><th scope=row class=k>{{ r.month }}</th><td class=n>{{ r.n }}</td><td class=n>{{ r.mae }}</td><td class="n bias">{{ r.bias }}<i class="bb {{ r.bias_short }}"></i></td></tr>
 {% endfor %}
       </tbody>
     </table></div>
@@ -219,7 +211,7 @@
       <tbody>
 {% for a in availability %}
       <tr><th scope="row" class="model-cell" title="{{ a.model_id }}">{{ a.name }}</th>
-      <td class="period">{{ a.period }}</td><td class="is-num"><span class="val">{{ a.n }}</span></td>
+      <td class=p>{{ a.period }}</td><td class=n>{{ a.n }}</td>
       <td class="avail-cell"><div class="avail"><div class="avail__track"><i class="avail__span" style="left:{{ a.left }}%;width:{{ a.width }}%"></i></div></div></td></tr>
 {% endfor %}
       </tbody>
@@ -250,9 +242,9 @@
       <tbody>
 {% for p in pairwise %}
       <tr><th scope="row" class="model-cell"><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/" title="{{ p.other }}">{{ p.other_name }}</a></th>
-      <td class="is-num"><span class="val">{{ p.n_common }}</span></td>
-      <td class="is-num"><span class="val">{{ p.diff }}</span><span class="ci">{{ p.ci }}</span></td>
-      <td class="is-num"><span class="val">{{ p.p_boot }}</span></td>
+      <td class=n>{{ p.n_common }}</td>
+      <td class=n>{{ p.diff }}<i class=c>{{ p.ci }}</i></td>
+      <td class=n>{{ p.p_boot }}</td>
       <td class="mark">{{ p.holm }}</td>
       <td class="mark mark--worse">{{ p.uncorrected }}</td></tr>
 {% endfor %}
@@ -272,7 +264,7 @@
     <div class="cite">
       <div class="cite__row"><span class="cite__k">Short</span><p class="cite__v">{{ citation }}</p></div>
       <div class="cite__row"><span class="cite__k">Long</span><p class="cite__v">{{ citation_long }}</p></div>
-      <div class="cite__row"><span class="cite__k">Accessed</span><p class="cite__v">{{ as_of }} (data through {{ data_through }}; page built {{ built_at }})</p></div>
+      <div class="cite__row"><span class="cite__k">Accessed</span><p class="cite__v">{{ as_of }} (data through {{ data_through }}; page built <time datetime="{{ built_at }}">{{ built_at_human }}</time>)</p></div>
     </div>
     <ul class="downloads" style="margin-top:var(--sp-4)">
       <li><a href="{{ json_url }}"><span class="fmt">JSON</span> scores</a></li>

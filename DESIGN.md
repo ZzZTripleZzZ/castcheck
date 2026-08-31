@@ -36,6 +36,7 @@ castcheck/                 python package
     templates/*.html
     assets/                css, small js (charts drawn client-side from JSON; no build step)
   api.py                   JSON export → public/api/v1/...
+  schedule.py              availability deadlines shared by cli.plan_runs and status.build
   status.py                data-completeness report → public/status.json + status page
   publish/
     hf.py                  push data/ shards to Hugging Face dataset repo (optional, token-gated)
@@ -242,7 +243,7 @@ castcheck truth-backfill 2024-01-01 2024-12-31 [--stations KNYC]   # IEM
 castcheck derive                              # values → daily_forecasts
 castcheck verify                              # → scores, pairwise
 castcheck build-site                          # → public/
-castcheck status [--no-fail-on-gaps]          # → public/api/v1/status.json (+ exit 1 if gaps today)
+castcheck status [--no-fail-on-gaps]          # → public/api/v1/status.json (+ exit 1 if *due* gaps today)
 castcheck daily                               # derive → verify → build-site
 castcheck publish hf|kaggle|bluesky [--dry-run]   # optional, token-gated
 ```
@@ -278,7 +279,9 @@ Routes (static, under `public/`):
 - `/model/{model_id}/` — model page.
 - `/station/{ICAO}/model/{model_id}/lead/{d}/` — the permanent link: one score card with CI, n, period, method toggles (bilinear/nearest, 00Z/12Z), the daily error series, and a citation block.
 - `/methodology/` — rendered METHODOLOGY.md. `/status/` — completeness. `/data/` — download links + schema.
-- `/api/v1/scores/latest.json`, `/api/v1/scores/{station}/{model}/{lead}.json`, `/api/v1/pairwise/latest.json`, `/api/v1/stations.json`, `/api/v1/models.json`, `/api/v1/status.json` — plain static JSON.
+- **Weight budget.** `public/` must stay under 250 MB and 20 000 files (the Cloudflare Pages deploy limit), with no file above 25 MiB. The generator reports both at the end of `build-site`. What keeps it there: `castcheck.site.build.minify_html` strips the template indentation; the tables use short cell classes (`n`/`c`/`s`/`k`/`p`/`bb`) with the value in the cell's own text rather than a wrapper `span`; two windows covering the same days share one row on a permanent link; `/data/` carries only the small tables plus the per-station `daily_errors/{ICAO}.csv.gz`, and the bulk pairwise table is on Hugging Face.
+- `/api/v1/scores/index.json` (alias `latest.json`), `/station/{ICAO}/cards.json`, `/api/v1/scores/leaderboard.json`, `/api/v1/leaderboard/{view}.json`, `/api/v1/pairwise/latest.json`, `/api/v1/stations.json`, `/api/v1/models.json`, `/api/v1/status.json` — plain static JSON.
+  `/station/{ICAO}/cards.json` is the per-station bundle: the station's whole `scores` table plus one entry in `cards` per model and lead day (its pairwise slice and daily error series). It replaces the ~1 800 `/api/v1/scores/{station}/{model}/{lead}.json` files, which each repeated the envelope and a slice of a table that was published in full a second time under `scores/by-station/`; that path is now a pointer document. Inside the bundle the low-cardinality label columns (`model_id`, `variable`, `method`, `window`, `model_version`, `segment_start`, `period_start`, `period_end`) are dictionary-encoded: the row holds an index into `scores.dictionaries[column]`. Every other endpoint stays plain `{columns, rows}`.
 
 Charts: minimal inline SVG or a tiny client-side script reading the JSON; no framework, no build step. Pages must be readable with JS disabled (tables first, charts as enhancement). Theme: light, system font, one accent colour.
 
@@ -293,8 +296,15 @@ Charts: minimal inline SVG or a tiny client-side script reading the JSON; no fra
 | `test.yml` | push / PR | `ruff check .` → import `eccodes`/`cfgrib` → `pytest -q -m "not network"` |
 
 **Cron and availability.** A run is fetched once `init + availability_delay` has passed, where the
-delay is per source (`cli.AVAILABILITY_DELAY_H`: GFS 5.5 h, ECMWF 8 h) and, for AIWP, per initial
-field (GFS-initialised 6 h, IFS-initialised 9.5 h — CIRA has to wait for ECMWF dissemination first).
+delay is per source (GFS 5.5 h, ECMWF 8 h) and, for AIWP, per initial field (GFS-initialised 6 h,
+IFS-initialised 9.5 h — CIRA has to wait for ECMWF dissemination first). Those constants live in
+**`castcheck/schedule.py`**, which `cli.plan_runs` and `status.build` both import: the fetcher's
+"not worth asking for yet" and the status page's "not a gap yet" must be the same judgement, or the
+page shows a red bar for a run nobody has published. The same module holds the CLI truth deadline
+(the station's own local midnight plus 1–4 h, so at 06 UTC yesterday's report exists in New York
+and cannot exist in Los Angeles) and the observed-instant deadline (18 UTC + 1.5 h). Days on the
+wrong side of a deadline are drawn grey (`not_due_yet`) and are in neither the gap list nor the
+uptime denominator.
 The 12Z crons are the 00Z crons plus twelve hours; the same delays apply to both cycles. Nothing
 depends on hitting a cron exactly: `fetch-latest` looks back three days, so a missed or late run is
 picked up by the next pass.

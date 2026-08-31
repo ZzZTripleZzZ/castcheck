@@ -13,8 +13,8 @@ displayed in °F on the site; the downloads below are in °C.</p>
     <div><dt>Schema</dt><dd>v{{ schema_version }}</dd></div>
     <div><dt>Methodology</dt><dd>v{{ methodology_version }}</dd></div>
     <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-    <div><dt>Built</dt><dd>{{ built_at }}</dd></div>
-    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Built</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+    <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
   </dl>
 </section>
 

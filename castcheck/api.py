@@ -15,13 +15,17 @@ Endpoints
                                                the same document (the whole table was a single
                                                21 MB file, past what a CDN edge will serve well and
                                                close to the 25 MiB Cloudflare Pages limit)
-``scores/by-station/{station}.json``           every score for one station, compact encoding
+``scores/by-station/{station}.json``           a pointer at the station's bundle (kept so an
+                                               existing link resolves)
 ``scores/leaderboard.json``                    the ``station_id="ALL"`` slice only (small; used by ``/``)
-``scores/{station}/{model}/{lead}.json``        one permanent-link card: every window/init/method/
-                                               variable for that combination, its pairwise
-                                               comparisons, and the last 90 days of signed daily
-                                               error (the matching forecasts and observations are
-                                               in ``/data/daily_errors/{station}.csv.gz``)
+``/station/{station}/cards.json``              **the per-station bundle**: every score for that
+                                               station under ``scores``, and one entry in
+                                               ``cards`` per model and lead day carrying that
+                                               card's pairwise comparisons and the last 90 days of
+                                               signed daily error.  A permanent-link page links to
+                                               its own card by fragment (``…/cards.json#gfs-1``).
+                                               The matching forecasts and observations are in
+                                               ``/data/daily_errors/{station}.csv.gz``
 ``pairwise/latest.json``                       the ``station_id="ALL"`` pairwise slice
 ``leaderboard/{window}-{init}z-{method}-{variable}.json``
                                                one pre-ranked file per site view, results as
@@ -31,14 +35,17 @@ Endpoints
 
 Every response carries the same envelope (docs/05 §D): ``schema_version``, ``generated_at``,
 ``data_through``, ``next_update``, ``window {type, days, start, end}``, ``units``,
-``method {ci, resamples, level, block, ref}`` and ``truth {source}``.  Every result row carries a
-``permalink`` to the page where the number is explained.
+``method {ci, resamples, level, block, ref}`` and ``truth {source}``.  Every leaderboard row
+carries a literal ``permalink`` to the page where the number is explained; the bulk per-station
+table carries ``model_id`` and ``lead_day`` and the envelope's ``permalink_template``, which is
+the same information without forty bytes on each of a quarter of a million rows.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import shutil
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -52,6 +59,7 @@ from .verify import ALL_STATIONS, BLOCK_DAYS, MIN_N, PERSISTENCE_ID, error_table
 __all__ = [
     "LEADERBOARD_VIEWS",
     "SERIES_DAYS",
+    "SKILL_MIN_COMMON",
     "UNITS",
     "api_dir",
     "compact_table",
@@ -61,6 +69,11 @@ __all__ = [
 ]
 
 SERIES_DAYS = 90
+#: A skill score divides two MAEs computed on the *common* days of the model and the baseline.
+#: Below this many common days the ratio is dominated by which days happened to intersect, so the
+#: site prints "—" for it and every published row carries ``skill_reliable`` saying which side of
+#: the threshold it is on.  The number itself is never withheld from the JSON.
+SKILL_MIN_COMMON = 10
 #: The card's daily series is published for the headline slice only (see :func:`_daily_series`).
 SERIES_INIT = 0
 SERIES_METHOD = "bilinear"
@@ -101,6 +114,9 @@ METHOD_BLOCK = {
     "debiasing": "out-of-sample: bias of the trailing 30 scored days before each day, min 15",
     "multiplicity": "pairwise carries distinguishable_uncorrected, p_boot and "
                     "distinguishable_holm; only the Holm flag is marked on the site",
+    "skill_min_n_common": SKILL_MIN_COMMON,
+    "skill_reliable": f"false when n_common < {SKILL_MIN_COMMON}; the value is still published, "
+                      f"but the site shows an em dash for it",
     "ref": "https://castcheck.zifanzhang.com/methodology/",
 }
 
@@ -255,6 +271,23 @@ def _with_permalink(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _with_skill_flag(df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``skill_reliable``: was ``skill_persistence`` computed on enough common days?
+
+    The score itself is never removed — a consumer who wants the ratio on four days can have it —
+    but every row says which side of :data:`SKILL_MIN_COMMON` it falls on, so a table built from
+    this file can grey the same cells the site greys.
+    """
+    if df is None or len(df) == 0 or "skill_reliable" in getattr(df, "columns", ()):
+        return df
+    out = df.copy()
+    n_common = pd.to_numeric(out.get("n_common"), errors="coerce")
+    out["skill_reliable"] = (n_common.fillna(-1) >= SKILL_MIN_COMMON) & out[
+        "skill_persistence"].notna() if "skill_persistence" in out else (
+        n_common.fillna(-1) >= SKILL_MIN_COMMON)
+    return out
+
+
 def _station_payload(stations: list[Station]) -> list[dict]:
     out = [{
         "id": s.id, "name": s.name, "cli_pil": s.cli_pil,
@@ -333,12 +366,15 @@ def export_api(
     errors: pd.DataFrame | None = None,
     status: dict | None = None,
     series_days: int = SERIES_DAYS,
+    cards_out: str | Path | None = None,
 ) -> dict[str, int]:
     """Write the whole static JSON API.  Returns ``{relative path or glob: n files/rows}``."""
     stations = list(stations) if stations is not None else load_stations()
     models = list(models) if models is not None else load_models()
     base = api_dir(out)
     base.mkdir(parents=True, exist_ok=True)
+    # The per-station bundle lives next to the pages it belongs to, under /station/{ICAO}/.
+    cards_base = Path(cards_out) if cards_out is not None else base.parent.parent / "station"
     written: dict[str, int] = {}
 
     scores = scores if scores is not None else pd.DataFrame()
@@ -362,7 +398,7 @@ def export_api(
         board = scores
     write_json(base / "scores" / "leaderboard.json",
                {**_envelope(scores, scope=f"station_id={ALL_STATIONS}"),
-                **compact_table(_with_permalink(board))})
+                **compact_table(_with_skill_flag(_with_permalink(board)))})
     written["scores/leaderboard.json"] = len(board)
 
     written["leaderboard/{view}.json"] = _write_leaderboards(base, scores)
@@ -405,54 +441,10 @@ def export_api(
         errors = error_table(daily, truth, instant)
     series = _daily_series(errors, series_days)
 
-    n_cards = 0
-    if len(scores):
-        pw_idx = {}
-        if len(pairwise):
-            for key, grp in pairwise.groupby(["station_id", "lead_day"], observed=True):
-                pw_idx[(key[0], int(key[1]))] = grp
-        for (st, mid, lead), grp in scores.groupby(["station_id", "model_id", "lead_day"], observed=True):
-            lead = int(lead)
-            pw_grp = pw_idx.get((st, lead))
-            if pw_grp is not None and len(pw_grp):
-                mask = (pw_grp["model_a"] == mid) | (pw_grp["model_b"] == mid)
-                # Headline slice only: the same comparison otherwise appears in this card 32 times
-                # over (window × init × method × variable) and again in the other model's card.
-                # The complete table is one download away at pairwise/latest.json.
-                mask &= (pw_grp["window"] == CARD_PAIRWISE_WINDOW)
-                mask &= pw_grp["init_hour"].astype(int) == SERIES_INIT
-                mask &= pw_grp["method"] == SERIES_METHOD
-                pw_grp = pw_grp[mask]
-            # Columns that are constant for this card live in the envelope, not in every row.
-            card_drop = _ENVELOPE_CONSTANTS + ("station_id", "model_id", "lead_day")
-            versions = sorted({str(v) for v in grp.get("model_version", pd.Series(dtype=str))
-                               .dropna().unique()})
-            segments = sorted({str(v) for v in grp.get("segment_start", pd.Series(dtype=str))
-                               .dropna().unique()})
-            if len(versions) == 1:
-                card_drop += ("model_version",)
-            if len(segments) == 1:
-                card_drop += ("segment_start",)
-            payload = {
-                **_envelope(scores),
-                "station_id": st, "model_id": mid, "lead_day": lead,
-                "model_version": versions[0] if len(versions) == 1 else versions,
-                "segment_start": segments[0] if len(segments) == 1 else segments,
-                "permalink": f"/station/{st}/model/{mid}/lead/{lead}/",
-                "scores": compact_table(grp, drop=card_drop),
-                "pairwise_scope": {"window": CARD_PAIRWISE_WINDOW, "init_hour": SERIES_INIT,
-                                   "method": SERIES_METHOD,
-                                   "note": "every window/init/method is in pairwise/latest.json"},
-                "pairwise": compact_table(pw_grp) if pw_grp is not None else {"columns": [], "rows": []},
-                "series_days": series_days,
-                "series_scope": {"init_hour": SERIES_INIT, "method": SERIES_METHOD,
-                                 "note": "other init/method slices and the matching forecast and "
-                                         "observation values are in /data/daily_errors/{station}.csv.gz"},
-                "series": series.get((st, mid, lead), []),
-            }
-            write_json(base / "scores" / str(st) / str(mid) / f"{lead}.json", payload)
-            n_cards += 1
-    written["scores/{station}/{model}/{lead}.json"] = n_cards
+    n_cards, n_bundles = _write_station_cards(cards_base, scores, pairwise, series, series_days)
+    written["station/{station}/cards.json"] = n_bundles
+    written["cards"] = n_cards
+    _prune_legacy_cards(base, stations)
 
     if status is not None:
         write_json(base / "status.json", status)
@@ -461,17 +453,189 @@ def export_api(
 
 
 # ------------------------------------------------------------------------------------------
+# per-station bundles
+# ------------------------------------------------------------------------------------------
+
+#: Columns that are constant inside one card's pairwise block, so they are hoisted into
+#: ``pairwise_scope`` instead of repeating on every comparison.
+_CARD_PAIRWISE_CONSTANTS = ("station_id", "lead_day", "window", "init_hour", "method")
+
+#: Columns of the per-station table whose values come from a tiny fixed vocabulary.  Eight short
+#: labels repeated on ten thousand rows were 39 % of the bundle; dictionary-encoding them costs
+#: one line to decode and takes the file from 2.8 MB to 1.9 MB.
+_DICTIONARY_COLUMNS = ("model_id", "variable", "method", "window", "model_version",
+                       "segment_start", "period_start", "period_end")
+
+
+def _dictionary_encode(table: dict, columns: tuple[str, ...]) -> dict:
+    """Replace the values of low-cardinality columns with an index into a per-column vocabulary.
+
+    Mutates ``table`` (whose rows were just built by :func:`compact_table` and are not shared) and
+    returns ``{column: [value, …]}``.  A consumer decodes with one map per column::
+
+        for col, values in payload["scores"]["dictionaries"].items():
+            df[col] = df[col].map(dict(enumerate(values)))
+
+    Only the per-station bundle uses this.  The leaderboards, the pairwise export and the index —
+    the endpoints a casual consumer reads — stay plain ``{columns, rows}``.
+    """
+    dictionaries: dict[str, list] = {}
+    for col in columns:
+        if col not in table["columns"]:
+            continue
+        i = table["columns"].index(col)
+        values: list = []
+        seen: dict = {}
+        for row in table["rows"]:
+            v = row[i]
+            key = (type(v).__name__, v)
+            code = seen.get(key)
+            if code is None:
+                code = len(values)
+                seen[key] = code
+                values.append(v)
+            row[i] = code
+        dictionaries[col] = values
+    return dictionaries
+
+
+def _card_series(entries: list[dict]) -> tuple[list[str] | None, list[dict]]:
+    """Hoist the shared date axis out of a card's per-variable series.
+
+    All eleven variables of a card are scored on the same climatological days, so the card used to
+    carry the same list of ninety dates eleven times — about half of its bytes.  The common axis
+    is written once as ``series_dates``; a variable whose own axis differs still carries its own.
+    """
+    if not entries:
+        return None, []
+    common = entries[0]["dates"]
+    if not all(e["dates"] == common for e in entries):
+        common = None
+    out = []
+    for e in entries:
+        item = {"variable": e["variable"], "init_hour": e["init_hour"], "method": e["method"],
+                "err_c": e["err_c"]}
+        if common is None or e["dates"] != common:
+            item["dates"] = e["dates"]
+        out.append(item)
+    return common, out
+
+
+def _write_station_cards(cards_dir: Path, scores: pd.DataFrame, pairwise: pd.DataFrame,
+                         series: dict, series_days: int) -> tuple[int, int]:
+    """One file per station: ``station/{ICAO}/cards.json``.
+
+    Before this there was one file per station × model × lead day — about 1 800 of them, 68 MB,
+    each repeating the response envelope, the units block and the method block, and each carrying
+    a slice of a table that was *also* published whole in ``scores/by-station/{station}.json``.
+    Merging them removes that duplication outright: the station's scores are written once, in the
+    same compact encoding as before, and each card adds only what is its own — its pairwise
+    comparisons and its daily error series.  A permanent-link page links to its card by fragment,
+    ``/station/KNYC/cards.json#gfs-1``, and ``cards_by_id`` maps that fragment to the card.
+    """
+    n_cards = n_files = 0
+    if scores is None or len(scores) == 0:
+        return 0, 0
+    pw_idx: dict[tuple[str, int], pd.DataFrame] = {}
+    if pairwise is not None and len(pairwise):
+        for key, grp in pairwise.groupby(["station_id", "lead_day"], observed=True):
+            pw_idx[(key[0], int(key[1]))] = grp
+
+    for station_id, st_grp in scores.groupby("station_id", observed=True):
+        station_id = str(station_id)
+        table = compact_table(_with_skill_flag(st_grp).drop(columns=["station_id"]))
+        table["dictionaries"] = _dictionary_encode(table, _DICTIONARY_COLUMNS)
+        cards = []
+        for (mid, lead), grp in st_grp.groupby(["model_id", "lead_day"], observed=True):
+            lead = int(lead)
+            pw_grp = pw_idx.get((station_id, lead))
+            if pw_grp is not None and len(pw_grp):
+                mask = (pw_grp["model_a"] == mid) | (pw_grp["model_b"] == mid)
+                # Headline slice only: the same comparison otherwise appears 32 times over
+                # (window × init × method) and again in the other model's card.  The complete
+                # table is one download away at pairwise/latest.json.
+                mask &= (pw_grp["window"] == CARD_PAIRWISE_WINDOW)
+                mask &= pw_grp["init_hour"].astype(int) == SERIES_INIT
+                mask &= pw_grp["method"] == SERIES_METHOD
+                pw_grp = pw_grp[mask]
+                drop = _ENVELOPE_CONSTANTS + tuple(
+                    c for c in _CARD_PAIRWISE_CONSTANTS if c in pw_grp.columns)
+                pw_table = compact_table(pw_grp, drop=drop)
+            else:
+                pw_table = {"columns": [], "rows": []}
+            versions = sorted({str(v) for v in grp.get("model_version", pd.Series(dtype=str))
+                               .dropna().unique()})
+            segments = sorted({str(v) for v in grp.get("segment_start", pd.Series(dtype=str))
+                               .dropna().unique()})
+            dates, entries = _card_series(series.get((station_id, mid, lead), []))
+            cards.append({
+                "id": f"{mid}-{lead}",
+                "model_id": mid,
+                "lead_day": lead,
+                "model_version": versions[0] if len(versions) == 1 else versions,
+                "segment_start": segments[0] if len(segments) == 1 else segments,
+                "permalink": permalink(station_id, mid, lead),
+                "pairwise": pw_table,
+                "series_dates": dates,
+                "series": entries,
+            })
+            n_cards += 1
+        payload = {
+            **_envelope(scores, scope=f"station_id={station_id}"),
+            "kind": "station-cards",
+            "station_id": station_id,
+            "note": "every published aggregate for this station, plus one card per model and lead "
+                    "day. A permanent-link page addresses its card by fragment, e.g. "
+                    f"/station/{station_id}/cards.json#gfs-1; scores rows are matched on "
+                    "(model_id, lead_day). The columns listed in scores.dictionaries hold an "
+                    "integer index into that column's vocabulary, not the value itself.",
+            "permalink_template": "/station/{station_id}/model/{model_id}/lead/{lead_day}/",
+            "scores": table,
+            "n_scores": len(table["rows"]),
+            "pairwise_scope": {"window": CARD_PAIRWISE_WINDOW, "init_hour": SERIES_INIT,
+                               "method": SERIES_METHOD, "station_id": station_id,
+                               "note": "every window/init/method is in pairwise/latest.json"},
+            "series_days": series_days,
+            "series_scope": {"init_hour": SERIES_INIT, "method": SERIES_METHOD,
+                             "note": "other init/method slices and the matching forecast and "
+                                     "observation values are in "
+                                     "/data/daily_errors/{station}.csv.gz"},
+            "cards": cards,
+        }
+        write_json(cards_dir / station_id / "cards.json", payload)
+        n_files += 1
+    return n_cards, n_files
+
+
+def _prune_legacy_cards(base: Path, stations: list[Station]) -> None:
+    """Delete the pre-merge ``scores/{station}/{model}/{lead}.json`` tree from an older build."""
+    scores_dir = base / "scores"
+    if not scores_dir.is_dir():
+        return
+    keep = {"by-station"}
+    for child in scores_dir.iterdir():
+        if child.is_dir() and child.name not in keep:
+            shutil.rmtree(child, ignore_errors=True)
+
+
+# ------------------------------------------------------------------------------------------
 # sharded scores export
 # ------------------------------------------------------------------------------------------
 
 def _write_score_shards(base: Path, scores: pd.DataFrame) -> tuple[int, dict]:
-    """One file per station plus an index, instead of one 21 MB table.
+    """The index of the per-station export, plus a pointer at the historical shard path.
 
-    The whole ``scores`` table crossed 20 MB in August 2026 with eleven models and two variables;
-    the v0.3 variable set multiplies it again, and Cloudflare Pages refuses a single file above
-    25 MiB — a deployment would simply have started failing.  Sharding by ``station_id`` is the
-    natural cut: it is the first key of every question anyone asks of this table, each shard is a
-    few hundred kB, and the index says exactly which shards exist so nothing has to be guessed.
+    The scores table crossed 20 MB in August 2026 and Cloudflare Pages refuses a single file above
+    25 MiB, so it has always been published one file per station.  Since v0.3.2 that file is
+    ``/station/{ICAO}/cards.json`` — the same rows, in the same compact encoding, in the same file
+    as the per-card blocks that used to repeat them.  ``scores/by-station/{station}.json`` stays
+    as a small pointer so an existing link resolves and says where the data went, instead of
+    404-ing or, worse, serving a second copy of 65 MB.
+
+    ``permalink`` is not a column of the per-station table: the envelope carries
+    ``permalink_template`` and every row has ``model_id`` and ``lead_day``, which is the same
+    information without 40 bytes on each of a quarter of a million rows.  The pre-ranked
+    leaderboards, which are what a casual consumer reads, still carry a literal permalink.
     """
     shard_dir = base / "scores" / "by-station"
     for stale in shard_dir.glob("*.json"):
@@ -479,22 +643,33 @@ def _write_score_shards(base: Path, scores: pd.DataFrame) -> tuple[int, dict]:
     shards = []
     columns: list[str] = []
     if scores is not None and len(scores):
-        with_links = _with_permalink(scores)
-        columns = [c for c in with_links.columns if c not in _ENVELOPE_CONSTANTS]
-        for station_id, grp in with_links.groupby("station_id", observed=True):
-            payload = {**_envelope(scores, scope=f"station_id={station_id}"),
-                       "station_id": str(station_id),
-                       **compact_table(grp.drop(columns=["station_id"]))}
-            write_json(shard_dir / f"{station_id}.json", payload)
+        columns = [c for c in _with_skill_flag(scores).columns
+                   if c not in _ENVELOPE_CONSTANTS and c != "station_id"]
+        for station_id, grp in scores.groupby("station_id", observed=True):
+            href = f"/station/{station_id}/cards.json"
             shards.append({"station_id": str(station_id),
-                           "path": f"scores/by-station/{station_id}.json",
-                           "href": f"/api/v1/scores/by-station/{station_id}.json",
+                           "path": f"station/{station_id}/cards.json",
+                           "href": href,
                            "rows": int(len(grp))})
+            write_json(shard_dir / f"{station_id}.json", {
+                **_envelope(scores, scope=f"station_id={station_id}"),
+                "station_id": str(station_id),
+                "moved_to": href,
+                "note": "the per-station scores now live in the station's card bundle, together "
+                        "with the pairwise comparisons and daily error series that used to "
+                        "duplicate them; read `scores` in that document.",
+                "columns": columns,
+                "rows": [],
+                "n_rows": int(len(grp)),
+            })
     index = {
         **_envelope(scores),
         "index_of": "scores",
-        "note": "the scores table is published one file per station; station_id is dropped from "
-                "each shard's rows and carried in its envelope",
+        "note": "the scores table is published one file per station, as the `scores` block of "
+                "/station/{ICAO}/cards.json; station_id is dropped from each row and carried in "
+                "the envelope, and the permanent link of a row is permalink_template filled in "
+                "with its model_id and lead_day",
+        "permalink_template": "/station/{station_id}/model/{model_id}/lead/{lead_day}/",
         "columns": columns,
         "rows": [],
         "n_rows": int(len(scores)) if scores is not None else 0,
@@ -566,6 +741,11 @@ def _write_leaderboards(base: Path, scores: pd.DataFrame) -> int:
                 item = {"lead_day": lead, "rank": rank, "ranked": ranked,
                         "baseline": r["model_id"] == PERSISTENCE_ID}
                 item.update({k: _clean(r[k]) for k in _BOARD_FIELDS if k in sub.columns})
+                n_common = _clean(r.get("n_common"))
+                item["n_common"] = n_common
+                item["skill_reliable"] = bool(
+                    n_common is not None and n_common >= SKILL_MIN_COMMON
+                    and _clean(r.get("skill_persistence")) is not None)
                 item["permalink"] = permalink(ALL_STATIONS, r["model_id"], lead)
                 rows.append(item)
         payload = {
@@ -663,9 +843,9 @@ def openapi_document() -> dict:
                 "scores table in one file; it is now the index of the per-station shards.",
                 "#/components/schemas/Table"),
             "/scores/by-station/{station}.json": get(
-                "Every published aggregate for one station, compact {columns, rows} encoding "
-                "with station_id lifted into the envelope.",
-                "#/components/schemas/Table",
+                "Pointer at the station's bundle: `moved_to` names the file that carries the "
+                "rows. Kept so that an existing link resolves.",
+                "#/components/schemas/Envelope",
                 [path_param("station", "KNYC",
                             "ICAO identifier, or ALL for the aggregate")]),
             "/scores/leaderboard.json": get(
@@ -676,13 +856,14 @@ def openapi_document() -> dict:
                 "#/components/schemas/Leaderboard",
                 [path_param("view", "90d-00z-bilinear-tmax",
                             "{window}-{init}z-{method}-{variable}")]),
-            "/scores/{station}/{model}/{lead}.json": get(
-                "One permanent-link card: every window/init/method/variable for that "
-                "combination, its pairwise comparisons and the daily error series.",
+            "/station/{station}/cards.json": get(
+                "The per-station bundle: every published aggregate for the station under "
+                "`scores`, and one entry in `cards` per model and lead day with that card's "
+                "pairwise comparisons and daily error series. A permanent-link page addresses "
+                "its card by fragment, e.g. /station/KNYC/cards.json#gfs-1.",
                 "#/components/schemas/Card",
-                [path_param("station", "ALL", "ICAO identifier, or ALL for the aggregate"),
-                 path_param("model", "gfs", "model_id from models.json"),
-                 path_param("lead", "1", "lead day")]),
+                [path_param("station", "KNYC",
+                            "ICAO identifier, or ALL for the aggregate")]),
             "/pairwise/latest.json": get(
                 "Paired model-vs-model MAE differences on common days.",
                 "#/components/schemas/Table"),
@@ -722,12 +903,21 @@ def openapi_document() -> dict:
                     {"$ref": "#/components/schemas/Envelope"},
                     {"type": "object", "properties": {
                         "station_id": {"type": "string"},
-                        "model_id": {"type": "string"},
-                        "lead_day": {"type": "integer"},
-                        "permalink": {"type": "string"},
+                        "permalink_template": {"type": "string"},
                         "scores": {"$ref": "#/components/schemas/Table"},
-                        "pairwise": {"$ref": "#/components/schemas/Table"},
-                        "series": {"type": "array", "items": {"type": "object"}},
+                        "cards": {"type": "array", "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "model_id": {"type": "string"},
+                                "lead_day": {"type": "integer"},
+                                "permalink": {"type": "string"},
+                                "pairwise": {"$ref": "#/components/schemas/Table"},
+                                "series_dates": {"type": ["array", "null"],
+                                                 "items": {"type": "string"}},
+                                "series": {"type": "array", "items": {"type": "object"}},
+                            },
+                        }},
                     }},
                 ]
             },

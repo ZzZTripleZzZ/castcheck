@@ -345,7 +345,12 @@ main { display: block; padding-block: var(--sp-6) var(--sp-8); }
 /* =====================================================================
    tables
    ===================================================================== */
-.table-wrap { overflow-x: auto; max-width: 100%; }
+/* `position: relative` is not decoration: the visually-hidden `.sr` spans inside a wide
+   table are absolutely positioned at their static position, which on a phone is a metre
+   off the right edge of the scroller. Without a positioned ancestor their containing
+   block is the page, so they extended documentElement.scrollWidth to ~1050 px at 375 px
+   wide and the whole page scrolled sideways. With it, the overflow is the scroller's. */
+.table-wrap { overflow-x: auto; max-width: 100%; position: relative; }
 .table-wrap--tall { max-height: 74vh; overflow: auto; }
 table.data { border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--fs-table); }
 table.data caption {
@@ -389,6 +394,36 @@ table.data .val { display: block; font-size: var(--fs-table); color: var(--ink-1
 .sub { display: block; font-size: var(--fs-micro); color: var(--ink-3); line-height: 1.3; font-weight: 400; white-space: nowrap; }
 .sub.mono { font-family: var(--font-mono); }
 .keycell { font-family: var(--font-mono); font-size: var(--fs-cap); white-space: nowrap; }
+/* --- compact table markup ---------------------------------------------
+   The permanent-link pages carry one row per window x initialization x interpolation x variable
+   and are, together, most of the site's bytes. Their cells use short class names and put the
+   value in the cell's own text instead of a wrapper span: `n` = numeric cell (was `is-num` +
+   `val`), `c` = the interval line (was `ci`), `s` = the small print (was `sub`), `k` = the
+   monospace key cell, `p` = a period, `bb` = the bias rule. The rendering is identical; the
+   markup is about a third of the size. Both spellings are kept because the other pages, and any
+   saved copy of an older page, still use the long one. */
+table.data thead th.n, table.data td.n { text-align: right; }
+table.data td.n, table.data tbody th.n {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-1);
+  font-size: var(--fs-table); line-height: 1.25; white-space: nowrap;
+}
+table.data td.n a { color: inherit; text-decoration: none; }
+table.data td.n a:hover { text-decoration: underline; }
+.c {
+  display: block; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--ink-3);
+  font-variant-numeric: tabular-nums; line-height: 1.3; white-space: nowrap;
+}
+.c.is-none { color: var(--ink-4); }
+.s { display: block; font-size: var(--fs-micro); color: var(--ink-3); line-height: 1.3; font-weight: 400; white-space: nowrap; }
+table.data .k { font-family: var(--font-mono); font-size: var(--fs-cap); white-space: nowrap; }
+table.data .p { white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-cap); }
+tr.is-lown td.n, tr.is-lown .c, tr.is-lown .s { color: var(--ink-3); }
+.bb { display: block; height: 3px; border-radius: 2px; margin-top: 3px; margin-inline-start: auto; background: var(--flat); opacity: .9; }
+.bb.w3 { background: var(--warm-3); } .bb.w2 { background: var(--warm-2); }
+.bb.w1 { background: var(--warm-1); } .bb.k1 { background: var(--cool-1); }
+.bb.k2 { background: var(--cool-2); } .bb.k3 { background: var(--cool-3); }
+.bb.f0 { background: var(--flat); } .bb.z0 { background: var(--border); }
+
 .model-cell { min-width: 190px; }
 .model-cell a { font-weight: 500; color: var(--ink-1); text-decoration-color: var(--border-2); }
 .model-cell a:hover { color: var(--link); }
@@ -396,13 +431,15 @@ table.data .val { display: block; font-size: var(--fs-table); color: var(--ink-1
    be readable, so it steps down to --ink-3 (AA at this size) rather than the non-text --ink-4. */
 tr.is-lown td, tr.is-lown th, tr.is-lown .val, tr.is-lown a { color: var(--ink-3); }
 td.is-lown, td.is-lown a, td.is-lown .val { color: var(--ink-3); }
+td.is-lown .c, td.is-lown .s { color: var(--ink-3); }
 tr.is-baseline { background: var(--surface-2); }
 tr.is-baseline .model-cell a { font-style: italic; }
 tr.is-leader td, tr.is-leader th { background: color-mix(in srgb, var(--wash) 60%, transparent); }
 /* the leader's accent rule sits on whichever cell opens the row (rank cell or row header) */
 tr.is-leader > :first-child { box-shadow: inset 3px 0 0 var(--bar-best); }
 tr.is-current td, tr.is-current th { background: var(--wash); }
-td.is-best > .val { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+td.is-best > .val, td.n.is-best > a, td.n.is-best { text-decoration: underline;
+  text-decoration-thickness: 1px; text-underline-offset: 3px; }
 
 /* rank */
 .rank { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: var(--fs-table); }
@@ -436,6 +473,7 @@ tr.is-leader .meter > i { background: var(--bar-best); }
 .swatch.is-flat { background: var(--flat); } .swatch.is-ok { background: var(--ok); }
 .swatch.is-warn { background: var(--warn); } .swatch.is-bad { background: var(--bad); }
 .swatch.is-na { background: var(--surface-3); border: 1px solid var(--border); }
+.swatch.is-wait { background: var(--border); }
 
 /* =====================================================================
    figures — title / subtitle / chart / source
@@ -483,6 +521,10 @@ svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
 .m-dot.is-cool-2 { fill: var(--cool-2); } .m-dot.is-cool-3 { fill: var(--cool-3); }
 .m-dot.is-flat { fill: var(--flat); } .m-dot.is-null { fill: var(--surface-3); }
 svg.sparkline { display: block; width: 112px; height: 28px; overflow: visible; }
+/* A series with fewer than MIN_N scored days is published but never ranked; its sparkline
+   is drawn grey so the shape does not read as a result. */
+svg.sparkline.is-muted .s-line { stroke: var(--ink-4); }
+svg.sparkline.is-muted .s-dot { fill: var(--ink-4); }
 td.sparkcell svg.sparkline { display: inline-block; vertical-align: middle; }
 td.sparkcell { padding-block: var(--sp-1); }
 .s-line { fill: none; stroke: var(--bar); stroke-width: 1.25; stroke-linejoin: round; }
@@ -503,7 +545,11 @@ td.sparkcell { padding-block: var(--sp-1); }
 }
 td.avail-cell { min-width: 160px; width: 30%; }
 svg.uptime { display: block; width: 100%; max-width: 260px; height: 16px; }
-.u-yes { fill: var(--ok); } .u-part { fill: var(--warn); } .u-no { fill: var(--bad); } .u-na { fill: var(--surface-3); }
+.u-yes { fill: var(--ok); } .u-part { fill: var(--warn); } .u-no { fill: var(--bad); }
+.u-na { fill: var(--surface-3); }
+/* `wait` is a slot whose publication deadline has not passed: grey, but a shade darker than
+   `na` so "not due yet" and "never expected" are two visibly different states. */
+.u-wait { fill: var(--border); }
 
 /* 90-day grid */
 table.uptime-grid { border-collapse: separate; border-spacing: 1px; font-size: var(--fs-micro); width: auto; }
@@ -519,6 +565,7 @@ table.uptime-grid thead th { position: static; background: transparent; }
 .uptime-grid .cell.is-part { background: var(--warn); }
 .uptime-grid .cell.is-no { background: var(--bad); }
 .uptime-grid .cell.is-na { background: var(--surface-3); }
+.uptime-grid .cell.is-wait { background: var(--border); }
 .uptime-grid .monthlbl {
   font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--ink-3);
   font-weight: 400; text-align: left; padding-bottom: var(--sp-1); text-transform: none; letter-spacing: 0;

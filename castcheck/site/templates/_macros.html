@@ -16,7 +16,7 @@
 </nav>
 {%- endmacro %}
 
-{% macro meta_list(as_of, data_through, built_at, next_update, extra) -%}
+{% macro meta_list(as_of, data_through, built_at, next_update, extra, built_at_human='', next_update_human='') -%}
 <dl class="metastrip">
   <div><dt>Window</dt><dd>{{ extra.window_label }}</dd></div>
 {% if extra.variable_label %}
@@ -25,22 +25,25 @@
   <div><dt>Init</dt><dd>{{ extra.init_hour }}Z</dd></div>
   <div><dt>Interpolation</dt><dd>{{ extra.method }}</dd></div>
   <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-  <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
-  <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+  <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human or built_at }}</time></dd></div>
+  <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human or next_update }}</time></dd></div>
 </dl>
 {%- endmacro %}
 
+{# The compact cell classes (`n`, `c`, `s`, `bb`) render exactly like `is-num`/`val`/`ci`/`sub`/
+   `bias__bar`; they exist because the model × lead grids and the permanent-link tables are most
+   of the site's bytes. #}
 {% macro bias_cell(cell) -%}
-<td class="is-num bias{{ ' is-lown' if cell.low_n else '' }}"><span class="val">{{ cell.bias }}</span><i class="bias__bar {{ cell.bias_class }}"></i></td>
+<td class="n bias{{ ' is-lown' if cell.low_n else '' }}">{{ cell.bias }}<i class="bb {{ cell.bias_short }}"></i></td>
 {%- endmacro %}
 
 {# The numeric MAE-over-bias cell used by every model × lead grid. #}
 {% macro grid_cell(c) -%}
-{% if c %}<td class="is-num{{ ' is-lown' if c.low_n }}"><span class="val"><a href="{{ c.permalink }}">{{ c.mae }}</a></span><span class="ci">{{ c.bias }} · n={{ c.n }}</span><i class="bias__bar {{ c.bias_class }}"></i></td>
-{% else %}<td class="is-num is-lown"><span class="val">—</span></td>{% endif %}
+{% if c %}<td class="n{{ ' is-lown' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><i class=c>{{ c.bias }} · n={{ c.n }}</i><i class="bb {{ c.bias_short }}"></i></td>
+{% else %}<td class="n is-lown">—</td>{% endif %}
 {%- endmacro %}
 
-{% macro legend(min_n, holm=true) -%}
+{% macro legend(min_n, holm=true, skill_min_common=10) -%}
 <p class="legend">
 <span><i class="swatch is-warm-2"></i> + model too warm</span>
 <span><i class="swatch is-cool-2"></i> &minus; model too cold</span>
@@ -57,6 +60,8 @@ leader</span>{% endif %}
 <span>n&nbsp;&lt;&nbsp;{{ min_n }} greyed and unranked</span>
 <span>CI is a 95 % moving-block bootstrap interval on the group's own days, and reads — when it
 could not be computed</span>
+<span>skill reads — when fewer than {{ skill_min_common }} days are common to the model and the
+baseline: the ratio of two means over a handful of shared days is not a number worth printing</span>
 </p>
 {%- endmacro %}
 

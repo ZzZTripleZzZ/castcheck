@@ -18,8 +18,8 @@
     <div><dt>Ranked</dt><dd>{{ n_ranked }}</dd></div>
     <div><dt>Baselines</dt><dd>{{ n_base }}</dd></div>
     <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
-    <div><dt>Updated</dt><dd>{{ built_at }}</dd></div>
-    <div><dt>Next update</dt><dd>{{ next_update }}</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+    <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
   </dl>
 </section>
 

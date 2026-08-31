@@ -24,7 +24,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import typer
 
-from . import __version__
+from . import __version__, schedule
 from .config import PUBLIC_DIR, REPO_ROOT, ModelSpec, load_models, load_stations, model_by_id
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="CastCheck — forecast verification pipeline")
@@ -33,12 +33,11 @@ app.add_typer(publish_app, name="publish")
 
 log = logging.getLogger("castcheck")
 
-# Expected availability delay (hours after init) before a run is worth fetching; measured 2026-08-30.
-# Keyed by ``source``; the same delay applies to the 00Z and 12Z cycles of a model.
-AVAILABILITY_DELAY_H = {"ecmwf": 8.0, "gfs": 5.5, "aiwp": 9.5}
-# AIWP publishes the GFS-initialised runs about three hours before the IFS-initialised ones, because
-# it has to wait for ECMWF's own dissemination first.
-AIWP_DELAY_H_BY_INIT_FIELD = {"GFS": 6.0, "IFS": 9.5}
+# The availability delays live in ``castcheck.schedule`` because ``status.py`` needs exactly the
+# same answer: a run the fetcher has correctly not asked for yet must not be drawn as a gap.  The
+# names are re-exported here so that the historical ``cli.AVAILABILITY_DELAY_H`` keeps working.
+AVAILABILITY_DELAY_H = schedule.AVAILABILITY_DELAY_H
+AIWP_DELAY_H_BY_INIT_FIELD = schedule.AIWP_DELAY_H_BY_INIT_FIELD
 
 #: A run that is stored but incomplete is retried by later passes; not more often than this, so that
 #: four scheduled fetches a day do not re-download the same permanently-partial run four times.
@@ -168,9 +167,7 @@ def _parse_init(s: str) -> datetime:
 
 def availability_delay_h(model: ModelSpec) -> float:
     """Hours after initialisation at which `model`'s run is normally complete upstream."""
-    if model.source == "aiwp":
-        return AIWP_DELAY_H_BY_INIT_FIELD.get(model.init_field or "GFS", AVAILABILITY_DELAY_H["aiwp"])
-    return AVAILABILITY_DELAY_H.get(model.source, 8.0)
+    return schedule.availability_delay_h(model)
 
 
 def _source_for(model: ModelSpec):

@@ -5,7 +5,12 @@
 {% block description %}Daily-updated, station-level verification of raw weather-model 2 m temperature forecasts: MAE, bias, bootstrap intervals and sample sizes for every model, station and lead day.{% endblock %}
 {% block head %}<link rel="canonical" href="{{ canonical }}">{% endblock %}
 {% block content %}
-{% set top = headline.rows[0] if headline and headline.n_ranked else none %}
+{# The leader is only named when it is both ranked (n >= min_n) and has an interval: a
+   "leader" whose CI could not be computed is a point estimate wearing a crown. #}
+{% set ranked_rows = (headline.rows | rejectattr('baseline') | rejectattr('low_n') | list)
+   if headline else [] %}
+{% set top = (ranked_rows | rejectattr('mae_ci', 'equalto', '—') | list | first)
+   if ranked_rows else none %}
 {% set pers = (headline.rows | selectattr('baseline') | list | first) if headline else none %}
 
 <section class="hero">
@@ -34,15 +39,15 @@
 {# a blank line here would be swallowed by trim_blocks, so the space is explicit #} Errors are
       computed in °C and shown in °F
       (<a href="/methodology/">methodology v{{ methodology_version }}</a>).</p>
-      {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method, 'variable_label': variable_label}) }}
+      {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method, 'variable_label': variable_label}, built_at_human, next_update_human) }}
     </div>
     <div>
       <div class="kpi-row">
         <div class="kpi">
           <p class="kpi__label">Leader, lead day {{ headline.lead if headline else 1 }}</p>
           <p class="kpi__value">{{ top.mae if top else '—' }}{% if top %}<span class="unit">°F</span>{% endif %}</p>
-          <p class="kpi__ci">{{ (top.mae_ci ~ ' MAE') if top else 'nothing ranked yet' }}</p>
-          <p class="kpi__foot">{% if top %}{{ top.model_name }}{% else %}n &lt; {{ min_n }} everywhere{% endif %}</p>
+          <p class="kpi__ci">{{ (top.mae_ci ~ ' MAE') if top else 'no ranked group with an interval yet' }}</p>
+          <p class="kpi__foot">{% if top %}{{ top.model_name }}{% elif ranked_rows %}{{ ranked_rows|length }} ranked, none with a bootstrap interval yet{% else %}n &lt; {{ min_n }} everywhere{% endif %}</p>
         </div>
         <div class="kpi">
           <p class="kpi__label">Persistence baseline</p>
@@ -58,8 +63,13 @@
         </div>
         <div class="kpi">
           <p class="kpi__label">Systems ranked</p>
-          <p class="kpi__value">{{ headline.n_ranked if headline else 0 }}<span class="unit">/{{ n_systems }}</span></p>
-          <p class="kpi__ci">next update {{ next_update }}</p>
+{% set n_ranked = headline.n_ranked if headline else 0 %}
+{% if n_ranked %}
+          <p class="kpi__value">{{ n_ranked }}<span class="unit">/{{ n_systems }}</span></p>
+{% else %}
+          <p class="kpi__value kpi__value--text">0 of {{ n_systems }} ranked yet<span class="unit">n &lt; {{ min_n }}</span></p>
+{% endif %}
+          <p class="kpi__ci">next update <time datetime="{{ next_update }}">{{ next_update_human }}</time></p>
           <p class="kpi__foot">below n = {{ min_n }}: published, greyed, unranked</p>
         </div>
       </div>
@@ -140,7 +150,7 @@ another view above, or see <a href="/status/">status</a> for what the pipeline h
         <td class="is-num"><span class="rank{{ ' rank--1' if r.rank == 1 }}">{{ r.rank or '—' }}</span></td>
         <th scope="row" class="model-cell"><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}{% if r.baseline %} · baseline{% endif %}</span></th>
         <td class="is-num{{ ' is-best' if r.best_mae }}"><span class="val"><a href="{{ r.permalink }}">{{ r.mae }}</a></span><span class="ci">{{ r.mae_ci }}</span></td>
-        <td class="is-num bias"><span class="val"><a href="{{ r.permalink }}">{{ r.bias }}</a></span><span class="ci">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
+        <td class="n bias"><a href="{{ r.permalink }}">{{ r.bias }}</a><i class=c>{{ r.bias_ci }}</i><i class="bb {{ r.bias_short }}" style="width:{{ r.bias_w }}%"></i></td>
 {% if full %}<td class="is-num"><span class="val"><a href="{{ r.permalink }}">{{ r.hit3f }}</a></span></td>{% endif %}
         <td class="is-num{{ ' is-best' if r.best_skill }}"><span class="val"><a href="{{ r.permalink }}">{{ r.skill }}</a></span>{% if not r.baseline %}<span class="ci">{{ r.skill_ci }}</span><span class="sub">{{ r.skill_vs }}</span>{% if r.skill_w %}<i class="meter"><i style="width:{{ r.skill_w }}%"></i></i>{% endif %}{% endif %}</td>
 {% if full %}<td class="is-num"><span class="val">{{ r.skill_debiased }}</span>{% if r.n_debiased != '—' and not r.baseline %}<span class="ci">n={{ r.n_debiased }}</span>{% endif %}</td>{% endif %}
@@ -151,7 +161,7 @@ another view above, or see <a href="/status/">status</a> for what the pipeline h
       </tbody>
     </table></div>
   </div>
-{% if loop.first %}<div class="panel__foot">{{ m.legend(min_n, b.holm) }}</div>{% endif %}
+{% if loop.first %}<div class="panel__foot">{{ m.legend(min_n, b.holm, skill_min_common) }}</div>{% endif %}
 </section>
 {% endfor %}
 
@@ -180,7 +190,7 @@ another view above, or see <a href="/status/">status</a> for what the pipeline h
           <td class="is-num"><span class="rank{{ ' rank--1' if r.rank == 1 }}">{{ r.rank or '—' }}</span></td>
           <th scope="row" class="model-cell"><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}</span></th>
           <td class="is-num{{ ' is-best' if r.best_mae }}"><span class="val"><a href="{{ r.permalink }}">{{ r.mae }}</a></span><span class="ci">{{ r.mae_ci }}</span></td>
-          <td class="is-num bias"><span class="val">{{ r.bias }}</span><span class="ci">{{ r.bias_ci }}</span><i class="bias__bar {{ r.bias_class }}" style="width:{{ r.bias_w }}%;margin-left:auto"></i></td>
+          <td class="n bias">{{ r.bias }}<i class=c>{{ r.bias_ci }}</i><i class="bb {{ r.bias_short }}" style="width:{{ r.bias_w }}%"></i></td>
           <td class="is-num"><span class="val">{{ r.skill }}</span>{% if not r.baseline %}<span class="ci">{{ r.skill_vs }}</span>{% endif %}</td>
           <td class="is-num"><span class="val">{{ r.n }}</span>{% if r.n_note %}<span class="sub">{{ r.n_note }}</span>{% endif %}</td>
           <td class="mark{% if r.mark == '★' %} mark--best{% elif r.mark == '▼' %} mark--worse{% endif %}">{% if r.mark %}<span title="{{ r.mark_title }}">{{ r.mark }}</span>{% endif %}</td>
@@ -258,7 +268,7 @@ another view above, or see <a href="/status/">status</a> for what the pipeline h
 {% for r in mp.rows %}
         <tr class="{{ 'is-lown' if r.low_n }}"><th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a> {{ r.name }}</th>
         <td>{{ r.note }}</td><td class="is-num"><span class="val">{{ r.mae }}</span></td>
-        <td class="is-num bias"><span class="val">{{ r.bias }}</span><i class="bias__bar {{ r.bias_class }}"></i></td>
+        <td class="n bias">{{ r.bias }}<i class="bb {{ r.bias_short }}"></i></td>
         <td class="is-num"><span class="val">{{ r.n }}</span></td></tr>
 {% endfor %}
         </tbody>

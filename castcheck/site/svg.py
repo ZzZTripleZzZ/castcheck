@@ -55,6 +55,12 @@ def bias_class(bias_f: float | None, significant: bool = True) -> str:
 
 
 def _fmt(x: float, digits: int = 1) -> str:
+    """A coordinate, at one decimal by default and with trailing zeros stripped.
+
+    Every figure is inline SVG in a page that has to work with JavaScript off, so the path data is
+    part of the HTML of ~4 000 files; a tenth of a viewBox unit is a fraction of a device pixel at
+    any size these charts are drawn at, and any more digits is only bytes.
+    """
     return f"{x:.{digits}f}".rstrip("0").rstrip(".") or "0"
 
 
@@ -235,8 +241,8 @@ def histogram(
         centre = lo + (i + 0.5) * step
         cls = "c-hist is-warm" if centre > 0 else "c-hist is-cool"
         out.append(
-            f'<rect class="{cls}" x="{_fmt(x + 0.4, 2)}" y="{_fmt(top + ih - h, 2)}" '
-            f'width="{_fmt(max(bw - 0.8, 0.5), 2)}" height="{_fmt(h, 2)}">'
+            f'<rect class="{cls}" x="{_fmt(x + 0.4)}" y="{_fmt(top + ih - h)}" '
+            f'width="{_fmt(max(bw - 0.8, 0.5))}" height="{_fmt(h)}">'
             f"<title>{_fmt(lo + i * step, 2)} to {_fmt(lo + (i + 1) * step, 2)} {unit}: "
             f"{c} day{'' if c == 1 else 's'}</title></rect>"
         )
@@ -277,8 +283,13 @@ def sparkline(
     width: float = 96.0,
     height: float = 28.0,
     vmax: float | None = None,
+    muted: bool = False,
 ) -> str:
-    """A tiny MAE-versus-lead line drawn on a shared vertical scale (``vmax``)."""
+    """A tiny MAE-versus-lead line drawn on a shared vertical scale (``vmax``).
+
+    ``muted`` draws it in grey: the shape of a series the site refuses to rank (``n < MIN_N``)
+    should not read as a result, and colour is the fastest way to say so.
+    """
     finite = [v for v in values if v is not None]
     if not finite:
         return f'<span class="spark-empty" aria-label="{escape(label)}: no data">—</span>'
@@ -293,7 +304,8 @@ def sparkline(
     def py(v: float) -> float:
         return height - pad - (v / hi) * (height - 2 * pad)
 
-    out = _open(width, height, label, cls="sparkline")
+    out = _open(width, height, label,
+                cls="sparkline is-muted" if muted else "sparkline")
     seg, started = [], False
     for i, v in enumerate(values):
         if v is None:
@@ -324,8 +336,8 @@ def availability_row(flags: list[str], *, label: str, width: float = 300.0,
     w = width / n
     for i, f in enumerate(flags):
         out.append(
-            f'<rect class="u-{f}" x="{_fmt(i * w, 3)}" y="0" '
-            f'width="{_fmt(max(w - 0.35, 0.4), 3)}" height="{_fmt(height)}" rx="1"/>'
+            f'<rect class="u-{f}" x="{_fmt(i * w, 2)}" y="0" '
+            f'width="{_fmt(max(w - 0.35, 0.4), 2)}" height="{_fmt(height)}" rx="1"/>'
         )
     out.append("</svg>")
     return "".join(out)

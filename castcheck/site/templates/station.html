@@ -14,7 +14,7 @@
   {{ station.cli_pil }}{% else %}
   Cross-station aggregate: the daily error series is first averaged over the stations that have a
   value that day, then scored and bootstrapped over days exactly like a single station.{% endif %}</p>
-  {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method}) }}
+  {{ m.meta_list(as_of, data_through, built_at, next_update, {'window_label': window_label, 'init_hour': init_hour, 'method': method}, built_at_human, next_update_human) }}
 </section>
 
 {{ m.switcher(variants, 'these pages are always bilinear — every other combination is on the permanent links') }}
@@ -38,7 +38,7 @@
   CLI value that disagreed with the hourly observations, or a fallback source). They are kept in
   the scores and counted here rather than dropped — see <a href="/methodology/">methodology</a>.</p>
 {% endif %}
-{% if loop.first %}{{ m.legend(min_n) }}{% endif %}
+{% if loop.first %}{{ m.legend(min_n, true, skill_min_common) }}{% endif %}
   </div>
 </section>
 {% endfor %}
@@ -73,7 +73,7 @@ initialization or interpolation selected here.</p>
       <tbody>
 {% for r in months %}
       <tr><th scope="row" class="keycell">{{ r.month }}</th>
-      {% for c in r.cells %}{% if c %}<td class="is-num"><span class="val">{{ c.mae }}</span><span class="ci">{{ c.bias }} · n={{ c.n }}</span><i class="bias__bar {{ c.bias_class }}"></i></td>{% else %}<td class="is-num is-lown"><span class="val">—</span></td>{% endif %}{% endfor %}
+      {% for c in r.cells %}{% if c %}<td class=n>{{ c.mae }}<i class=c>{{ c.bias }} · n={{ c.n }}</i><i class="bb {{ c.bias_short }}"></i></td>{% else %}<td class="n is-lown">—</td>{% endif %}{% endfor %}
       </tr>
 {% endfor %}
       </tbody>
