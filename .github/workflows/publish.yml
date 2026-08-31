@@ -18,17 +18,17 @@ jobs:
       BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
       BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with: { fetch-depth: 1 }
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
-      - run: uv venv --python 3.12 && uv pip install -e ".[publish]"
+      - run: uv sync --frozen --extra publish
       - run: .venv/bin/castcheck daily
       - name: status (non-blocking)
         run: .venv/bin/castcheck status --no-fail-on-gaps
       - name: deploy site to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: 3efa563a628218e49a3c2c13075cd788

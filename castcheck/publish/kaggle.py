@@ -45,12 +45,12 @@ def _stage(slug: str) -> Path:
         shutil.copy(src, stage / "scores_pairwise_latest.parquet")  # ~50 MB as CSV; keep parquet
     daily_dir = DATA_DIR / "daily_forecasts"
     if daily_dir.exists():
-        frames = [pd.read_parquet(f) for f in daily_dir.rglob("*.parquet")]
+        frames = [pd.read_parquet(f) for f in daily_dir.rglob("*.parquet") if ".tmp" not in f.name and not f.name.startswith(".")]
         if frames:
             pd.concat(frames, ignore_index=True).to_parquet(stage / "daily_forecasts.parquet", index=False)
     truth_dir = DATA_DIR / "truth_daily"
     if truth_dir.exists():
-        frames = [pd.read_parquet(f) for f in truth_dir.glob("*.parquet")]
+        frames = [pd.read_parquet(f) for f in truth_dir.glob("*.parquet") if ".tmp" not in f.name and not f.name.startswith(".")]
         if frames:
             pd.concat(frames, ignore_index=True).to_csv(stage / "truth_daily.csv", index=False)
     shutil.copy(REPO_ROOT / "METHODOLOGY.md", stage / "METHODOLOGY.md")
@@ -112,6 +112,6 @@ def push_dataset(slug: str, dry_run: bool = False) -> str:
     shutil.rmtree(stage, ignore_errors=True)
     lines = [ln for ln in (r.stdout + "\n" + r.stderr).splitlines() if ln.strip() and "%|" not in ln]
     out = "\n".join(lines[-6:])
-    if r.returncode != 0 or re.search(r"error", out, re.I):
+    if r.returncode != 0 or re.search(r"(creation|upload|version) error|^error|invalid|forbidden|unauthorized", out, re.I | re.M):
         raise RuntimeError(f"kaggle publish failed: {out}")
     return out

@@ -19,3 +19,8 @@ data/raw/*
 docs/
 .hf_README.md
 .kaggle_stage/
+
+# never commit half-written shards or wrangler caches
+*.tmp.parquet
+.*.tmp
+.wrangler/

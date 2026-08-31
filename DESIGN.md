@@ -360,3 +360,78 @@ summary line was logged. The portal (`data.ecmwf.int`) served 9 requests with no
 | F. `cli.py`, workflows, launchd, `publish/` | ops | all |
 
 Owners of B–E may stub `Station`/`ModelSpec` locally if A is not merged yet, but must match §2 exactly.
+
+## 10. v0.3 — headline redefined after external review (2026-08-31)
+
+External review (meteorologist/statistician, see `docs/06-external-review-v02.md`) found that verifying
+*sampled* daily extremes against the *true* NWS extremes makes the headline metric depend on each model's
+own diurnal amplitude, and that the shared-resampling bootstrap gives unstable intervals for sparse groups.
+v0.3 fixes both. Contracts below are binding for the implementation round; `SCHEMA_VERSION` → `"0.3"`,
+`METHODOLOGY_VERSION` → `"0.3"`.
+
+### 10.1 New truth table `truth_instant` (observed 2 m temperature at the common sample instants)
+Path `data/truth_instant/year=<YYYY>.parquet`, key `(station_id, valid_time)`.
+
+| column | type | notes |
+|---|---|---|
+| station_id | str | |
+| valid_time | timestamp[UTC] | one of 00/06/12/18 UTC |
+| temp_c | float32 | observed 2 m air temperature; NaN if no usable report |
+| obs_time | timestamp[UTC] | timestamp of the report actually used |
+| source | str | `ASOS_IEM` (IEM ASOS archive, routine METAR, `report_type=3`) or `NWS_API` (api.weather.gov, last 7 days) |
+| n_reports | int8 | reports found inside the ±35 min window |
+| qc_flag | str | `""`, `"no_report"`, `"gap_gt35min"`, `"suspect"` |
+| schema_version, methodology_version | str | |
+
+Rule: use the routine METAR closest to the synoptic hour within ±35 min (prefer the :51–:56 report); ASOS
+reports whole °F/tenths °C — store as reported, converted to °C float32. Source module
+`castcheck/sources/iem_asos.py` (IEM: `https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py?station=<ID>&data=tmpf&year1=..&tz=Etc/UTC&format=onlycomma&report_type=3` — IEM ids drop the leading K for CONUS ASOS, e.g. `NYC`, `ORD`; verify per station). Backfill 2024-01-01→ for all stations.
+
+### 10.2 Headline variables (scores.variable)
+| variable | forecast | truth | role |
+|---|---|---|---|
+| `t2` | instantaneous 2 m T at the 4 common instants | `truth_instant.temp_c` at the same instant | **headline** (pooled over the 4 instants) |
+| `t2_00z`,`t2_06z`,`t2_12z`,`t2_18z` | same, one valid hour | same | permalink/station pages (diurnal structure) |
+| `tmax_s`, `tmin_s` | max/min of the 4 forecast samples | max/min of the 4 **observed** samples (same definition) | like-for-like daily extremes |
+| `tmax_cli`, `tmin_cli` | max/min of the 4 forecast samples | NWS CLI daily extremes | secondary "what a daily-max user experiences"; carries the sampling penalty, labelled as such |
+
+Native extremes (`mx2t*`, `TMAX/TMIN`) remain diagnostic columns in `daily_forecasts` and get their own
+secondary variables `tmax_native_cli`, `tmin_native_cli` (vs CLI) where available.
+
+### 10.3 Statistics
+- **Bootstrap per group** on the group's own realized date axis: circular moving-block, block = 7 days,
+  1000 resamples, percentile 95 % CI. CI is `NaN` (site shows "—") when `n < 28` or `n_blocks < 4`.
+  Vectorise per group (index matrix `B × n`), not across groups.
+- **Proportions** (`hit1f/hit2f/hit3f`): Wilson score 95 % intervals, no bootstrap.
+- **Skill**: `skill_persistence = 1 − mae / mae_persistence_common`, with new columns `n_common`,
+  `mae_persistence_common`; the persistence baseline for `t2*` is the observation at the same UTC hour
+  `lead_day` days earlier; for `tmax_s/tmin_s/tmax_cli/tmin_cli` the observed extreme `lead_day` days earlier.
+  `skill_ci_low/high` via the same paired bootstrap.
+- **Debiased skill** becomes out-of-sample: bias estimated on the trailing 30 scored days *before* each
+  day (min 15 days), applied forward; days without enough history are excluded from `mae_debiased`
+  (`n_debiased` column). Never in-sample.
+- **Multiple comparisons**: pairwise keeps `mae_diff, ci_low, ci_high`; rename `significant` →
+  `distinguishable_uncorrected`; add `p_boot` (two-sided bootstrap p) and `distinguishable_holm`
+  (Holm over the family of comparisons against the leader within one displayed table: same station,
+  init, lead, variable, method, window). The site marks ▼/▲ only on `distinguishable_holm`.
+- **ALL row** unchanged (per-day cross-station mean of each functional separately) — wording fixed in §4.
+
+### 10.4 Station metadata
+`config/stations.yaml` gains `grid_elev_m` (mean elevation of the 0.25° cell containing the station,
+from the public-domain ETOPO 2022 60-arc-second grid, computed once by `scripts/build_stations.py
+--grid-elev`) and derived `dz_m = elev_m − grid_elev_m`; `/stations/` and stations.csv show `dz_m` and
+the first-order lapse-rate magnitude `|dz_m| × 6.5 K/km`. The `kalshi` column is renamed
+`market_city` and the selection rule is stated in METHODOLOGY §1.
+
+### 10.5 Site/doc corrections from the review
+Fix code URL on /data/ (github.com/ZzZTripleZzZ/castcheck); changelog v0.2/v0.3 on /data/; §10 title;
+/models/ reference to §7; /stations/ "scored days" must exclude baselines; status uptime counted from each
+model's `period_start`; map shows bias of a fixed reference (IFS HRES) and an all-model mean, never the
+per-station winner; add `CITATION.cff`, source commit hash in the footer, `forecast_values` download on
+/data/; `mae` described without a sign clause; lead-hour/longitude note in §2.5.
+
+### 10.6 Phenomenon note (cautious)
+The observed larger cold bias of the AI models at 18/00 UTC is reported as an *unattributed observation*;
+the ERA5-training explanation is listed as a hypothesis alongside sampling and initial-condition effects,
+with the planned attribution analyses (per-hour bias, native extremes, ERA5 run through the same pipeline,
+seasonal split). No causal wording on the site until those are done.

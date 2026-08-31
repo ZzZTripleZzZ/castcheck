@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
-      - run: uv venv --python 3.12 && uv pip install -e ".[dev,publish]"
+      - run: uv sync --frozen --extra dev --extra publish
       # Whole repo, not a file list, and a pinned ruff: the implicit default rule set moves between
       # ruff releases, so the version is pinned here and the rules in [tool.ruff.lint] — that is what
       # makes `uvx ruff@0.16.5 check --no-cache .` locally give the same answer as CI.
