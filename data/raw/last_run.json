@@ -12,13 +12,13 @@
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 240.968,
-      "exit_code": 0,
-      "finished_at": "2026-08-31T04:33:33+00:00",
+      "duration_s": 0.067,
+      "exit_code": 1,
+      "finished_at": "2026-08-31T04:41:42+00:00",
       "last_success_at": "2026-08-31T04:33:33+00:00",
-      "started_at": "2026-08-31T04:29:32+00:00",
-      "status": "ok",
-      "summary": "site written to public"
+      "started_at": "2026-08-31T04:41:42+00:00",
+      "status": "error",
+      "summary": "ArrowInvalid: Could not open Parquet input source 'data/scores/latest.parquet': Parquet file size is 0 bytes"
     },
     "daily": {
       "castcheck_version": "0.1.0",
@@ -32,13 +32,13 @@
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 5.258,
-      "exit_code": 0,
-      "finished_at": "2026-08-31T04:37:44+00:00",
+      "duration_s": 5.198,
+      "exit_code": 1,
+      "finished_at": "2026-08-31T04:41:39+00:00",
       "last_success_at": "2026-08-31T04:37:44+00:00",
-      "started_at": "2026-08-31T04:37:39+00:00",
-      "status": "ok",
-      "summary": "1465422 values (full) -> 205126 daily rows"
+      "started_at": "2026-08-31T04:41:34+00:00",
+      "status": "error",
+      "summary": "ArrowInvalid: Could not open Parquet input source 'data.../model_id=aifs_single/year=2026.parquet': Parquet file size is 0 bytes"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -59,6 +59,26 @@
       "started_at": "2026-08-31T00:00:23+00:00",
       "status": "ok",
       "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
+    },
+    "publish-hf": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 9.274,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:41:57+00:00",
+      "last_success_at": "2026-08-31T04:41:57+00:00",
+      "started_at": "2026-08-31T04:41:48+00:00",
+      "status": "ok",
+      "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
+    },
+    "publish-kaggle": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.02,
+      "exit_code": 1,
+      "finished_at": "2026-08-31T04:41:58+00:00",
+      "last_success_at": null,
+      "started_at": "2026-08-31T04:41:58+00:00",
+      "status": "error",
+      "summary": "ArrowInvalid: Could not open Parquet input source '<Buffer>': Parquet file size is 0 bytes"
     },
     "truth": {
       "castcheck_version": "0.1.0",
@@ -102,14 +122,14 @@
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 36.473,
-      "exit_code": 0,
-      "finished_at": "2026-08-31T04:38:21+00:00",
+      "duration_s": 0.045,
+      "exit_code": 1,
+      "finished_at": "2026-08-31T04:41:40+00:00",
       "last_success_at": "2026-08-31T04:38:21+00:00",
-      "started_at": "2026-08-31T04:37:45+00:00",
-      "status": "ok",
-      "summary": "scores=269520 pairwise=1023120 as_of=2026-08-31"
+      "started_at": "2026-08-31T04:41:40+00:00",
+      "status": "error",
+      "summary": "ArrowInvalid: Could not open Parquet input source 'data.../model_id=aifs_single/year=2026.parquet': Parquet file size is 0 bytes"
     }
   },
-  "updated_at": "2026-08-31T04:38:21+00:00"
+  "updated_at": "2026-08-31T04:41:58+00:00"
 }

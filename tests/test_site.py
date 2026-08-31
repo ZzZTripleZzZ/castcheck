@@ -635,10 +635,12 @@ def test_maps_are_a_fixed_reference_and_an_all_model_mean(built):
 def test_footer_carries_the_commit_and_a_citation_route(built):
     """C2: a published number can be tied to the code that produced it."""
     out, _, _, _ = built
-    commit = source_commit()
-    assert commit
+    assert source_commit()  # a short hash in a checkout, "local" outside one
     html = (out / "index.html").read_text()
-    assert commit in html and 'href="/data/#cite"' in html
+    # not compared against a freshly-read HEAD: the data pipeline commits while a build runs, so
+    # the stamped hash is the one the build saw, which is the point of stamping it.
+    assert re.search(r'/commit/([0-9a-f]{7,40}|local)"><code>', html)
+    assert 'href="/data/#cite"' in html
     assert REPO_URL in html and "github.com/zifanzhang/castcheck" not in html
     cff = (out.parent / "CITATION.cff") if (out.parent / "CITATION.cff").exists() else None
     assert cff is None or "cff-version" in cff.read_text()
