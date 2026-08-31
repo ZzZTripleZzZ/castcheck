@@ -2,33 +2,33 @@
   "commands": {
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 32.756,
+      "duration_s": 89.726,
       "exit_code": 0,
-      "finished_at": "2026-08-31T01:00:05+00:00",
-      "last_success_at": "2026-08-31T01:00:05+00:00",
-      "started_at": "2026-08-31T00:59:32+00:00",
+      "finished_at": "2026-08-31T03:53:01+00:00",
+      "last_success_at": "2026-08-31T03:53:01+00:00",
+      "started_at": "2026-08-31T03:51:31+00:00",
       "status": "ok",
-      "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
+      "summary": "site written to /home/runner/work/castcheck/castcheck/public"
     },
     "daily": {
       "castcheck_version": "0.1.0",
-      "duration_s": 55.097,
+      "duration_s": 123.712,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:43:10+00:00",
-      "last_success_at": "2026-08-31T00:43:10+00:00",
-      "started_at": "2026-08-31T00:42:15+00:00",
+      "finished_at": "2026-08-31T03:53:01+00:00",
+      "last_success_at": "2026-08-31T03:53:01+00:00",
+      "started_at": "2026-08-31T03:50:57+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 1.287,
+      "duration_s": 2.651,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:16+00:00",
-      "last_success_at": "2026-08-31T00:42:16+00:00",
-      "started_at": "2026-08-31T00:42:15+00:00",
+      "finished_at": "2026-08-31T03:51:00+00:00",
+      "last_success_at": "2026-08-31T03:51:00+00:00",
+      "started_at": "2026-08-31T03:50:57+00:00",
       "status": "ok",
-      "summary": "402040 values -> 40548 daily rows"
+      "summary": "1160534 values -> 124286 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -42,13 +42,43 @@
     },
     "publish-bluesky": {
       "castcheck_version": "0.1.0",
-      "duration_s": 25.108,
+      "duration_s": 5.171,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:00:48+00:00",
-      "last_success_at": "2026-08-31T00:00:48+00:00",
-      "started_at": "2026-08-31T00:00:23+00:00",
+      "finished_at": "2026-08-31T03:53:51+00:00",
+      "last_success_at": "2026-08-31T03:53:51+00:00",
+      "started_at": "2026-08-31T03:53:46+00:00",
       "status": "ok",
-      "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
+      "summary": "posted as castcheck.zifanzhang.com (200 chars, window=90d)"
+    },
+    "publish-hf": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 4.503,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:53:36+00:00",
+      "last_success_at": "2026-08-31T03:53:36+00:00",
+      "started_at": "2026-08-31T03:53:32+00:00",
+      "status": "ok",
+      "summary": "pushed to https://huggingface.co/datasets/castcheck/temperature-verification (https://huggingface.co/datasets/castcheck/temperature-verification/commit/52eec777eb2b3da6ed4ac3532cc157ed2f8cff67)"
+    },
+    "publish-kaggle": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 8.985,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:53:46+00:00",
+      "last_success_at": "2026-08-31T03:53:46+00:00",
+      "started_at": "2026-08-31T03:53:37+00:00",
+      "status": "ok",
+      "summary": "Dataset version is being created. Please check progress at https://www.kaggle.com/datasets/zhangzifan716/castcheck-temperature-forecast-verification"
+    },
+    "status": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.458,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:53:02+00:00",
+      "last_success_at": "2026-08-31T03:53:02+00:00",
+      "started_at": "2026-08-31T03:53:01+00:00",
+      "status": "ok",
+      "summary": "45 gap(s) today"
     },
     "truth": {
       "castcheck_version": "0.1.0",
@@ -72,14 +102,14 @@
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 12.284,
+      "duration_s": 31.111,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:29+00:00",
-      "last_success_at": "2026-08-31T00:42:29+00:00",
-      "started_at": "2026-08-31T00:42:16+00:00",
+      "finished_at": "2026-08-31T03:51:31+00:00",
+      "last_success_at": "2026-08-31T03:51:31+00:00",
+      "started_at": "2026-08-31T03:51:00+00:00",
       "status": "ok",
-      "summary": "scores=24624 pairwise=30432 as_of=2026-08-31"
+      "summary": "scores=47552 pairwise=160384 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T03:40:58+00:00"
+  "updated_at": "2026-08-31T03:53:51+00:00"
 }
