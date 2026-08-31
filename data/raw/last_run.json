@@ -1,0 +1,65 @@
+{
+  "commands": {
+    "build-site": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 30.725,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:34:19+00:00",
+      "last_success_at": "2026-08-31T00:34:19+00:00",
+      "started_at": "2026-08-31T00:33:48+00:00",
+      "status": "ok",
+      "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
+    },
+    "derive": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.753,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:26:28+00:00",
+      "last_success_at": "2026-08-31T00:26:28+00:00",
+      "started_at": "2026-08-31T00:26:27+00:00",
+      "status": "ok",
+      "summary": "391000 values -> 37968 daily rows"
+    },
+    "fetch-latest": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.017,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:30:40+00:00",
+      "last_success_at": "2026-08-31T00:30:40+00:00",
+      "started_at": "2026-08-31T00:30:40+00:00",
+      "status": "ok",
+      "summary": "nothing to fetch"
+    },
+    "publish-bluesky": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 25.108,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:00:48+00:00",
+      "last_success_at": "2026-08-31T00:00:48+00:00",
+      "started_at": "2026-08-31T00:00:23+00:00",
+      "status": "ok",
+      "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
+    },
+    "truth-backfill": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 7.334,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:31:41+00:00",
+      "last_success_at": "2026-08-31T00:31:41+00:00",
+      "started_at": "2026-08-31T00:31:34+00:00",
+      "status": "ok",
+      "summary": "2024-01-01..2024-02-29: 1380 rows, 23 station(s)"
+    },
+    "verify": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 2.876,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:26:31+00:00",
+      "last_success_at": "2026-08-31T00:26:31+00:00",
+      "started_at": "2026-08-31T00:26:29+00:00",
+      "status": "ok",
+      "summary": "scores=10096 pairwise=5088 as_of=2026-08-31"
+    }
+  },
+  "updated_at": "2026-08-31T00:34:19+00:00"
+}

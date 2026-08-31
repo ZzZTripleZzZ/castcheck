@@ -14,7 +14,7 @@ Fixtures in ``tests/fixtures/`` are verbatim NWS products pulled from the IEM AF
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -269,6 +269,40 @@ def test_first_final_keeps_sources_apart():
     merged = _apply_first_final(pd.DataFrame(rows, columns=TRUTH_COLUMNS))
     assert len(merged) == 2
     assert set(merged["source"]) == {"CLI", "CF6"}
+
+
+def test_first_final_survives_mixed_present_and_missing_corrections():
+    """Regression: `truth-backfill` over a long range crashed with ``KeyError: np.int64(N)``.
+
+    A year of station-days contains both corrected reports (``revised_tmax_f`` present) and reports
+    that are merely flagged as revised (``revised_tmax_f`` missing). Writing that mixture into the
+    nullable ``Int16`` column through ``DataFrame.loc`` tripped a pandas bug that indexes the value
+    Series positionally while it carries the ``(station_id, climo_date, source)`` MultiIndex.
+    """
+    rows = []
+    for i in range(12):
+        day = date(2026, 8, 1) + timedelta(days=i)
+        rows.append(_truth_row(climo_date=day))
+        # every other day carries an actual corrected value; the rest are flagged only
+        rows.append(_truth_row(
+            climo_date=day, issuance_time=pd.Timestamp("2026-08-30T09:10Z"), revised=True,
+            revised_tmax_f=(80 + i) if i % 2 == 0 else None,
+            revised_tmin_f=(60 + i) if i % 2 == 0 else None, product_id="later",
+        ))
+    frame = pd.DataFrame(rows, columns=TRUTH_COLUMNS)
+    frame["revised_tmax_f"] = frame["revised_tmax_f"].astype("Int16")
+    frame["revised_tmin_f"] = frame["revised_tmin_f"].astype("Int16")
+
+    merged = _apply_first_final(frame)
+
+    assert len(merged) == 12
+    assert merged["revised"].all()
+    assert str(merged["revised_tmax_f"].dtype) == "Int16"
+    assert merged["revised_tmax_f"].notna().sum() == 6
+    assert (merged["tmax_f"] == 76).all()          # published values never move
+    by_day = merged.set_index("climo_date")["revised_tmax_f"]
+    assert by_day[date(2026, 8, 1)] == 80
+    assert pd.isna(by_day[date(2026, 8, 2)])
 
 
 def test_upsert_truth_is_idempotent(tmp_path, monkeypatch):

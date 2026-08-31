@@ -5,6 +5,7 @@ on:
       model: { description: "model_id", required: true }
       start: { description: "YYYY-MM-DD", required: true }
       end:   { description: "YYYY-MM-DD", required: true }
+      workers: { description: "concurrent runs", required: false, default: "2" }
 concurrency: { group: data-writes, cancel-in-progress: false }
 permissions: { contents: write }
 jobs:
@@ -12,11 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
       - run: uv venv --python 3.12 && uv pip install -e .
-      - run: .venv/bin/castcheck backfill ${{ inputs.model }} ${{ inputs.start }} ${{ inputs.end }} --workers 2
+      - run: .venv/bin/castcheck backfill "$MODEL" "$START" "$END" --workers "$WORKERS"
+        env:
+          MODEL: ${{ inputs.model }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          WORKERS: ${{ inputs.workers }}
       - name: commit data
-        run: |
-          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
-          git add data && (git diff --cached --quiet || git commit -m "[data] backfill ${{ inputs.model }} ${{ inputs.start }}..${{ inputs.end }}") && git pull --rebase && git push
+        run: scripts/commit_data.sh "[data] backfill ${{ inputs.model }} ${{ inputs.start }}..${{ inputs.end }}"

@@ -134,3 +134,23 @@ def model_by_id(model_id: str) -> ModelSpec:
 
 def baseline_ids() -> list[str]:
     return [b["model_id"] for b in _load_yaml("models.yaml").get("baselines", [])]
+
+
+@lru_cache(maxsize=1)
+def display_names() -> dict[str, str]:
+    """``model_id -> human label``, e.g. ``graphcast_ifs -> "GraphCast (IFS init)"``.
+
+    Covers the baselines too, so anything that renders a ``model_id`` (site, charts, posts) shows
+    the same name. Unknown ids fall back to the id itself.
+    """
+    out: dict[str, str] = {}
+    for m in load_models():
+        out[m.model_id] = f"{m.family} ({m.init_field} init)" if m.init_field else m.family
+    for b in _load_yaml("models.yaml").get("baselines", []):
+        out[b["model_id"]] = b.get("family", b["model_id"])
+    return out
+
+
+def display_name(model_id: str) -> str:
+    """Human label for one ``model_id`` (see :func:`display_names`)."""
+    return display_names().get(model_id, model_id)

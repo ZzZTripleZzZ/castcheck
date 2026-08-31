@@ -25,6 +25,7 @@ public domain. `model_version` is ``gfs-0p25`` — the inventory carries no cycl
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -43,6 +44,29 @@ NOMADS_BASE = "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod"
 MODEL_VERSION = "gfs-0p25"
 LEVEL_2M = "2 m above ground"
 BUCKET_H = 6
+
+#: Retries for a single ``.idx`` request, and the per-run budget of index failures before the rest of
+#: the steps are marked missing without a request (see the note in `ecmwf.py`).
+INDEX_RETRIES = 3
+MAX_INDEX_FAILURES = 5
+
+
+class _Counter:
+    """A thread-safe counter (the index loaders run in a pool and share one failure budget)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._n = 0
+
+    def increment(self) -> int:
+        with self._lock:
+            self._n += 1
+            return self._n
+
+    @property
+    def value(self) -> int:
+        with self._lock:
+            return self._n
 
 
 @dataclass(frozen=True)
@@ -191,17 +215,29 @@ class GfsSource:
             ]
             return FetchResult(_concat(frames), notes)
 
+        failures = _Counter()
+
         def load_idx(step: int) -> tuple[int, list[dict], str, str]:
+            fallback_url = object_url(base_order[0], init, step)
+            if failures.value >= MAX_INDEX_FAILURES:
+                return step, [], fallback_url, "index_unavailable"
             reason = ""
             for base in base_order:
-                res = _http.fetch(object_url(base, init, step, ".idx"))
+                res = _http.fetch(object_url(base, init, step, ".idx"), retries=INDEX_RETRIES)
                 if res.ok:
                     return step, parse_idx(res.text), object_url(base, init, step), ""
                 reason = reason or res.reason
-            return step, [], object_url(base_order[0], init, step), reason or "no_file"
+            failures.increment()
+            return step, [], fallback_url, reason or "no_file"
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             idx_by_step = {s: (r, u, why) for s, r, u, why in pool.map(load_idx, steps)}
+        if failures.value:
+            note = f"{failures.value} of {len(steps)} step inventories unavailable"
+            if failures.value >= MAX_INDEX_FAILURES:
+                note += f" (gave up after {MAX_INDEX_FAILURES})"
+            notes.append(note)
+            log.warning("GFS %s: %s", init.isoformat(), note)
 
         ranged: list[tuple[_Task, str, tuple[int, int | None]]] = []
         frames: list[pd.DataFrame] = []

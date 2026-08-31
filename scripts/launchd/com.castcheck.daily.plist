@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- install: cp scripts/launchd/com.castcheck.daily.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.castcheck.daily.plist -->
+<!-- install: cp scripts/launchd/com.castcheck.daily.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.castcheck.daily.plist
+     verify:  launchctl list | grep castcheck   (second column is the last exit status)
+     logs:    data/raw/launchd.log, data/raw/launchd.err, data/raw/run_daily.log
+     failure: data/raw/last_failure.txt exists only when the last run failed -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.castcheck.daily</string>
   <key>ProgramArguments</key><array><string>/bin/zsh</string><string>/Users/zifanzhang/Documents/GitHub/castcheck/scripts/run_daily.sh</string></array>
+  <key>WorkingDirectory</key><string>/Users/zifanzhang/Documents/GitHub/castcheck</string>
+  <!-- launchd starts with a bare PATH; run_daily.sh extends it, but node/npx must be findable for wrangler. -->
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/zifanzhang</string>
+  </dict>
   <key>StartCalendarInterval</key><array>
     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>45</integer></dict>   <!-- 11:45Z EDT / 12:45Z EST: after the Actions publish run -->
   </array>
+  <!-- launchd runs a missed StartCalendarInterval job as soon as the Mac wakes, so a machine asleep
+       at 07:45 still gets its daily run. -->
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>/Users/zifanzhang/Documents/GitHub/castcheck/data/raw/launchd.log</string>
   <key>StandardErrorPath</key><string>/Users/zifanzhang/Documents/GitHub/castcheck/data/raw/launchd.err</string>
 </dict></plist>

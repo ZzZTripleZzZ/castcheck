@@ -9,21 +9,36 @@ Design notes
 if that is absent, CF6; if that is absent, the hourly-observation fallback, which is always flagged.
 
 *Bootstrap* — METHODOLOGY §5 asks for 1000 resamples of scored **days**.  Doing that group-by-group
-would mean ~200 000 independent resampling loops.  Instead one multinomial day-resample matrix
+would mean ~200 000 independent resampling loops.  Instead one day-resample count matrix
 ``W`` (``n_boot × n_days``) is drawn per window and shared by every group, and each group's statistic
 is evaluated as a *self-normalised weighted mean* over the days it actually has:
 
     mae*_b = Σ_d W[b,d]·|e_d|·m_d / Σ_d W[b,d]·m_d
 
-Conditional on its realised size the restricted weight vector is exactly a multinomial resample of
-that group's own days, so this is the standard day-block bootstrap with a randomised resample size;
-the ratio form removes the first-order effect of that randomisation.  Sharing ``W`` also makes the
-single-model intervals and the paired model-vs-model intervals mutually consistent, and turns the
-whole computation into three BLAS matrix products per chunk.
+Conditional on its realised size the restricted weight vector is exactly a resample of that group's
+own days, so this is the standard day bootstrap with a randomised resample size; the ratio form
+removes the first-order effect of that randomisation.  ``scripts/crosscheck_bootstrap.py`` measures
+the residual: on the real archive the shared-``W`` interval is 0.99–1.06× the width of a textbook
+per-group percentile bootstrap (median 1.015), which is within Monte-Carlo noise.  Sharing ``W`` also
+makes the single-model intervals and the paired model-vs-model intervals mutually consistent, and
+turns the whole computation into a few BLAS matrix products per chunk.
+
+``W`` is drawn by a **circular moving-block** scheme with block length ``block_days`` (default
+:data:`BLOCK_DAYS` = 7, one week — longer than the synoptic decorrelation time of a daily 2 m
+temperature error), because consecutive daily forecast errors are not independent: an iid day
+bootstrap understates the uncertainty of a window-mean MAE.  ``block_days=1`` recovers the plain
+multinomial resample; on the real archive the block version is 20–30 % wider.
 
 *Aggregate ("ALL") rows* — for ``station_id="ALL"`` the daily series is first averaged across the
 stations that have a value on that day (separately for |error|, error, error² and each hit
 indicator), and the statistics and bootstrap are then computed over days exactly as for a station.
+Pooling all station-days instead would weight a day with 23 stations 23× a day with one, and would
+break the exchangeability of the day as the resampling unit; ``n_stations`` records the mean number
+of stations behind an ALL row so the reader can see how balanced it is (METHODOLOGY §4).
+
+*Model versions* — a model's scores are never aggregated across a cycle/weight change
+(METHODOLOGY §7).  Each ``model_id`` is truncated to its most recent contiguous ``model_version``
+segment before scoring; ``model_version`` and ``segment_start`` are published with every row.
 """
 
 from __future__ import annotations
@@ -38,9 +53,11 @@ from . import METHODOLOGY_VERSION, SCHEMA_VERSION
 from .store import DAILY_COLUMNS
 
 __all__ = [
+    "BLOCK_DAYS",
     "PAIRWISE_COLUMNS",
     "PERSISTENCE_ID",
     "SCORE_COLUMNS",
+    "latest_version_segments",
     "persistence_daily",
     "score",
     "select_truth",
@@ -52,11 +69,19 @@ HIT_THRESHOLDS_C = (1.0 * F_TO_C, 2.0 * F_TO_C, 3.0 * F_TO_C)
 MIN_N = 30  # METHODOLOGY §4: windows below this are published but greyed out
 ALL_STATIONS = "ALL"
 VARIABLES = ("tmax", "tmin")
+#: Moving-block length (days) for the day bootstrap (METHODOLOGY §5).  One week: longer than
+#: the synoptic decorrelation time of a daily 2 m temperature error, and the value the public API
+#: envelope advertises.
+BLOCK_DAYS = 7
+UNKNOWN_VERSION = "unknown"
 
 SCORE_COLUMNS = [
     "station_id", "model_id", "init_hour", "lead_day", "variable", "method", "window",
-    "n", "mae", "bias", "rmse", "hit1f", "hit2f", "hit3f", "skill_persistence",
+    "n", "n_stations", "n_flagged", "mae", "bias", "rmse", "hit1f", "hit2f", "hit3f",
+    "mae_debiased", "skill_persistence", "skill_persistence_debiased",
     "mae_ci_low", "mae_ci_high", "bias_ci_low", "bias_ci_high",
+    "rmse_ci_low", "rmse_ci_high", "hit1f_ci_low", "hit1f_ci_high",
+    "model_version", "segment_start",
     "period_start", "period_end", "computed_at", "methodology_version", "schema_version",
 ]
 
@@ -68,8 +93,11 @@ PAIRWISE_COLUMNS = [
     "computed_at", "methodology_version", "schema_version",
 ]
 
+# METHODOLOGY §3: the truth is the *first final* CLI value.  A same-day preliminary CLI
+# ("TODAY ... VALID AS OF") is never used, not even as a last resort — it is dropped, not ranked
+# below the hourly-observation fallback.
 _TRUTH_RANK = {("CLI", True): 0, ("CF6", False): 1, ("CF6", True): 1, ("OBS", False): 2,
-               ("OBS", True): 2, ("CLI", False): 3}
+               ("OBS", True): 2}
 
 
 def empty_scores() -> pd.DataFrame:
@@ -119,6 +147,9 @@ def select_truth(truth: pd.DataFrame) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
     long = pd.concat(frames, ignore_index=True)
+    long = long[long["_rank"] < 9]  # drop preliminary CLI and any unknown source
+    if long.empty:
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
     long = long.sort_values(["station_id", "climo_date", "variable", "_rank"])
     long = long.drop_duplicates(subset=["station_id", "climo_date", "variable"], keep="first")
     long = long.rename(columns={"source": "truth_source"})
@@ -135,18 +166,31 @@ def select_truth(truth: pd.DataFrame) -> pd.DataFrame:
 
 def persistence_daily(
     truth: pd.DataFrame,
-    leads: tuple[int, ...] = tuple(range(1, 11)),
+    leads: tuple[int, ...] = tuple(range(1, 10)),
     methods: tuple[str, ...] = ("bilinear", "nearest"),
     init_hours: tuple[int, ...] = (0, 12),
 ) -> pd.DataFrame:
     """Persistence baseline in the ``daily_forecasts`` schema (METHODOLOGY §4).
 
-    **Definition.** For target climatological day ``D`` and lead day ``L`` the persistence forecast
-    is the observation of day ``D − L`` — i.e. the last observation that a forecaster issuing at
-    lead ``L`` could already have seen.  ``L = 1`` is classic persistence ("yesterday's value");
-    larger ``L`` degrade it in the same way a model's skill degrades, so that
+    **Definition (lagged persistence).** For target climatological day ``D`` and lead day ``L`` the
+    persistence forecast is the observation of day ``D − L`` — the last observation a forecaster
+    issuing at lead ``L`` could already have seen.  ``L = 1`` is classic persistence ("yesterday's
+    value"); larger ``L`` degrade it the way a model's skill degrades, so that
     ``skill = 1 − MAE_model/MAE_persistence`` compares like with like at every lead.  Lead day 0 is
     not produced because ``D − 0`` is the target day itself.
+
+    The rejected alternative — "yesterday's observation at every lead" — gives the baseline
+    information the forecast did not have (at lead 7 it would be 6 days fresher than the model's
+    initial condition), which makes it artificially hard to beat at long leads and hides the whole
+    point of the skill curve.  Lagged persistence is the standard denominator for exactly this
+    reason.
+
+    **Caveat that the caller must not forget.** The baseline is an *observed* daily extreme, while
+    the model columns are 6-hourly *sampled* extremes (METHODOLOGY §2.3).  The sampling bias
+    (typically −2 to −4 °C on Tmax) is in the numerator only, so ``skill_persistence`` is negative
+    for every model at every lead and is not a statement about forecast quality.  Use
+    ``skill_persistence_debiased``, which removes each series' own mean error over the common days,
+    to compare the random part of the error.
 
     Rows are emitted for both initialization hours and both extraction methods (the baseline does
     not depend on either) so that it lines up with every model group in :func:`score`.
@@ -208,6 +252,35 @@ def persistence_daily(
 # error table
 # --------------------------------------------------------------------------------------------
 
+def latest_version_segments(daily: pd.DataFrame) -> pd.DataFrame:
+    """Per ``model_id``: its most recent ``model_version`` and the first init time of that segment.
+
+    METHODOLOGY §7 forbids aggregating scores across a cycle or weight change, so :func:`score`
+    drops every row initialized before ``segment_start``.  ``"unknown"`` versions never open or
+    close a segment: they inherit whatever known version brackets them.  Baselines (persistence) and
+    models whose version never changed have ``segment_start`` equal to their first init.
+    """
+    cols = ["model_id", "model_version", "segment_start"]
+    if daily is None or len(daily) == 0:
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
+    d = daily[["model_id", "model_version", "init_time"]].copy()
+    d["model_version"] = d["model_version"].fillna(UNKNOWN_VERSION).astype(str)
+    d["init_time"] = pd.to_datetime(d["init_time"], utc=True)
+    out = []
+    for model_id, part in d.groupby("model_id", observed=True):
+        known = part[part["model_version"] != UNKNOWN_VERSION].sort_values("init_time")
+        if known.empty:
+            out.append({"model_id": model_id, "model_version": UNKNOWN_VERSION,
+                        "segment_start": part["init_time"].min()})
+            continue
+        last = known["model_version"].iat[-1]
+        # first init at or after which no *other* known version appears
+        differs = np.nonzero(known["model_version"].to_numpy() != last)[0]
+        start = known["init_time"].iat[int(differs.max()) + 1] if len(differs) else known["init_time"].iat[0]
+        out.append({"model_id": model_id, "model_version": last, "segment_start": start})
+    return pd.DataFrame(out)[cols]
+
+
 def _daily_long(daily: pd.DataFrame) -> pd.DataFrame:
     d = daily.copy()
     d["init_time"] = pd.to_datetime(d["init_time"], utc=True)
@@ -254,6 +327,12 @@ def error_table(daily: pd.DataFrame, truth: pd.DataFrame) -> pd.DataFrame:
 _KEY_COLS = ["station_id", "model_id", "init_hour", "lead_day", "variable", "method"]
 
 
+#: Per (group, day) functionals carried through the dense matrices.  ``ns`` is the number of
+#: stations behind the unit (1 for a station row, the count for an ALL row) and ``fl`` marks a day
+#: whose truth carries a ``qc_flag`` (METHODOLOGY §6).
+_UNIT_COLS = ("a", "s", "q", "h1", "h2", "h3", "ns", "fl")
+
+
 def _unit_frame(err: pd.DataFrame) -> pd.DataFrame:
     """Per (group, day) error functionals, including the cross-station ``ALL`` rows."""
     e = err
@@ -264,13 +343,28 @@ def _unit_frame(err: pd.DataFrame) -> pd.DataFrame:
     unit["s"] = s
     unit["q"] = s * s
     for i, thr in enumerate(HIT_THRESHOLDS_C, start=1):
-        unit[f"h{i}"] = (a <= thr + 1e-12).astype("float64")
+        # METHODOLOGY §4: the threshold is inclusive; |err| == 1 °F counts as a hit.  The epsilon
+        # absorbs the float32 → float64 round-trip of a value that is exactly 1 °F in °C.
+        unit[f"h{i}"] = (a <= thr + 1e-9).astype("float64")
+    unit["ns"] = 1.0
+    flag = e["qc_flag"].astype(str) if "qc_flag" in e else pd.Series("", index=e.index)
+    unit["fl"] = (flag.fillna("").to_numpy() != "").astype("float64")
 
-    agg_cols = ["a", "s", "q", "h1", "h2", "h3"]
     grp = ["model_id", "init_hour", "lead_day", "variable", "method", "climo_date"]
-    allrows = unit.groupby(grp, observed=True)[agg_cols].mean().reset_index()
+    allrows = (
+        unit.groupby(grp, observed=True)
+        .agg(
+            a=("a", "mean"), s=("s", "mean"), q=("q", "mean"),
+            h1=("h1", "mean"), h2=("h2", "mean"), h3=("h3", "mean"),
+            ns=("ns", "sum"),
+            fl=("fl", "max"),  # a day is flagged for ALL as soon as any of its stations is
+        )
+        .reset_index()
+    )
     allrows["station_id"] = ALL_STATIONS
-    return pd.concat([unit, allrows[_KEY_COLS + ["climo_date"] + agg_cols]], ignore_index=True)
+    return pd.concat(
+        [unit, allrows[_KEY_COLS + ["climo_date"] + list(_UNIT_COLS)]], ignore_index=True
+    )
 
 
 def _codes(unit: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, pd.DataFrame, pd.DataFrame]:
@@ -287,6 +381,32 @@ def _codes(unit: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, pd.DataFrame, pd
     unit = unit.merge(col_df, on=["cell_id", "model_id"], how="left")
     col_df = col_df.merge(cell_df, on="cell_id", how="left")
     return unit["col_id"].to_numpy(), unit["cell_id"].to_numpy(), col_df, cell_df
+
+
+def _resample_weights(n_days: int, n_boot: int, block_days: int, rng: np.random.Generator) -> np.ndarray:
+    """``(n_boot, n_days)`` day-resample counts, shared by every group in the window.
+
+    ``block_days <= 1`` draws a plain multinomial (iid day) resample.  Otherwise a *circular moving
+    block* bootstrap is used: ``ceil(n_days / L)`` blocks of ``L`` consecutive days are drawn with
+    replacement from a uniformly random start and wrapped around the window, and the first
+    ``n_days`` of the concatenation are counted.  Blocks keep the day-to-day autocorrelation of the
+    error series inside the resample, which an iid resample destroys (METHODOLOGY §5).
+
+    The block length is clipped to ``max(1, n_days // 4)`` so that a short window still has at least
+    four blocks to draw from.
+    """
+    if block_days <= 1 or n_days < 4:
+        return rng.multinomial(n_days, np.full(n_days, 1.0 / n_days), size=n_boot).astype("float32")
+    L = int(min(block_days, max(1, n_days // 4)))
+    if L <= 1:
+        return rng.multinomial(n_days, np.full(n_days, 1.0 / n_days), size=n_boot).astype("float32")
+    n_blocks = int(np.ceil(n_days / L))
+    starts = rng.integers(0, n_days, size=(n_boot, n_blocks))
+    idx = (starts[:, :, None] + np.arange(L)[None, None, :]) % n_days
+    idx = idx.reshape(n_boot, -1)[:, :n_days]
+    flat = idx + (np.arange(n_boot, dtype=idx.dtype) * n_days)[:, None]
+    W = np.bincount(flat.ravel(), minlength=n_boot * n_days).astype("float32")
+    return W.reshape(n_boot, n_days)
 
 
 def _percentiles(boot: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -306,11 +426,14 @@ def score(
     as_of: date | str | None = None,
     pairwise_methods: tuple[str, ...] | None = None,
     max_cells_per_chunk: int = 400,
+    block_days: int = BLOCK_DAYS,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Compute the published ``scores`` and ``pairwise`` tables.
 
     ``pairwise_methods`` restricts the (expensive) model-vs-model comparison to a subset of
     extraction methods; ``None`` means all of them.  Set ``n_boot=0`` to skip the bootstrap.
+    ``block_days`` is the moving-block length of the day bootstrap (METHODOLOGY §5); ``1`` gives the
+    plain iid day resample.
     """
     computed_at = pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
     if daily is None or len(daily) == 0 or truth is None or len(truth) == 0:
@@ -318,9 +441,20 @@ def score(
 
     daily = daily.copy()
     if PERSISTENCE_ID not in set(daily["model_id"].astype(str)):
-        pers = persistence_daily(truth)
+        model_leads = pd.to_numeric(daily["lead_day"], errors="coerce").dropna().astype(int)
+        leads = tuple(sorted({int(x) for x in model_leads.unique() if x >= 1})) or (1,)
+        pers = persistence_daily(truth, leads=leads)
         if len(pers):
             daily = pd.concat([daily, pers], ignore_index=True)
+
+    # METHODOLOGY §7: never aggregate across a cycle / weight change
+    segments = latest_version_segments(daily)
+    if len(segments):
+        daily = daily.merge(segments, on="model_id", how="left", suffixes=("", "_seg"))
+        keep = pd.to_datetime(daily["init_time"], utc=True) >= pd.to_datetime(
+            daily["segment_start"], utc=True
+        )
+        daily = daily[keep.fillna(True)].reset_index(drop=True)
 
     err = error_table(daily, truth)
     if err.empty:
@@ -341,7 +475,7 @@ def score(
     n_dates = len(dates)
     dates_ts = pd.DatetimeIndex(dates)
 
-    vals = {k: unit[k].to_numpy(dtype="float32") for k in ("a", "s", "q", "h1", "h2", "h3")}
+    vals = {k: unit[k].to_numpy(dtype="float32") for k in _UNIT_COLS}
 
     order = np.argsort(col_of_row, kind="stable")
     col_sorted = col_of_row[order]
@@ -363,10 +497,7 @@ def score(
         dw = n_dates - d0
         if dw <= 0:
             continue
-        if n_boot and dw >= 2:
-            W = rng.multinomial(dw, np.full(dw, 1.0 / dw), size=n_boot).astype("float32")
-        else:
-            W = None
+        W = _resample_weights(dw, n_boot, block_days, rng) if (n_boot and dw >= 2) else None
         win_defs.append((window_label(w), d0, W))
 
     pers_col = {}
@@ -398,7 +529,7 @@ def score(
         rows_c = col_sorted[r0:r1] - lo_col
 
         dense = {}
-        for k in ("a", "s", "q", "h1", "h2", "h3"):
+        for k in _UNIT_COLS:
             arr = np.zeros((n_dates, gc), dtype="float32")
             arr[rows_d, rows_c] = vals[k][r0:r1]
             dense[k] = arr
@@ -418,29 +549,49 @@ def score(
             if not live.any():
                 continue
             Aw, Sw, Qw = dense["a"][d0:], dense["s"][d0:], dense["q"][d0:]
+            H1w = dense["h1"][d0:]
+            is_pers = model_of_col[lo_col:hi_col] == PERSISTENCE_ID
             with np.errstate(invalid="ignore", divide="ignore"):
                 mae = Aw.sum(axis=0) / n
                 bias = Sw.sum(axis=0) / n
                 rmse = np.sqrt(Qw.sum(axis=0) / n)
                 hits = [dense[f"h{i}"][d0:].sum(axis=0) / n for i in (1, 2, 3)]
+                n_stations = dense["ns"][d0:].sum(axis=0) / n
+                n_flagged = dense["fl"][d0:].sum(axis=0)
+                # MAE after removing each series' own mean error over the window: separates the
+                # random part of the error from the constant sampling/representativeness offset
+                mae_db = (np.abs(Sw - bias[None, :]) * Mw).sum(axis=0) / n
+
                 common = Mw * Mw[:, p_local_idx]
                 nc = common.sum(axis=0)
                 mae_self = (Aw * common).sum(axis=0) / nc
                 mae_pers = (Aw[:, p_local_idx] * common).sum(axis=0) / nc
                 skill = 1.0 - mae_self / mae_pers
-            skill = np.where(has_pers & (nc > 0) & (mae_pers > 0), skill, np.nan)
-            skill = np.where(model_of_col[lo_col:hi_col] == PERSISTENCE_ID, np.nan, skill)
+                # the debiased twin, with both series de-meaned over the *common* days
+                Sp = Sw[:, p_local_idx]
+                b_self = (Sw * common).sum(axis=0) / nc
+                b_pers = (Sp * common).sum(axis=0) / nc
+                db_self = (np.abs(Sw - b_self[None, :]) * common).sum(axis=0) / nc
+                db_pers = (np.abs(Sp - b_pers[None, :]) * common).sum(axis=0) / nc
+                skill_db = 1.0 - db_self / db_pers
+            ok_pers = has_pers & (nc > 0) & ~is_pers
+            skill = np.where(ok_pers & (mae_pers > 0), skill, np.nan)
+            skill_db = np.where(ok_pers & (db_pers > 0), skill_db, np.nan)
 
             if W is not None:
-                stacked = np.concatenate([Aw, Sw, Mw], axis=1)
+                stacked = np.concatenate([Aw, Sw, Qw, H1w, Mw], axis=1)
                 bmat = W @ stacked
-                den = bmat[:, 2 * gc:]
+                den = bmat[:, 4 * gc:]
                 den[den == 0] = np.nan
                 mae_lo, mae_hi = _percentiles(bmat[:, :gc] / den)
                 bias_lo, bias_hi = _percentiles(bmat[:, gc: 2 * gc] / den)
+                rmse_lo, rmse_hi = _percentiles(np.sqrt(bmat[:, 2 * gc: 3 * gc] / den))
+                hit1_lo, hit1_hi = _percentiles(bmat[:, 3 * gc: 4 * gc] / den)
                 del bmat, stacked
             else:
-                mae_lo = mae_hi = bias_lo = bias_hi = np.full(gc, np.nan, dtype="float32")
+                nanv = np.full(gc, np.nan, dtype="float32")
+                mae_lo = mae_hi = bias_lo = bias_hi = nanv
+                rmse_lo = rmse_hi = hit1_lo = hit1_hi = nanv
 
             day_present = Mw > 0
             first_idx = np.argmax(day_present, axis=0)
@@ -458,11 +609,17 @@ def score(
                 "method": col_df["method"].to_numpy()[lo_col:hi_col],
                 "window": label,
                 "n": n.astype("int32"),
+                "n_stations": n_stations,
+                "n_flagged": n_flagged.astype("int32"),
                 "mae": mae, "bias": bias, "rmse": rmse,
                 "hit1f": hits[0], "hit2f": hits[1], "hit3f": hits[2],
+                "mae_debiased": mae_db,
                 "skill_persistence": skill,
+                "skill_persistence_debiased": skill_db,
                 "mae_ci_low": mae_lo, "mae_ci_high": mae_hi,
                 "bias_ci_low": bias_lo, "bias_ci_high": bias_hi,
+                "rmse_ci_low": rmse_lo, "rmse_ci_high": rmse_hi,
+                "hit1f_ci_low": hit1_lo, "hit1f_ci_high": hit1_hi,
                 "period_start": period_start, "period_end": period_end,
             })
             score_parts.append(part[live].reset_index(drop=True))
@@ -481,6 +638,13 @@ def score(
         pd.concat(score_parts, ignore_index=True) if score_parts else empty_scores()
     )
     if len(scores):
+        if len(segments):
+            seg = segments.copy()
+            seg["segment_start"] = pd.to_datetime(seg["segment_start"], utc=True).dt.date
+            scores = scores.merge(seg, on="model_id", how="left")
+        else:
+            scores["model_version"] = UNKNOWN_VERSION
+            scores["segment_start"] = pd.NaT
         scores["computed_at"] = computed_at
         scores["methodology_version"] = METHODOLOGY_VERSION
         scores["schema_version"] = SCHEMA_VERSION

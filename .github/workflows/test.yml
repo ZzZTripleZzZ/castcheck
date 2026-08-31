@@ -1,11 +1,23 @@
 name: tests
-on: { push: { branches: [main] }, pull_request: {} }
+on:
+  push: { branches: [main] }
+  pull_request: {}
+  workflow_dispatch:
+concurrency: { group: "tests-${{ github.ref }}", cancel-in-progress: true }
+permissions: { contents: read }
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv venv --python 3.12 && uv pip install -e ".[dev]"
-      - run: .venv/bin/ruff check castcheck tests
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
+      - run: uv venv --python 3.12 && uv pip install -e ".[dev,publish]"
+      # Whole repo, not a file list, and a pinned ruff: the implicit default rule set moves between
+      # ruff releases, so the version is pinned here and the rules in [tool.ruff.lint] — that is what
+      # makes `uvx ruff@0.16.5 check --no-cache .` locally give the same answer as CI.
+      - run: uvx ruff@0.16.5 check --no-cache .
+      # eccodes >= 2.43 pulls the `eccodeslib` manylinux wheel, so cfgrib works with no apt install.
+      - run: .venv/bin/python -c "import eccodes, cfgrib; print('eccodes', eccodes.codes_get_api_version())"
       - run: .venv/bin/python -m pytest -q -m "not network"

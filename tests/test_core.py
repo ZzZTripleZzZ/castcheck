@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -46,6 +46,69 @@ def test_lead_day_and_run_coverage():
     init12 = datetime(2026, 8, 30, 12, tzinfo=UTC)
     days12 = climo_dates_for_run(s, init12, 240)
     assert days12[0] == date(2026, 8, 31)  # 06Z sample of day 0 precedes a 12Z init
+
+
+@pytest.mark.parametrize("climo_date", [date(2026, 3, 7), date(2026, 3, 8), date(2026, 3, 9),
+                                        date(2026, 10, 31), date(2026, 11, 1), date(2026, 11, 2)])
+@pytest.mark.parametrize("tz,off", [("America/New_York", -5), ("America/Chicago", -6),
+                                    ("America/Denver", -7), ("America/Phoenix", -7),
+                                    ("America/Los_Angeles", -8)])
+def test_climatological_day_is_unaffected_by_dst_transitions(tz, off, climo_date):
+    """METHODOLOGY §2.1: the day is LST midnight-to-midnight, so the US DST switch dates
+    (2026-03-08 spring forward, 2026-11-01 fall back) are ordinary 24 h days, and Phoenix — which
+    never observes DST — behaves exactly like the rest of Mountain time."""
+    s = st(tz, off)
+    start, end = day_bounds_utc(s, climo_date)
+    assert end - start == timedelta(hours=24)
+    assert start.hour == (-off) % 24
+    samples = common_sample_times(s, climo_date)
+    assert len(samples) == 4
+    assert all(start <= t < end for t in samples)
+    assert {t.hour for t in samples} == {0, 6, 12, 18}
+
+
+@pytest.mark.parametrize("off,expect_last_lead", [(-5, 9), (-6, 9), (-7, 8), (-8, 8)])
+def test_00z_run_reaches_lead_9_only_for_eastern_stations(off, expect_last_lead):
+    """A 240 h horizon from 00 UTC ends before the 06 UTC sample that closes lead day 9 at a −7/−8 h
+    station, so the ALL row at lead 9 rests on fewer stations than at lead 8 (METHODOLOGY §2.5)."""
+    s = st("America/New_York", off)
+    init = datetime(2026, 8, 30, 0, tzinfo=UTC)
+    days = climo_dates_for_run(s, init, 240)
+    assert lead_day(init, days[0]) == 0
+    assert lead_day(init, days[-1]) == expect_last_lead
+
+
+def test_extraction_is_identical_in_both_longitude_conventions():
+    """METHODOLOGY §2.6: the same physical field must give the same station value whether it is
+    stored −180..179.75 (ECMWF) or 0..359.75 (GFS/AIWP), on a latitude-descending grid."""
+    lats = np.linspace(90.0, -90.0, 121)  # 1.5° for speed; descending like every source
+    lon_e = np.arange(-180.0, 180.0, 1.5)
+    lon_g = np.arange(0.0, 360.0, 1.5)
+
+    def field(lo):
+        la = np.deg2rad(lats)[:, None]
+        x = np.deg2rad(lo)[None, :]
+        return 288.0 + 20.0 * np.sin(la) + 3.0 * np.cos(3 * x) * np.cos(la)
+
+    fe, fg = field(lon_e), field(lon_g)
+    for lat, lon in [(40.78, -73.97), (47.45, -122.31), (33.43, -112.01), (0.0, 0.0),
+                     (51.5, -0.12), (-33.9, 151.2), (64.0, 179.9), (64.0, -179.9)]:
+        assert bilinear(fe, lats, lon_e, lat, lon) == pytest.approx(
+            bilinear(fg, lats, lon_g, lat, lon), abs=1e-9
+        )
+        assert nearest(fe, lats, lon_e, lat, lon) == pytest.approx(
+            nearest(fg, lats, lon_g, lat, lon), abs=1e-9
+        )
+
+
+def test_bilinear_wraps_across_the_prime_and_date_meridians():
+    lats = np.array([1.0, 0.0, -1.0])          # descending
+    lons = np.array([0.0, 120.0, 240.0])       # coarse 0..360 grid: the last gap wraps to 0
+    field = np.tile(np.array([0.0, 12.0, 24.0]), (3, 1))
+    # halfway between the 240° node (24) and the wrapped 0°/360° node (0)
+    assert bilinear(field, lats, lons, 0.0, 300.0) == pytest.approx(12.0)
+    assert bilinear(field, lats, lons, 0.0, -60.0) == pytest.approx(12.0)  # same point, signed
+    assert bilinear(field, lats, lons, 0.0, 359.9) == pytest.approx(24.0 * (0.1 / 120.0), abs=1e-9)
 
 
 def test_bilinear_and_nearest_conventions():

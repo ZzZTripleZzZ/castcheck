@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -56,6 +57,31 @@ PARAM_TO_VARIABLE: dict[str, tuple[str, int]] = {
     "mn2t6": ("mn2t6", 6),
 }
 NATIVE_EXTREME_SWITCH_H = 144  # ≤144 h: 3-hourly mx2t3/mn2t3; ≥150 h: 6-hourly mx2t6/mn2t6
+
+#: Retries for a single ``.index`` request. Deliberately lower than the data retries: an index is
+#: tiny, so a persistent failure means the *run* is unavailable or the host is throttling us, and
+#: hammering each of ~60 steps ten times turns one bad run into a twenty-minute stall.
+INDEX_RETRIES = 3
+#: After this many index failures within one run, the rest are marked missing without a request.
+MAX_INDEX_FAILURES = 5
+
+
+class _Counter:
+    """A thread-safe counter (the index loaders run in a pool and share one failure budget)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._n = 0
+
+    def increment(self) -> int:
+        with self._lock:
+            self._n += 1
+            return self._n
+
+    @property
+    def value(self) -> int:
+        with self._lock:
+            return self._n
 
 
 @dataclass(frozen=True)
@@ -226,17 +252,31 @@ class EcmwfSource:
             return FetchResult(_concat(frames), notes)
 
         # --- 2. indices for every needed step --------------------------------
+        # A run whose indices keep failing is not worth grinding through step by step: count the
+        # failures and, past MAX_INDEX_FAILURES, mark the remaining steps missing without a request.
+        failures = _Counter()
+
         def load_index(step: int) -> tuple[int, list[dict], str, str]:
+            fallback_url = object_url(base_order[0], model, init, step)
+            if failures.value >= MAX_INDEX_FAILURES:
+                return step, [], fallback_url, "index_unavailable"
             reason = ""
             for base in base_order:
-                res = _http.fetch(object_url(base, model, init, step, "index"))
+                res = _http.fetch(object_url(base, model, init, step, "index"), retries=INDEX_RETRIES)
                 if res.ok:
                     return step, parse_index(res.text), object_url(base, model, init, step), ""
                 reason = reason or res.reason
-            return step, [], object_url(base_order[0], model, init, step), reason or "no_file"
+            failures.increment()
+            return step, [], fallback_url, reason or "no_file"
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             index_by_step = {s: (e, u, r) for s, e, u, r in pool.map(load_index, steps)}
+        if failures.value:
+            note = f"{failures.value} of {len(steps)} step indices unavailable"
+            if failures.value >= MAX_INDEX_FAILURES:
+                note += f" (gave up after {MAX_INDEX_FAILURES})"
+            notes.append(note)
+            log.warning("ECMWF %s %s: %s", model.model_id, init.isoformat(), note)
 
         # --- 3. byte ranges ---------------------------------------------------
         ranged: list[tuple[_Task, str, tuple[int, int]]] = []

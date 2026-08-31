@@ -90,12 +90,42 @@ def dataset_card(repo: str) -> str:
     )
 
 
-def push_dataset(repo: str, private: bool = False) -> str:
-    from huggingface_hub import HfApi
+#: Uploaded to the dataset repo; `raw/` (logs, the run journal) and half-written shards stay local.
+ALLOW_PATTERNS = ["**/*.parquet"]
+IGNORE_PATTERNS = ["raw/**", "**/*.tmp.parquet", "**/.*"]
 
+
+def files_to_push() -> list[Path]:
+    """The shards :func:`push_dataset` would upload, in repo order (used by ``--dry-run``)."""
+    keep: list[Path] = []
+    for p in sorted(DATA_DIR.rglob("*.parquet")):
+        rel = p.relative_to(DATA_DIR).as_posix()
+        if rel.startswith("raw/") or p.name.startswith(".") or p.name.endswith(".tmp.parquet"):
+            continue
+        keep.append(p)
+    return keep
+
+
+def push_dataset(repo: str, private: bool = False, dry_run: bool = False) -> str:
+    """Upload the dataset card, METHODOLOGY.md and every committed parquet shard.
+
+    One commit per day is intended: the repo history is the publication log, and ~365 commits a year
+    is well within what the Hub handles. `dry_run` reports the file list and the card without
+    contacting the Hub at all, so it is safe to run against the public repo name.
+    """
     tok = _token()
+    if dry_run:
+        files = files_to_push()
+        total = sum(f.stat().st_size for f in files)
+        card = dataset_card(repo)
+        return (f"dry-run: would push {len(files)} parquet file(s), {total / 1e6:.1f} MB, plus "
+                f"README.md ({len(card)} chars) and METHODOLOGY.md to {repo} "
+                f"(private={private}, token={'present' if tok else 'MISSING'})")
     if not tok:
         return "skipped: no HF token"
+
+    from huggingface_hub import HfApi
+
     api = HfApi(token=tok)
     api.create_repo(repo, repo_type="dataset", private=private, exist_ok=True)
     card_path = REPO_ROOT / ".hf_README.md"
@@ -106,7 +136,7 @@ def push_dataset(repo: str, private: bool = False) -> str:
                     repo_type="dataset", commit_message="methodology")
     info = api.upload_folder(
         folder_path=str(DATA_DIR), path_in_repo="data", repo_id=repo, repo_type="dataset",
-        allow_patterns=["**/*.parquet"], ignore_patterns=["raw/**", "**/*.tmp.parquet"],
+        allow_patterns=ALLOW_PATTERNS, ignore_patterns=IGNORE_PATTERNS,
         commit_message=f"data update {datetime.now(UTC):%Y-%m-%d}",
     )
     card_path.unlink(missing_ok=True)

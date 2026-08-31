@@ -53,7 +53,9 @@ def test_object_url_ifs_and_aifs():
 
 def test_plan_tasks_ifs_step_coverage():
     tasks = ecmwf.plan_tasks(model_by_id("ifs_hres"))
-    steps = lambda v: sorted({t.step for t in tasks if t.variable == v})
+    def steps(v):
+        return sorted({t.step for t in tasks if t.variable == v})
+
     assert steps("t2") == list(range(6, 241, 6))
     # 3-hourly mx2t3/mn2t3 out to 144 h — including the odd steps, which the 6-hourly sampling would
     # miss but derive.py needs to cover a whole climatological day

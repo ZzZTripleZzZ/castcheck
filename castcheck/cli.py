@@ -2,25 +2,120 @@
 
 Imports of heavy modules are done inside commands so that a missing optional dependency (or a module
 still under construction) never breaks unrelated commands.
+
+Every command configures logging once (INFO to stderr, ``-v`` for DEBUG, ``CASTCHECK_LOG_JSON=1``
+for one JSON object per line), prints a single summary line when it finishes, and appends its
+outcome to ``data/raw/last_run.json`` (DESIGN §7.1) so the status page can show how fresh each part
+of the pipeline is.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import sys
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 
 import typer
 
 from . import __version__
-from .config import PUBLIC_DIR, load_models, load_stations, model_by_id
+from .config import PUBLIC_DIR, ModelSpec, load_models, load_stations, model_by_id
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="CastCheck — forecast verification pipeline")
 publish_app = typer.Typer(no_args_is_help=True, help="Optional publishing targets (token-gated)")
 app.add_typer(publish_app, name="publish")
 
+log = logging.getLogger("castcheck")
+
 # Expected availability delay (hours after init) before a run is worth fetching; measured 2026-08-30.
-AVAILABILITY_DELAY_H = {"ecmwf": 8.0, "gfs": 5.5, "aiwp": 9.0}
+# Keyed by ``source``; the same delay applies to the 00Z and 12Z cycles of a model.
+AVAILABILITY_DELAY_H = {"ecmwf": 8.0, "gfs": 5.5, "aiwp": 9.5}
+# AIWP publishes the GFS-initialised runs about three hours before the IFS-initialised ones, because
+# it has to wait for ECMWF's own dissemination first.
+AIWP_DELAY_H_BY_INIT_FIELD = {"GFS": 6.0, "IFS": 9.5}
+
+#: A run that is stored but incomplete is retried by later passes; not more often than this, so that
+#: four scheduled fetches a day do not re-download the same permanently-partial run four times.
+DEFAULT_MIN_RETRY_H = 3.0
+
+
+# --------------------------------------------------------------------------- logging / journal
+
+
+class _JsonFormatter(logging.Formatter):
+    """One JSON object per line, for log shipping (``CASTCHECK_LOG_JSON=1``)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        doc = {
+            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            doc["exc"] = self.formatException(record.exc_info)
+        return json.dumps(doc, ensure_ascii=False)
+
+
+def setup_logging(verbose: bool = False) -> None:
+    """Configure the root logger: INFO (or DEBUG) to **stderr**, so stdout stays machine-readable."""
+    level = logging.DEBUG if verbose or os.environ.get("CASTCHECK_DEBUG") else logging.INFO
+    handler = logging.StreamHandler(sys.stderr)
+    if os.environ.get("CASTCHECK_LOG_JSON") == "1":
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                                               datefmt="%Y-%m-%dT%H:%M:%S"))
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(level)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+
+
+@contextmanager
+def _journal(command: str):
+    """Time a command, print/record a one-line summary, and record failures too.
+
+    The body appends to the yielded list; whatever it contains becomes the summary line.
+    """
+    from .store import record_run
+
+    parts: list[str] = []
+    started = datetime.now(UTC)
+    t0 = time.monotonic()
+    status, code = "ok", 0
+    try:
+        yield parts
+    except typer.Exit as exc:  # a command that chose its own exit code (e.g. `status`)
+        code = int(getattr(exc, "exit_code", 0) or 0)
+        status = "ok" if code == 0 else "error"
+        raise
+    except SystemExit as exc:
+        code = int(exc.code or 0)
+        status = "ok" if code == 0 else "error"
+        raise
+    except Exception as exc:
+        status, code = "error", 1
+        parts.append(f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        dt = time.monotonic() - t0
+        summary = "; ".join(p for p in parts if p)
+        log.info("%s %s in %.1fs — %s", command, status, dt, summary or "(no summary)")
+        record_run(command, status=status, summary=summary, started_at=started, duration_s=dt,
+                   exit_code=code)
+        try:
+            from .sources import _http
+
+            _http.log_summary()
+        except ImportError:  # pragma: no cover - _http is always importable in practice
+            pass
 
 
 def _now() -> datetime:
@@ -32,10 +127,15 @@ def _parse_init(s: str) -> datetime:
     return dt.replace(tzinfo=UTC)
 
 
-def _source_for(model):
-    if model.source == "ecmwf":
-        import os
+def availability_delay_h(model: ModelSpec) -> float:
+    """Hours after initialisation at which `model`'s run is normally complete upstream."""
+    if model.source == "aiwp":
+        return AIWP_DELAY_H_BY_INIT_FIELD.get(model.init_field or "GFS", AVAILABILITY_DELAY_H["aiwp"])
+    return AVAILABILITY_DELAY_H.get(model.source, 8.0)
 
+
+def _source_for(model: ModelSpec):
+    if model.source == "ecmwf":
         from .sources.ecmwf import EcmwfSource
 
         # S3 answers bursts of range GETs with 503 SlowDown; 4 concurrent requests is measured safe.
@@ -51,7 +151,7 @@ def _source_for(model):
     raise typer.BadParameter(f"unknown source {model.source}")
 
 
-def _fetch_one(model, init: datetime, station_ids: list[str] | None) -> tuple[str, int, int]:
+def _fetch_one(model: ModelSpec, init: datetime, station_ids: list[str] | None) -> tuple[str, int, int]:
     from .sources.base import FetchRequest
     from .store import upsert_forecast_values
 
@@ -61,16 +161,56 @@ def _fetch_one(model, init: datetime, station_ids: list[str] | None) -> tuple[st
     res = _source_for(model).fetch_run(FetchRequest(model=model, init_time=init, stations=stations))
     upsert_forecast_values(res.rows)
     n_missing = int((res.rows["missing_reason"] != "").sum()) if len(res.rows) else 0
+    for note in res.notes:
+        log.debug("%s %s: %s", model.model_id, init.isoformat(), note)
     return model.model_id, res.n_present, n_missing
 
 
+def plan_runs(models: list[ModelSpec], now: datetime, lookback_days: int,
+              have: Callable[[ModelSpec, str, str], set], last_attempt: Callable[[ModelSpec, str, str], dict],
+              min_retry_h: float = DEFAULT_MIN_RETRY_H) -> list[tuple[ModelSpec, datetime]]:
+    """The (model, init) runs `fetch-latest` should fetch now. Pure, so it is testable without I/O.
+
+    A run is planned when (a) enough time has passed since its initialisation that upstream should
+    have published it, (b) it is not already stored complete, and (c) it was not already attempted
+    within the last `min_retry_h` hours — otherwise a run that upstream never completes would be
+    re-downloaded by every scheduled pass until it drops out of the lookback window.
+    """
+    start = (now - timedelta(days=lookback_days)).date().isoformat()
+    end = now.date().isoformat()
+    jobs: list[tuple[ModelSpec, datetime]] = []
+    for m in models:
+        complete = have(m, start, end)
+        attempts = last_attempt(m, start, end)
+        delay = timedelta(hours=availability_delay_h(m))
+        for d in range(lookback_days + 1):
+            day = (now - timedelta(days=d)).date()
+            for hh in m.inits:
+                init = datetime(day.year, day.month, day.day, hh, tzinfo=UTC)
+                if init + delay > now:
+                    continue
+                if any(abs((h.to_pydatetime() - init).total_seconds()) < 1 for h in complete):
+                    continue
+                seen = attempts.get(init)
+                if seen is not None and (now - seen.to_pydatetime()) < timedelta(hours=min_retry_h):
+                    log.debug("%s %s: partial, retried at %s — waiting", m.model_id, init, seen)
+                    continue
+                jobs.append((m, init))
+    return sorted(jobs, key=lambda j: (j[1], j[0].model_id))
+
+
+# --------------------------------------------------------------------------- commands
+
+
 @app.callback()
-def _root():
-    """CastCheck v{__version__}"""
+def _root(verbose: bool = typer.Option(False, "--verbose", "-v", help="DEBUG logging to stderr")):
+    """CastCheck — independent, daily verification of public weather forecasts."""
+    setup_logging(verbose)
 
 
 @app.command()
 def version():
+    """Print the package version."""
     typer.echo(__version__)
 
 
@@ -78,192 +218,238 @@ def version():
 def fetch(model: str = typer.Option(..., help="model_id"), init: str = typer.Option(..., help="e.g. 2026-08-30T00"),
           stations: str = typer.Option("", help="comma-separated ICAO subset")):
     """Fetch one model run and upsert station values."""
-    m = model_by_id(model)
-    ids = [s for s in stations.split(",") if s] or None
-    mid, present, missing = _fetch_one(m, _parse_init(init), ids)
-    typer.echo(f"{mid} {init}: present={present} missing={missing}")
+    with _journal("fetch") as summary:
+        m = model_by_id(model)
+        ids = [s for s in stations.split(",") if s] or None
+        mid, present, missing = _fetch_one(m, _parse_init(init), ids)
+        typer.echo(f"{mid} {init}: present={present} missing={missing}")
+        summary.append(f"{mid} {init} present={present} missing={missing}")
 
 
 @app.command("fetch-latest")
-def fetch_latest(lookback_days: int = 3, workers: int = 3, models: str = typer.Option("", help="comma-separated model_ids")):
-    """Fetch every run that should be available by now (last `lookback_days`) and is not stored yet."""
-    from .store import existing_inits
+def fetch_latest(lookback_days: int = 3, workers: int = 3,
+                 models: str = typer.Option("", help="comma-separated model_ids"),
+                 min_retry_h: float = typer.Option(DEFAULT_MIN_RETRY_H,
+                                                   help="do not re-attempt an incomplete run more often than this"),
+                 fail_on_no_data: bool = typer.Option(True, help="exit 1 when every planned run failed")):
+    """Fetch every run that should be available by now (last `lookback_days`) and is not stored yet.
 
-    now = _now()
-    wanted = [m for m in load_models() if not models or m.model_id in models.split(",")]
-    jobs: list[tuple] = []
-    for m in wanted:
-        have = existing_inits(m.model_id)
-        for d in range(lookback_days + 1):
-            day = (now - timedelta(days=d)).date()
-            for hh in m.inits:
-                init = datetime(day.year, day.month, day.day, hh, tzinfo=UTC)
-                if init + timedelta(hours=AVAILABILITY_DELAY_H.get(m.source, 8.0)) > now:
-                    continue
-                if any(abs((h.to_pydatetime() - init).total_seconds()) < 1 for h in have):
-                    continue
-                jobs.append((m, init))
-    if not jobs:
-        typer.echo("nothing to fetch")
-        return
-    typer.echo(f"{len(jobs)} run(s) to fetch")
-    failures = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_fetch_one, m, init, None): (m.model_id, init) for m, init in jobs}
-        for f in as_completed(futs):
-            mid, init = futs[f]
-            try:
-                _, present, missing = f.result()
-                typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z present={present} missing={missing}")
-                if present == 0:
+    Exit code 0 unless **every** planned run came back empty, which is the signature of a broken
+    pipeline rather than of one late upstream file.
+    """
+    with _journal("fetch-latest") as summary:
+        from .store import existing_inits, last_attempt_by_init
+
+        wanted = [m for m in load_models() if not models or m.model_id in models.split(",")]
+        jobs = plan_runs(
+            wanted, _now(), lookback_days,
+            have=lambda m, s, e: existing_inits(m.model_id, start=s, end=e),
+            last_attempt=lambda m, s, e: last_attempt_by_init(m.model_id, start=s, end=e),
+            min_retry_h=min_retry_h,
+        )
+        if not jobs:
+            typer.echo("nothing to fetch")
+            summary.append("nothing to fetch")
+            return
+        typer.echo(f"{len(jobs)} run(s) to fetch")
+        failures = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_fetch_one, m, init, None): (m.model_id, init) for m, init in jobs}
+            for f in as_completed(futs):
+                mid, init = futs[f]
+                try:
+                    _, present, missing = f.result()
+                    typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z present={present} missing={missing}")
+                    if present == 0:
+                        failures += 1
+                        log.warning("%s %s: no data (upstream late or unavailable)", mid, init.isoformat())
+                except Exception as e:  # noqa: BLE001 — never let one run kill the batch
                     failures += 1
-            except Exception as e:  # noqa: BLE001 — never let one run kill the batch
-                failures += 1
-                typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z ERROR {type(e).__name__}: {e}", err=True)
-    if failures:
-        typer.echo(f"{failures} run(s) had no data (will be retried by later runs / backfill)", err=True)
+                    typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z ERROR {type(e).__name__}: {e}", err=True)
+                    log.exception("%s %s failed", mid, init.isoformat())
+        summary.append(f"{len(jobs) - failures}/{len(jobs)} run(s) with data")
+        if failures:
+            typer.echo(f"{failures} run(s) had no data (will be retried by later runs / backfill)", err=True)
+        if failures == len(jobs) and fail_on_no_data:
+            raise typer.Exit(1)
 
 
 @app.command()
 def backfill(model: str, start: str, end: str, workers: int = 2, skip_existing: bool = True):
     """Fetch all inits of a model between two dates (inclusive), e.g. --start 2025-01-01 --end 2025-01-31."""
-    from .store import existing_inits
+    with _journal("backfill") as summary:
+        from .store import existing_inits
 
-    m = model_by_id(model)
-    have = existing_inits(m.model_id) if skip_existing else set()
-    d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
-    inits = []
-    d = d0
-    while d <= d1:
-        for hh in m.inits:
-            init = datetime(d.year, d.month, d.day, hh, tzinfo=UTC)
-            if not any(abs((h.to_pydatetime() - init).total_seconds()) < 1 for h in have):
-                inits.append(init)
-        d += timedelta(days=1)
-    typer.echo(f"{m.model_id}: {len(inits)} run(s) to backfill")
-    ok = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_fetch_one, m, init, None): init for init in inits}
-        for f in as_completed(futs):
-            init = futs[f]
-            try:
-                _, present, missing = f.result()
-                ok += present > 0
-                typer.echo(f"  {init:%Y-%m-%dT%H}Z present={present} missing={missing}")
-            except Exception as e:  # noqa: BLE001
-                typer.echo(f"  {init:%Y-%m-%dT%H}Z ERROR {e}", err=True)
-    typer.echo(f"done: {ok}/{len(inits)} runs with data")
+        m = model_by_id(model)
+        have = existing_inits(m.model_id, start=start, end=end) if skip_existing else set()
+        d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
+        inits = []
+        d = d0
+        while d <= d1:
+            for hh in m.inits:
+                init = datetime(d.year, d.month, d.day, hh, tzinfo=UTC)
+                if not any(abs((h.to_pydatetime() - init).total_seconds()) < 1 for h in have):
+                    inits.append(init)
+            d += timedelta(days=1)
+        typer.echo(f"{m.model_id}: {len(inits)} run(s) to backfill")
+        ok = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_fetch_one, m, init, None): init for init in inits}
+            for f in as_completed(futs):
+                init = futs[f]
+                try:
+                    _, present, missing = f.result()
+                    ok += present > 0
+                    typer.echo(f"  {init:%Y-%m-%dT%H}Z present={present} missing={missing}")
+                except Exception as e:  # noqa: BLE001
+                    typer.echo(f"  {init:%Y-%m-%dT%H}Z ERROR {e}", err=True)
+                    log.exception("%s %s failed", m.model_id, init.isoformat())
+        typer.echo(f"done: {ok}/{len(inits)} runs with data")
+        summary.append(f"{m.model_id} {start}..{end}: {ok}/{len(inits)} runs with data")
 
 
 @app.command()
 def truth(day: str = typer.Option("", "--date", help="climatological date YYYY-MM-DD (default: UTC yesterday)")):
     """Fetch the final NWS CLI report (with CF6/obs fallback and QC) for all stations for one day."""
-    from .store import upsert_truth
-    from .truth import truth_for_date
+    with _journal("truth") as summary:
+        from .store import upsert_truth
+        from .truth import truth_for_date
 
-    climo = date.fromisoformat(day) if day else (_now().date() - timedelta(days=1))
-    rows = truth_for_date(load_stations(), climo)
-    out = upsert_truth(rows)
-    n_cli = int(((rows["source"] == "CLI") & rows["is_final"]).sum()) if len(rows) else 0
-    typer.echo(f"{climo}: {len(rows)} rows ({n_cli} final CLI) -> {out}")
+        climo = date.fromisoformat(day) if day else (_now().date() - timedelta(days=1))
+        rows = truth_for_date(load_stations(), climo)
+        out = upsert_truth(rows)
+        n_cli = int(((rows["source"] == "CLI") & rows["is_final"]).sum()) if len(rows) else 0
+        typer.echo(f"{climo}: {len(rows)} rows ({n_cli} final CLI) -> {out}")
+        summary.append(f"{climo}: {len(rows)} rows, {n_cli} final CLI")
 
 
 @app.command("truth-backfill")
 def truth_backfill(start: str, end: str, stations: str = ""):
-    from .store import upsert_truth
-    from .truth import truth_backfill as _tb
+    """Historic truth from the IEM AFOS archive (CLI) with CF6 filling the gaps."""
+    with _journal("truth-backfill") as summary:
+        from .store import upsert_truth
+        from .truth import truth_backfill as _tb
 
-    sts = load_stations()
-    if stations:
-        sts = [s for s in sts if s.id in stations.split(",")]
-    rows = _tb(sts, date.fromisoformat(start), date.fromisoformat(end))
-    typer.echo(f"{len(rows)} rows -> {upsert_truth(rows)}")
+        sts = load_stations()
+        if stations:
+            sts = [s for s in sts if s.id in stations.split(",")]
+        rows = _tb(sts, date.fromisoformat(start), date.fromisoformat(end))
+        typer.echo(f"{len(rows)} rows -> {upsert_truth(rows)}")
+        summary.append(f"{start}..{end}: {len(rows)} rows, {len(sts)} station(s)")
 
 
 @app.command()
 def derive():
     """Recompute daily_forecasts from forecast_values (full re-derivation, idempotent)."""
-    from .derive import daily_from_values
-    from .store import read_forecast_values, write_daily
+    with _journal("derive") as summary:
+        from .derive import daily_from_values
+        from .store import read_forecast_values, write_daily
 
-    values = read_forecast_values()
-    daily = daily_from_values(values, load_stations(), load_models())
-    typer.echo(f"{len(values)} values -> {len(daily)} daily rows -> {write_daily(daily)}")
+        values = read_forecast_values()
+        daily = daily_from_values(values, load_stations(), load_models())
+        typer.echo(f"{len(values)} values -> {len(daily)} daily rows -> {write_daily(daily)}")
+        summary.append(f"{len(values)} values -> {len(daily)} daily rows")
 
 
 @app.command()
 def verify(n_boot: int = 1000):
     """Compute scores and pairwise comparisons from daily_forecasts + truth."""
-    from .store import read_daily, read_truth, write_scores
-    from .verify import persistence_daily, score
+    with _journal("verify") as summary:
+        import pandas as pd
 
-    daily = read_daily()
-    tr = read_truth()
-    import pandas as pd
+        from .store import read_daily, read_truth, write_scores
+        from .verify import persistence_daily, score
 
-    daily = pd.concat([daily, persistence_daily(tr)], ignore_index=True) if len(tr) else daily
-    scores, pairwise = score(daily, tr, n_boot=n_boot)
-    as_of = _now().strftime("%Y-%m-%d")
-    write_scores(scores, pairwise, as_of)
-    typer.echo(f"scores={len(scores)} pairwise={len(pairwise)} as_of={as_of}")
+        daily = read_daily()
+        tr = read_truth()
+        daily = pd.concat([daily, persistence_daily(tr)], ignore_index=True) if len(tr) else daily
+        scores, pairwise = score(daily, tr, n_boot=n_boot)
+        as_of = _now().strftime("%Y-%m-%d")
+        write_scores(scores, pairwise, as_of)
+        typer.echo(f"scores={len(scores)} pairwise={len(pairwise)} as_of={as_of}")
+        summary.append(f"scores={len(scores)} pairwise={len(pairwise)} as_of={as_of}")
 
 
 @app.command("build-site")
 def build_site():
     """Generate public/ (HTML + JSON API + status)."""
-    from .api import export_api
-    from .site.build import build_site as _build
-    from .status import write_status
-    from .store import read_scores
+    with _journal("build-site") as summary:
+        from .api import export_api
+        from .site.build import build_site as _build
+        from .status import write_status
+        from .store import read_scores
 
-    scores, pairwise = read_scores()
-    export_api(scores, pairwise, load_stations(), load_models())
-    write_status(_now())
-    _build(_now())
-    typer.echo(f"site written to {PUBLIC_DIR}")
+        scores, pairwise = read_scores()
+        export_api(scores, pairwise, load_stations(), load_models())
+        write_status(_now())
+        _build(_now())
+        typer.echo(f"site written to {PUBLIC_DIR}")
+        summary.append(f"site written to {PUBLIC_DIR}")
 
 
 @app.command()
 def status(fail_on_gaps: bool = True):
     """Write public/api/v1/status.json; exit 1 if today's runs or truth are incomplete."""
-    from .status import write_status
+    with _journal("status") as summary:
+        from .status import write_status
 
-    rep = write_status(_now())
-    gaps = rep.get("gaps_today", [])
-    typer.echo(f"gaps today: {len(gaps)}")
-    for g in gaps[:50]:
-        typer.echo(f"  {g}")
-    if gaps and fail_on_gaps:
-        sys.exit(1)
+        rep = write_status(_now())
+        gaps = rep.get("gaps_today", [])
+        typer.echo(f"gaps today: {len(gaps)}")
+        for g in gaps[:50]:
+            typer.echo(f"  {g}")
+        summary.append(f"{len(gaps)} gap(s) today")
+        if gaps and fail_on_gaps:
+            raise typer.Exit(1)
 
 
 @app.command()
 def daily(n_boot: int = 1000):
-    """derive -> verify -> build-site in one go (used by the daily workflow)."""
-    derive()
-    verify(n_boot=n_boot)
-    build_site()
+    """derive -> verify -> build-site in one go (used by the daily workflow).
+
+    Each step journals itself as well, so `last_run.json` shows both the whole pipeline and which
+    stage it stopped at.
+    """
+    with _journal("daily") as summary:
+        derive()
+        verify(n_boot=n_boot)
+        build_site()
+        summary.append("derive + verify + build-site")
 
 
 @publish_app.command("hf")
-def publish_hf(repo: str = "castcheck/temperature-verification", private: bool = False):
-    from .publish.hf import push_dataset
+def publish_hf(repo: str = "castcheck/temperature-verification", private: bool = False,
+               dry_run: bool = typer.Option(False, help="report what would be pushed, upload nothing")):
+    """Push data/ to a Hugging Face dataset repo (needs HF_TOKEN)."""
+    with _journal("publish-hf") as summary:
+        from .publish.hf import push_dataset
 
-    typer.echo(push_dataset(repo, private=private))
+        out = push_dataset(repo, private=private, dry_run=dry_run)
+        typer.echo(out)
+        summary.append(out.splitlines()[0] if out else "")
 
 
 @publish_app.command("kaggle")
-def publish_kaggle(slug: str = "castcheck-temperature-forecast-verification"):
-    from .publish.kaggle import push_dataset
+def publish_kaggle(slug: str = "castcheck-temperature-forecast-verification",
+                   dry_run: bool = typer.Option(False, help="stage the folder, run no Kaggle command")):
+    """Mirror the published tables to Kaggle (needs KAGGLE_API_TOKEN)."""
+    with _journal("publish-kaggle") as summary:
+        from .publish.kaggle import push_dataset
 
-    typer.echo(push_dataset(slug))
+        out = push_dataset(slug, dry_run=dry_run)
+        typer.echo(out)
+        summary.append(out.splitlines()[-1] if out else "")
 
 
 @publish_app.command("bluesky")
 def publish_bluesky(dry_run: bool = False):
-    from .publish.bluesky import post_daily
+    """Post the daily chart to Bluesky (needs BSKY_HANDLE + BSKY_APP_PASSWORD)."""
+    with _journal("publish-bluesky") as summary:
+        from .publish.bluesky import post_daily
 
-    typer.echo(post_daily(dry_run=dry_run))
+        out = post_daily(dry_run=dry_run)
+        typer.echo(out)
+        summary.append(out.splitlines()[0] if out else "")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ and never used. Later corrections are recorded but do not replace the first fina
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
 
@@ -23,6 +24,8 @@ import requests
 
 from ..climo_day import day_bounds_utc
 from ..config import USER_AGENT, Station
+
+log = logging.getLogger(__name__)
 
 NWS_API = "https://api.weather.gov"
 IEM_AFOS = "https://mesonet.agron.iastate.edu/cgi-bin/afos/retrieve.py"
@@ -290,7 +293,8 @@ def fetch_cli_day(station: Station, climo_date: date, limit: int = 50) -> dict |
     for p in products:
         try:
             text = get_product_text(p["product_id"])
-        except Exception:  # pragma: no cover - network flake on a single product
+        except Exception as exc:  # noqa: BLE001 - one bad product must not lose the day
+            log.warning("CLI product %s unreadable: %s: %s", p["product_id"], type(exc).__name__, exc)
             continue
         parsed = parse_cli(text)
         if not parsed or parsed["climo_date"] != climo_date or parsed["block"] != "YESTERDAY":

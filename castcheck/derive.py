@@ -9,9 +9,16 @@ Two daily extremes are produced per row:
   climatological day (METHODOLOGY §2.3).  If fewer than four samples are present the row is emitted
   with NaN values, ``n_samples`` < 4 and ``missing_reason="incomplete_samples"``.
 * **native** (diagnostic only) — max/min over the model's own time-window extreme fields
-  (``mx2t3/mn2t3``, ``mx2t6/mn2t6``, ``tmax6/tmin6``) whose bucket ``[valid-bucket, valid]`` lies
-  *entirely* inside the climatological day.  If the buckets do not tile the whole 24 h the value is
-  NaN.  Models without a native field always get NaN.
+  (``mx2t3/mn2t3``, ``mx2t6/mn2t6``, ``tmax6/tmin6``).  METHODOLOGY §2.4 (v0.2): the day is covered
+  by the *contiguous run of buckets that overlaps it*, i.e. every bucket lying inside the day plus at
+  most one crossing bucket at each end.  The run must be gap-free, must cover the whole day, and may
+  overhang it by at most :data:`MAX_OVERHANG_H` hours in total; the overhang is a deterministic
+  function of the station's standard offset and the bucket length (see
+  :func:`native_overhang_hours`).  Models without a native field always get NaN.
+
+  The pre-0.2 rule required the buckets to lie *entirely* inside the day, which only ever happened
+  for −6 h (CST) stations: 3 h and 6 h buckets are anchored to 00 UTC, so at −5/−7/−8 h no bucket set
+  can tile a day starting at 05/07/08 UTC and every one of those 15 stations got NaN.
 
 Everything is vectorised over the whole table; the only per-run Python work is the (cached)
 enumeration of covered climatological days.
@@ -29,9 +36,20 @@ from .climo_day import COMMON_SAMPLE_HOURS_UTC, climo_dates_for_run
 from .config import ModelSpec, Station, load_models, load_stations
 from .store import DAILY_COLUMNS
 
-__all__ = ["daily_from_values", "empty_daily", "extreme_kind"]
+__all__ = [
+    "MAX_OVERHANG_H",
+    "daily_from_values",
+    "empty_daily",
+    "extreme_kind",
+    "native_overhang_hours",
+]
 
 _KEYS = ["model_id", "init_time", "station_id", "method"]
+
+#: Largest total overhang (hours outside the climatological day) a native-extreme bucket run may
+#: have and still be published (METHODOLOGY §2.4).  With 3 h and 6 h buckets and whole-hour station
+#: offsets the realised overhang is 0, 3 or 6 h, so this only guards against exotic bucket lengths.
+MAX_OVERHANG_H = 6.0
 
 
 def empty_daily() -> pd.DataFrame:
@@ -53,6 +71,21 @@ def extreme_kind(variable: str) -> str | None:
     if v.startswith(("mn2t", "tmin")):
         return "min"
     return None
+
+
+def native_overhang_hours(std_offset_h: int, bucket_h: int) -> float:
+    """Hours by which the native bucket run overhangs the climatological day (METHODOLOGY §2.4).
+
+    Buckets are anchored to 00 UTC, so the day ``[-offset, -offset+24)`` UTC is covered by the run
+    that starts at the last bucket boundary at or before ``-offset`` and ends at the first boundary
+    at or after ``-offset+24``.  The result depends only on the station offset and the bucket length,
+    not on the date — 0 h for a −6 h station with 3 h or 6 h buckets, 3 h for −5/−7/−8 h with 3 h
+    buckets, 6 h for −5/−7/−8 h with 6 h buckets.
+    """
+    if bucket_h <= 0:
+        return float("nan")
+    r = (-int(std_offset_h)) % int(bucket_h)
+    return 0.0 if r == 0 else float(bucket_h)
 
 
 def _offsets(stations: list[Station]) -> dict[str, int]:
@@ -169,23 +202,29 @@ def daily_from_values(
         nat["_kind"] = nat["variable"].map(extreme_kind)
         nat = nat[nat["_kind"].notna()]
     if not nat.empty:
-        bucket = pd.to_timedelta(nat["bucket_h"], unit="h")
-        b_end = nat["valid_time"]
-        b_start = b_end - bucket
-        day = (b_start + nat["_off"]).dt.floor("D")
-        day_start = day - nat["_off"]
-        day_end = day_start + pd.Timedelta(hours=24)
-        nat = nat.assign(_day=day, _b_start=b_start, _b_end=b_end, _dstart=day_start, _dend=day_end)
-        nat = nat[(nat["_b_start"] >= nat["_dstart"]) & (nat["_b_end"] <= nat["_dend"])]
+        nat["_b_end"] = nat["valid_time"]
+        nat["_b_start"] = nat["_b_end"] - pd.to_timedelta(nat["bucket_h"], unit="h")
+        # a bucket shorter than 24 h overlaps at most two climatological days: the one containing its
+        # start and the one containing its last instant.  Emit the bucket against both.
+        cand = []
+        for anchor in (nat["_b_start"], nat["_b_end"] - pd.Timedelta(nanoseconds=1)):
+            part = nat.copy()
+            part["_day"] = (anchor + nat["_off"]).dt.floor("D")
+            cand.append(part)
+        nat = pd.concat(cand, ignore_index=True)
+        nat = nat.drop_duplicates(
+            subset=_KEYS + ["_day", "_kind", "bucket_h", "_b_start", "_b_end"]
+        )
+        nat["_dstart"] = nat["_day"] - nat["_off"]
+        nat["_dend"] = nat["_dstart"] + pd.Timedelta(hours=24)
 
     if not nat.empty:
         gk = _KEYS + ["_day", "_kind"]
-        agg = nat.groupby(gk, observed=True)["value_c"].agg(["max", "min"]).reset_index()
-        # coverage: distinct buckets must tile the whole climatological day
-        cov = nat.drop_duplicates(subset=gk + ["_b_start", "_b_end"])
-        cov = (
-            cov.groupby(gk, observed=True)
+        agg = (
+            nat.groupby(gk, observed=True)
             .agg(
+                _max=("value_c", "max"),
+                _min=("value_c", "min"),
                 _hours=("bucket_h", "sum"),
                 _first=("_b_start", "min"),
                 _last=("_b_end", "max"),
@@ -194,15 +233,19 @@ def daily_from_values(
             )
             .reset_index()
         )
-        cov["_full"] = (
-            (cov["_hours"] >= 24) & (cov["_first"] == cov["_dstart"]) & (cov["_last"] == cov["_dend"])
+        span_h = (agg["_last"] - agg["_first"]).dt.total_seconds() / 3600.0
+        lead_h = (agg["_dstart"] - agg["_first"]).dt.total_seconds() / 3600.0
+        trail_h = (agg["_last"] - agg["_dend"]).dt.total_seconds() / 3600.0
+        # `span == Σ bucket_h` is true exactly when the buckets form a gap-free, non-overlapping run;
+        # it also rejects a day that is offered twice at two bucket lengths (e.g. mx2t3 and mx2t6 for
+        # the same hours), while still accepting the IFS day that straddles the 144 h 3 h→6 h change.
+        ok = (
+            (span_h == agg["_hours"])
+            & (lead_h >= 0) & (trail_h >= 0)              # the whole day is covered
+            & (lead_h + trail_h <= MAX_OVERHANG_H)
         )
-        agg = agg.merge(cov[gk + ["_full"]], on=gk, how="left")
-        agg["_val"] = np.where(
-            agg["_full"].fillna(False),
-            np.where(agg["_kind"] == "max", agg["max"], agg["min"]),
-            np.nan,
-        )
+        agg = agg[ok]
+        agg["_val"] = np.where(agg["_kind"] == "max", agg["_max"], agg["_min"])
         nat_wide = agg.pivot_table(
             index=_KEYS + ["_day"], columns="_kind", values="_val", aggfunc="first"
         ).reset_index()

@@ -12,7 +12,9 @@ dependencies = [
   "pyarrow>=17",
   "xarray>=2024.6",
   "cfgrib>=0.9.14",
-  "eccodes>=2.38",
+  # >=2.43 pulls the `eccodeslib` binary wheel on Linux/macOS, so cfgrib works without a system
+  # libeccodes (this is what makes the GitHub Actions runner work with a plain `uv pip install`).
+  "eccodes>=2.43",
   "h5netcdf>=1.3",
   "h5py>=3.11",           # h5netcdf's backend for file-like objects (AIWP remote NetCDF)
   "fsspec>=2024.6",
@@ -42,6 +44,25 @@ packages = ["castcheck"]
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+
+# Pinned explicitly so that `ruff check .` gives the same answer here and on the CI runner: ruff's
+# implicit default rule set changes between releases, and the workflow installs whatever `ruff>=0.5`
+# resolves to. E/F are pyflakes + the pycodestyle errors, I is import sorting, B catches the usual
+# mutable-default / loop-variable bugs, C4 comprehensions, SIM the pointless branches.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "C4", "SIM"]
+ignore = [
+  "SIM108",  # ternaries are not always clearer than a four-line if/else
+  "B008",    # typer declares defaults as function calls (typer.Option(...)) by design
+  "B905",    # zip(strict=) — almost every zip here walks columns of one DataFrame, which are equal
+             # by construction; `strict=True` everywhere would be noise, not a check
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests build fixtures with dict(...) kwargs and re-import inside functions on purpose.
+"tests/*" = ["C4", "E402"]
+# The CLI is a thin wiring layer: long typer signatures and inline imports are deliberate.
+"castcheck/cli.py" = ["E402"]
 
 [tool.pytest.ini_options]
 markers = [

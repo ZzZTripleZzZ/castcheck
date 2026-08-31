@@ -9,6 +9,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # Job-level env, so that the optional steps below can test `env.X != ''` in their `if:` —
+    # the `secrets` context is not available in a step `if:`, but `env` is.
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -16,8 +18,10 @@ jobs:
       BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
       BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
       - run: uv venv --python 3.12 && uv pip install -e ".[publish]"
       - run: .venv/bin/castcheck daily
       - name: status (non-blocking)
@@ -39,6 +43,5 @@ jobs:
         if: env.BSKY_APP_PASSWORD != ''
         run: .venv/bin/castcheck publish bluesky || true
       - name: commit derived data
-        run: |
-          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
-          git add data && (git diff --cached --quiet || git commit -m "[data] scores $(date -u +%Y-%m-%d)") && git pull --rebase && git push
+        if: always()
+        run: scripts/commit_data.sh "[data] scores $(date -u +%Y-%m-%d)"

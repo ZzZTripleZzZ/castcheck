@@ -67,17 +67,44 @@ def _stage(slug: str) -> Path:
     return stage
 
 
-def push_dataset(slug: str) -> str:
+def _kaggle_bin() -> str:
+    local = REPO_ROOT / ".venv" / "bin" / "kaggle"
+    return str(local) if local.exists() else "kaggle"
+
+
+def dataset_exists(slug: str, env: dict) -> bool:
+    """Whether ``{KAGGLE_USER}/{slug}`` already exists, from ``kaggle datasets status``.
+
+    The command prints the *status word* on stdout (``ready``, ``pending``, ``error``) for a dataset
+    that exists, and ``404 - Not Found`` (exit code 1 on newer clients, 0 on older ones) for one
+    that does not — so both the exit code and the text have to be checked. Anything unrecognised is
+    treated as "exists" because ``create`` on an existing slug is a hard error, while ``version`` on
+    a missing one merely fails with a clear message.
+    """
+    r = subprocess.run([_kaggle_bin(), "datasets", "status", f"{KAGGLE_USER}/{slug}"],
+                       env=env, capture_output=True, text=True, check=False)
+    text = (r.stdout + r.stderr).strip().lower()
+    if "404" in text or "not found" in text or "does not exist" in text:
+        return False
+    return r.returncode == 0
+
+
+def push_dataset(slug: str, dry_run: bool = False) -> str:
     env = _env()
-    if "KAGGLE_API_TOKEN" not in env:
+    if "KAGGLE_API_TOKEN" not in env and not dry_run:
         return "skipped: no Kaggle token"
     stage = _stage(slug)
-    kaggle = str(REPO_ROOT / ".venv" / "bin" / "kaggle") if (REPO_ROOT / ".venv" / "bin" / "kaggle").exists() else "kaggle"
-    exists = subprocess.run([kaggle, "datasets", "status", f"{KAGGLE_USER}/{slug}"], env=env, capture_output=True, text=True, check=False)
-    if exists.returncode == 0 and "ready" in (exists.stdout + exists.stderr).lower():
-        cmd = [kaggle, "datasets", "version", "-p", str(stage), "-m", f"update {datetime.now(UTC):%Y-%m-%d}", "-r", "zip"]
+    files = sorted(p.name for p in stage.iterdir())
+    if dry_run:
+        size = sum(p.stat().st_size for p in stage.iterdir())
+        shutil.rmtree(stage, ignore_errors=True)
+        return (f"dry-run: staged {len(files)} file(s), {size / 1e6:.1f} MB for {KAGGLE_USER}/{slug} "
+                f"({', '.join(files)}); token={'present' if 'KAGGLE_API_TOKEN' in env else 'MISSING'}")
+    if dataset_exists(slug, env):
+        cmd = [_kaggle_bin(), "datasets", "version", "-p", str(stage),
+               "-m", f"update {datetime.now(UTC):%Y-%m-%d}", "-r", "zip"]
     else:
-        cmd = [kaggle, "datasets", "create", "-p", str(stage), "-r", "zip", "--public"]
+        cmd = [_kaggle_bin(), "datasets", "create", "-p", str(stage), "-r", "zip", "--public"]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
     shutil.rmtree(stage, ignore_errors=True)
     return (r.stdout + r.stderr).strip()[-500:]

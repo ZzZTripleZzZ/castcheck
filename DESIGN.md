@@ -47,6 +47,9 @@ config/
 data/                      committed parquet shards (small); see §3
 scripts/
   build_stations.py        fill lat/lon/elev from api.weather.gov, freeze into stations.yaml
+  commit_data.sh           commit + push data/ from a workflow, retrying the rebase/push race
+  run_daily.sh             local mirror of the daily pipeline (launchd)
+  backfill_local.sh, truth_backfill_local.sh   detached local backfills
   launchd/                 local backup schedules
 tests/                     pytest; network tests marked @pytest.mark.network
 .github/workflows/         cron pipelines (see §7)
@@ -134,14 +137,28 @@ Path: `data/daily_forecasts/model_id=<id>/year=<YYYY>.parquet`.
 | missing_reason | str |
 
 ### 3.4 `scores` — published aggregates
-Path: `data/scores/latest.parquet` (overwritten daily) + `data/scores/history/<YYYY-MM-DD>.parquet`.
+Path: `data/scores/latest.parquet` (overwritten daily), `data/scores/pairwise_latest.parquet`, and a
+dated snapshot `data/scores/history/<YYYY-MM-DD>.parquet`.
 
-`station_id, model_id, init_hour, lead_day, variable(tmax|tmin), method, window(30d|90d|365d|all), n, mae, bias, rmse, hit1f, hit2f, hit3f, skill_persistence, mae_ci_low, mae_ci_high, bias_ci_low, bias_ci_high, period_start, period_end, computed_at, methodology_version, schema_version`.
+The authoritative column list is `castcheck.verify.SCORE_COLUMNS`; this table must be edited in the
+same change as that constant.
+
+`station_id, model_id, init_hour, lead_day, variable(tmax|tmin), method, window(30d|90d|365d|all),
+n, n_stations, n_flagged, mae, bias, rmse, hit1f, hit2f, hit3f, mae_debiased, skill_persistence,
+skill_persistence_debiased, mae_ci_low, mae_ci_high, bias_ci_low, bias_ci_high, rmse_ci_low,
+rmse_ci_high, hit1f_ci_low, hit1f_ci_high, model_version, segment_start, period_start, period_end,
+computed_at, methodology_version, schema_version`.
 
 Plus `station_id='ALL'` rows aggregating over all stations (mean over stations of daily errors, same bootstrap).
 
 ### 3.5 `pairwise` — model-vs-model
-`station_id, init_hour, lead_day, variable, window, model_a, model_b, n_common, mae_diff, ci_low, ci_high, significant(bool)`.
+Column list: `castcheck.verify.PAIRWISE_COLUMNS`.
+
+`station_id, init_hour, lead_day, variable, window, model_a, model_b, n_common, mae_diff, ci_low,
+ci_high, significant(bool), method, computed_at, methodology_version, schema_version`.
+
+`method` is part of the key: a bilinear comparison and a nearest-neighbour comparison are different
+comparisons, and mixing them would pair rows that were never computed against each other.
 
 ## 4. Module contracts
 
@@ -178,26 +195,49 @@ def persistence_daily(truth: pd.DataFrame) -> pd.DataFrame                      
 Source-specific notes (from measured behaviour, 2026-08-30):
 - **ECMWF**: base URL `https://data.ecmwf.int/forecasts/{YYYYMMDD}/{HH}z/{ifs|aifs-single}/0p25/{oper}/{YYYYMMDD}{HH}0000-{step}h-{oper}-fc.grib2` with `.index` (one JSON per line, `_offset/_length`); AWS mirror `https://ecmwf-forecasts.s3.amazonaws.com/{YYYYMMDD}/{HH}z/...` (same layout, 2023-01-18→). Range GET returns 206. Longitudes are −180..179.75. `cfgrib` with `indexpath=""`. Steps: IFS 0-144 @3h, 150-360 @6h; AIFS @6h. 06/18Z IFS only to 144h (not used).
 - **GFS**: `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{YYYYMMDD}/{HH}/atmos/gfs.t{HH}z.pgrb2.0p25.f{FFF}` + `.idx`; fields `TMP:2 m above ground`, `TMAX:2 m above ground:{a}-{b} hour max fcst`, `TMIN:...`. Longitudes 0..359.75.
-- **AIWP**: `https://noaa-oar-mlwp-data.s3.amazonaws.com/{PROD}_{ver}_{INIT}/{YYYY}/{MMDD}/{PROD}_{ver}_{INIT}_{YYYYMMDDHH}_f000_f240_06.nc` (e.g. `GRAP_v100_IFS`); discover `{ver}` by listing the bucket prefix (`?list-type=2&prefix=`). Open with `h5netcdf` over `fsspec` HTTP (block_size 4 MiB); variable `t2` shape (41, 721, 1440), chunk = one full layer → read one time index, extract all stations; **f000 is a fill value (9.97e36) → missing**. Longitudes 0..359.75.
+- **AIWP**: `https://noaa-oar-mlwp-data.s3.amazonaws.com/{PROD}_{ver}_{INIT}/{YYYY}/{MMDD}/{PROD}_{ver}_{INIT}_{YYYYMMDDHH}_f000_f240_06.nc` (e.g. `GRAP_v100_IFS`); discover `{ver}` by listing the bucket prefix (`?list-type=2&prefix=`). Open with `h5netcdf` over `fsspec` HTTP (block_size 2 MiB — measured faster than 1 MiB and no slower than 4 MiB); variable `t2` shape (41, 721, 1440), chunk = one full layer → read one time index, extract all stations; **f000 is a fill value (9.97e36) → missing**. Longitudes 0..359.75.
+  **Version policy**: a product may publish two version directories side by side (FourCastNet ships `v100` and `v200`, overlapping 2020–2023). `AiwpSource` lists the bucket root, and for each initialisation uses the **highest version that actually contains that run**, recording it in `model_version` as `"{PROD}_{ver}"` — so a version change is visible in the data instead of silently altering a series. `AiwpSource(version=...)` pins one version for reproduction. 06/18 UTC initialisations exist for 2023 only and are ignored.
 - **NWS CLI**: `https://api.weather.gov/products/types/CLI/locations/{LOC}` (LOC = pil minus `CLI`), then `/products/{id}`; final report = first issuance after local midnight whose text contains the `YESTERDAY` block; parse fixed-width `MAXIMUM  76  355 PM`. Must send a real `User-Agent`. Retention ~7 days; history: `https://mesonet.agron.iastate.edu/cgi-bin/afos/retrieve.py?pil={PIL}&sdate=...&edate=...&fmt=text`.
 - **Obs**: `https://api.weather.gov/stations/{ICAO}/observations?start=..&end=..`; `maxTemperatureLast24Hours` is null — derive from hourly `temperature` only as fallback.
 
 ## 5. CLI (typer)
 
 ```
-castcheck fetch   --model ifs_hres --init 2026-08-30T00   [--stations KNYC,KORD]
-castcheck fetch-latest                       # all models, all inits that should exist by now
-castcheck backfill --model gfs --start 2024-01-01 --end 2024-03-31
+castcheck [-v] fetch   --model ifs_hres --init 2026-08-30T00   [--stations KNYC,KORD]
+castcheck fetch-latest [--lookback-days 3] [--workers 3] [--models gfs,ifs_hres] [--min-retry-h 3]
+castcheck backfill gfs 2024-01-01 2024-03-31 [--workers 2] [--no-skip-existing]
 castcheck truth    --date 2026-08-29         # CLI first-final for all stations (+ obs fallback)
-castcheck truth-backfill --start ... --end ...   # IEM
+castcheck truth-backfill 2024-01-01 2024-12-31 [--stations KNYC]   # IEM
 castcheck derive                              # values → daily_forecasts
 castcheck verify                              # → scores, pairwise
 castcheck build-site                          # → public/
-castcheck status                              # → public/status.json (+ nonzero exit if gaps today)
-castcheck publish hf|kaggle|bluesky          # optional, token-gated
+castcheck status [--no-fail-on-gaps]          # → public/api/v1/status.json (+ exit 1 if gaps today)
+castcheck daily                               # derive → verify → build-site
+castcheck publish hf|kaggle|bluesky [--dry-run]   # optional, token-gated
 ```
 
-All commands are idempotent and safe to re-run.
+All commands are idempotent and safe to re-run. Logging goes to **stderr** (INFO; `-v` for DEBUG;
+`CASTCHECK_LOG_JSON=1` for one JSON object per line) so stdout stays parseable; each command ends
+with a one-line summary and a `data/raw/last_run.json` entry (§7.1).
+
+**Exit codes.** `status` exits 1 when today has gaps (`--no-fail-on-gaps` to report only).
+`fetch-latest` exits 1 only when *every* planned run came back empty — one late upstream file is
+normal and must not turn a scheduled workflow red, but a wholly empty pass is a broken pipeline.
+Everything else exits 0 unless it raised.
+
+**Skip rules for `fetch-latest`.** A run is planned when (a) `init + availability_delay <= now`
+(§7), (b) it is not already stored complete — `store.existing_inits`, which requires `max_h/step_h`
+distinct valid times with a present `t2` — and (c) it was not attempted within the last
+`--min-retry-h` hours (`store.last_attempt_by_init`). (c) exists because a run upstream never
+completes would otherwise be re-downloaded by all four daily passes; the retry surface is bounded
+absolutely by `--lookback-days`. The planner is `cli.plan_runs`, a pure function, and is tested
+without network or parquet in `tests/test_cli.py`.
+
+**Scoped completeness reads.** `existing_inits` and `last_attempt_by_init` take `start`/`end` and
+read only the four columns they need (`init_time, valid_time, variable, missing_reason` /
+`init_time, fetched_at`) from only the monthly shards covering that range. Callers that plan work
+over a window must pass them; otherwise the whole archive is read on every invocation, which after
+a year of backfill is millions of rows per model per pass.
 
 ## 6. Site and API
 
@@ -215,13 +255,93 @@ Charts: minimal inline SVG or a tiny client-side script reading the JSON; no fra
 
 | workflow | schedule (UTC) | steps |
 |---|---|---|
-| `fetch-00z.yml` | 05:00, 06:00, 08:00, 09:30 | `fetch-latest` (each run only fetches what is new) |
-| `fetch-12z.yml` | 21:00 | same |
-| `truth-daily.yml` | 10:30, 16:00 | `truth --date yesterday`, second run picks up corrections |
-| `verify-publish.yml` | 11:00 | `derive` → `verify` → `build-site` → `status` → `wrangler pages deploy public --project-name castcheck` → commit data shards |
+| `fetch.yml` | 05:00, 06:00, 08:00, 09:30 (00Z cycle); 18:00, 21:00, 23:00 (12Z cycle) | `fetch-latest` (each run only fetches what is new) |
+| `truth.yml` | 10:30, 16:00 | `truth` (yesterday) + `truth --date` two days ago for corrections |
+| `publish.yml` | 11:00 | `daily` (= `derive` → `verify` → `build-site`) → `status --no-fail-on-gaps` → Cloudflare Pages deploy → HF/Kaggle/Bluesky (each gated on its secret) → commit data shards |
 | `backfill.yml` | manual dispatch | ranges per model |
+| `test.yml` | push / PR | `ruff check .` → import `eccodes`/`cfgrib` → `pytest -q -m "not network"` |
 
-Secrets: `CLOUDFLARE_API_TOKEN` (Pages edit), optional `HF_TOKEN`, `KAGGLE_*`, `BSKY_*`. Data shards are committed by the workflow with `[data]` commit messages.
+**Cron and availability.** A run is fetched once `init + availability_delay` has passed, where the
+delay is per source (`cli.AVAILABILITY_DELAY_H`: GFS 5.5 h, ECMWF 8 h) and, for AIWP, per initial
+field (GFS-initialised 6 h, IFS-initialised 9.5 h — CIRA has to wait for ECMWF dissemination first).
+The 12Z crons are the 00Z crons plus twelve hours; the same delays apply to both cycles. Nothing
+depends on hitting a cron exactly: `fetch-latest` looks back three days, so a missed or late run is
+picked up by the next pass.
+
+**Concurrency and the commit race.** Every workflow that writes `data/` shares
+`concurrency: {group: data-writes}`, so two of ours never run at once. A push that still races
+(a human commit, or a run released the instant the group frees) is handled by
+`scripts/commit_data.sh`, which retries `push` behind `pull --rebase` up to five times and, because
+parquet cannot be merged, resolves a conflict by keeping the shard this run just wrote — safe,
+because upserts are idempotent.
+
+**Runner dependencies.** `uv pip install -e .` is enough: `eccodes >= 2.43` depends on `eccodeslib`
+on non-Windows platforms, which ships a `manylinux_2_28_x86_64` wheel, so cfgrib finds libeccodes
+with no `apt-get`. `test.yml` asserts this with an import step so that a regression in the wheel
+chain fails loudly instead of at the next scheduled fetch.
+
+Secrets: `CLOUDFLARE_API_TOKEN` (Pages edit), optional `HF_TOKEN`, `KAGGLE_API_TOKEN`, `BSKY_HANDLE`
+/ `BSKY_APP_PASSWORD`. They are injected as **job-level `env`** so that the optional steps can be
+skipped with `if: env.HF_TOKEN != ''` — the `secrets` context is not available in a step `if:`, the
+`env` context is. Data shards are committed by the workflow with `[data]` commit messages.
+
+### 7.1 Run journal — `data/raw/last_run.json`
+
+Every CLI command appends its outcome to this file (`store.record_run`, atomic write). It is the one
+file under `data/raw/` that is committed, because the status page has to show freshness *across*
+workflows: the fetch workflow and the publish workflow are different jobs on different runners.
+
+```json
+{
+  "updated_at": "2026-08-30T11:04:12+00:00",
+  "commands": {
+    "fetch-latest": {
+      "status": "ok",                 // "ok" | "error"
+      "started_at":  "2026-08-30T11:02:55+00:00",
+      "finished_at": "2026-08-30T11:04:12+00:00",
+      "duration_s": 77.4,
+      "exit_code": 0,
+      "summary": "11/12 run(s) with data",
+      "castcheck_version": "0.1.0",
+      "last_success_at": "2026-08-30T11:04:12+00:00"
+    }
+  }
+}
+```
+
+Contract: `castcheck/cli.py` **writes** it, `castcheck/status.py` **reads** it and nothing else may.
+`last_success_at` is sticky — a failing run leaves the previous success timestamp in place, so the
+status page can say how stale each stage is. Keys are command names as typed
+(`fetch`, `fetch-latest`, `backfill`, `truth`, `truth-backfill`, `derive`, `verify`, `build-site`,
+`status`, `publish-hf`, `publish-kaggle`, `publish-bluesky`). A missing or corrupt file means "never
+run" and must never be an error.
+
+### 7.2 Local mirror
+
+`scripts/run_daily.sh` (launchd, 07:45 local) runs the same commands, never aborts on the first
+failure, and writes `data/raw/last_failure.txt` plus a macOS notification when any step failed; a
+clean run deletes that file. `scripts/backfill_local.sh` and `scripts/truth_backfill_local.sh` are
+the detached one-model-at-a-time / one-year-at-a-time backfills.
+
+### 7.3 Being polite to upstream
+
+`sources/_http.py` keeps per-host state shared by all threads: a minimum interval between request
+starts (`MIN_INTERVAL_S`, default 0.05 s), multiplied by `THROTTLE_GROWTH` on every 429/503 up to
+`THROTTLE_MAX_INTERVAL_S` (5 s) and decayed back when the host goes quiet, so one throttling host
+slows every worker rather than only the unlucky thread. Retries are counted per host and reported in
+one summary line per command (`_http.log_summary`, called at the end of every CLI command) instead
+of a warning per attempt. All four knobs are environment variables (`CASTCHECK_HTTP_RETRIES`,
+`CASTCHECK_HTTP_BACKOFF_CAP`, `CASTCHECK_HTTP_MIN_INTERVAL`, `CASTCHECK_HTTP_MAX_INTERVAL`).
+
+Index/inventory requests (`.index`, `.idx`) use fewer retries than data requests (`INDEX_RETRIES=3`
+vs 6) and share a per-run failure budget (`MAX_INDEX_FAILURES=5`): once a run's indices are clearly
+unavailable, the remaining steps become missing rows immediately instead of each burning a full
+retry ladder. Before this, one unavailable ECMWF run could occupy a worker for ~20 minutes.
+
+Measured 2026-08-30, two `ifs_hres` runs, one station, `t2` only, while a local backfill was already
+hitting the same mirror: 17 requests to `ecmwf-forecasts.s3.amazonaws.com`, **8 answered `503`
+(47 %), 8 retries, 0 given up**, 16/16 values present; the host interval rose to the 5 s cap and one
+summary line was logged. The portal (`data.ecmwf.int`) served 9 requests with no throttling.
 
 ## 8. Testing
 

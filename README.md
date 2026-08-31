@@ -26,14 +26,29 @@ All logic lives in importable, tested functions; `castcheck` is a thin CLI over 
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev,publish]"
-castcheck fetch --model ifs_hres --init 2026-08-30T00      # one run, all stations
-castcheck truth --date 2026-08-29                          # NWS climate reports
-castcheck daily                                            # derive → verify → build public/
-python -m pytest -q -m "not network"
+
+.venv/bin/castcheck fetch --model ifs_hres --init 2026-08-30T00   # one run, all stations
+.venv/bin/castcheck truth --date 2026-08-29                       # NWS climate reports
+.venv/bin/castcheck daily                                         # derive → verify → build public/
+.venv/bin/castcheck status                                        # completeness; exit 1 if today has gaps
+
+.venv/bin/python -m pytest -q -m "not network"                    # tests (drop -m to hit the network)
+uvx ruff@0.16.5 check --no-cache .                                 # lint, exactly what CI runs
+```
+
+Every command logs to stderr (`-v` for DEBUG, `CASTCHECK_LOG_JSON=1` for JSON lines), ends with a
+one-line summary, and records its outcome in `data/raw/last_run.json`. The optional publishers are
+token-gated and all support `--dry-run`:
+
+```bash
+.venv/bin/castcheck publish bluesky --dry-run   # writes data/raw/bluesky_preview.png + the post text
+.venv/bin/castcheck publish hf --dry-run        # lists what would be uploaded, contacts nothing
 ```
 
 ## Data licences
 
 ECMWF Open Data (CC-BY-4.0) · NOAA/NCEP GFS and NWS products (public domain) · NOAA/CIRA AIWP (open data) · Iowa Environmental Mesonet AFOS archive. CastCheck's published tables are CC-BY-4.0; code is MIT.
 
-Please cite as: *CastCheck, methodology v0.1, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+Please cite as: *CastCheck, methodology v0.2, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+The methodology version that produced a given table is in its own `methodology_version` column, and in
+`castcheck.METHODOLOGY_VERSION`; cite the version you actually used.

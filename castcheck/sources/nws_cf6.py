@@ -13,6 +13,8 @@ Table layout (fixed columns, whitespace separated)::
 from __future__ import annotations
 
 import calendar
+import contextlib
+import logging
 import re
 from datetime import UTC, date, datetime, timedelta
 
@@ -20,6 +22,8 @@ import pandas as pd
 
 from ..config import Station
 from .nws_cli import _WMO_RE, MONTHS, NWS_API, _get, iem_cli_history
+
+log = logging.getLogger(__name__)
 
 CF6_COLUMNS = [
     "climo_date", "tmax_f", "tmin_f", "tavg_f", "dep_f", "hdd", "cdd", "precip_in", "snow_in",
@@ -64,10 +68,8 @@ def _issuance_from_wmo(text: str, year: int, month: int, last_data_day: int) -> 
     cands: list[datetime] = []
     for y, m in ((year, month), (year + (month == 12), month % 12 + 1)):
         if dd <= calendar.monthrange(y, m)[1]:
-            try:
+            with contextlib.suppress(ValueError):  # e.g. 29 February in a non-leap year
                 cands.append(datetime(y, m, dd, hh, mi, tzinfo=UTC))
-            except ValueError:
-                pass
     if not cands:
         return None
     floor = datetime(year, month, min(last_data_day, calendar.monthrange(year, month)[1]),
@@ -178,7 +180,8 @@ def _fetch_cf6_api(station: Station, year: int, month: int) -> pd.DataFrame:
     for p in sorted(graph, key=lambda x: x["issuanceTime"], reverse=True):
         try:
             text = _get(f"{NWS_API}/products/{p['id']}").json()["productText"]
-        except Exception:  # pragma: no cover - network flake
+        except Exception as exc:  # noqa: BLE001 - one bad product must not lose the month
+            log.warning("CF6 product %s unreadable: %s: %s", p["id"], type(exc).__name__, exc)
             continue
         df = parse_cf6(text, issuance_time=datetime.fromisoformat(p["issuanceTime"]).astimezone(UTC))
         if df.empty:

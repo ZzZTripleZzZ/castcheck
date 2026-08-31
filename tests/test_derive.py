@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from castcheck.config import ModelSpec, Station
-from castcheck.derive import daily_from_values, extreme_kind
+from castcheck.derive import daily_from_values, extreme_kind, native_overhang_hours
 from castcheck.sources.base import FORECAST_VALUE_COLUMNS, make_rows
 from castcheck.store import DAILY_COLUMNS
 
@@ -17,7 +17,8 @@ from castcheck.store import DAILY_COLUMNS
 # so native extremes can tile it exactly.
 CHI = Station(id="KORD", name="Chicago O'Hare", cli_pil="CLIORD", tz="America/Chicago",
               std_offset_h=-6, lat=41.98, lon=-87.90, elev_m=201.0)
-# A −5 h station: 6 h buckets can never tile its day, so native extremes must be NaN there.
+# A −5 h station: no bucket set tiles its day exactly, so the native run overhangs the day by one
+# bucket length in total (METHODOLOGY §2.4).
 NYC = Station(id="KNYC", name="New York Central Park", cli_pil="CLINYC", tz="America/New_York",
               std_offset_h=-5, lat=40.78, lon=-73.97, elev_m=47.0)
 
@@ -111,16 +112,38 @@ def test_native_extremes_when_buckets_tile_the_day():
 
 
 def test_native_extremes_nan_when_buckets_do_not_cover_the_whole_day():
-    # last covered day of the run: its buckets stop at the horizon, so it is not tiled
+    # last covered day of the run: its buckets stop at the horizon, so the day is not covered
     daily = daily_from_values(build_values(CHI, IFS), [CHI], [IFS])
     last = daily[(daily["method"] == "bilinear") & (daily["lead_day"] == 2)].iloc[0]
     assert np.isnan(last["tmax_native_c"]) and np.isnan(last["tmin_native_c"])
     assert last["n_samples"] == 4  # the sampled extremes are still fine
 
-    # a −5 h station can never be tiled by buckets aligned to whole UTC hours divisible by 3
-    daily_nyc = daily_from_values(build_values(NYC, IFS), [NYC], [IFS])
-    assert daily_nyc["tmax_native_c"].isna().all()
-    assert daily_nyc["tmin_native_c"].isna().all()
+
+def test_native_overhang_is_a_function_of_offset_and_bucket_length():
+    # METHODOLOGY §2.4: 3 h and 6 h buckets are anchored to 00 UTC, so only a −6 h station is tiled
+    # exactly; −5/−7/−8 h stations overhang their day by one bucket length in total.
+    assert native_overhang_hours(-6, 3) == 0.0
+    assert native_overhang_hours(-6, 6) == 0.0
+    for off in (-5, -7, -8):
+        assert native_overhang_hours(off, 3) == 3.0
+        assert native_overhang_hours(off, 6) == 6.0
+
+
+def test_native_extremes_use_one_crossing_bucket_at_each_end_for_a_non_aligned_station():
+    """A −5 h station is covered by 03Z..06Z+24h, i.e. 21 h inside the day plus a 2 h and a 1 h
+    overhang (METHODOLOGY §2.4 v0.2).  Before v0.2 these 15 stations all got NaN."""
+    daily = daily_from_values(build_values(NYC, IFS), [NYC], [IFS])
+    row = daily[(daily["method"] == "bilinear") & (daily["lead_day"] == 1)].iloc[0]
+    # day 1 of a −5 h station = 2026-08-02 05Z .. 2026-08-03 05Z; the covering run is
+    # (03Z, 06Z] on 08-02 through (03Z, 06Z] on 08-03
+    hours = [datetime(2026, 8, 2, h, tzinfo=UTC) for h in range(6, 24, 3)]
+    hours += [datetime(2026, 8, 3, h, tzinfo=UTC) for h in (0, 3, 6)]
+    vals = [t2_curve(v) for v in hours]
+    assert row["tmax_native_c"] == pytest.approx(max(vals) + 1.0, abs=1e-5)
+    assert row["tmin_native_c"] == pytest.approx(min(vals) - 1.0, abs=1e-5)
+    assert row["tmax_native_c"] > row["tmax_sampled_c"]
+    # the run may not overhang by more than one bucket at each end
+    assert native_overhang_hours(NYC.std_offset_h, 3) == 3.0
 
 
 def test_models_without_native_fields_get_nan():

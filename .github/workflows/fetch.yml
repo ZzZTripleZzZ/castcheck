@@ -5,8 +5,12 @@ on:
     - cron: "0 6 * * *"     # 06:00Z AIWP GFS-init 00Z
     - cron: "0 8 * * *"     # 08:00Z ECMWF IFS/AIFS 00Z
     - cron: "30 9 * * *"    # 09:30Z AIWP IFS-init 00Z
-    - cron: "0 21 * * *"    # 21:00Z 12Z runs
+    - cron: "0 18 * * *"    # 18:00Z GFS 12Z
+    - cron: "0 21 * * *"    # 21:00Z ECMWF + AIWP GFS-init 12Z
+    - cron: "0 23 * * *"    # 23:00Z AIWP IFS-init 12Z
   workflow_dispatch:
+# One writer at a time across every workflow that commits to data/ (see truth.yml, publish.yml,
+# backfill.yml): they all share this group, so no two runs race on `git pull --rebase && git push`.
 concurrency: { group: data-writes, cancel-in-progress: false }
 permissions: { contents: write }
 jobs:
@@ -14,12 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { fetch-depth: 1 }
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
       - run: uv venv --python 3.12 && uv pip install -e .
       - run: .venv/bin/castcheck fetch-latest --workers 3
       - name: commit data
-        run: |
-          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
-          git add data && (git diff --cached --quiet || git commit -m "[data] fetch $(date -u +%Y-%m-%dT%H:%MZ)") && git pull --rebase && git push
+        run: scripts/commit_data.sh "[data] fetch $(date -u +%Y-%m-%dT%H:%MZ)"

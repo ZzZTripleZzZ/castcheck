@@ -56,7 +56,9 @@ def test_object_url():
 
 def test_plan_tasks():
     tasks = gfs.plan_tasks(model_by_id("gfs"))
-    steps = lambda v: sorted({t.step for t in tasks if t.variable == v})
+    def steps(v):
+        return sorted({t.step for t in tasks if t.variable == v})
+
     assert steps("t2") == list(range(6, 241, 6))
     assert steps("tmax6") == list(range(6, 241, 6))
     assert steps("tmin6") == list(range(6, 241, 6))

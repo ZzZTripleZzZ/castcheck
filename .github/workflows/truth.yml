@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
       - run: uv venv --python 3.12 && uv pip install -e .
       - run: .venv/bin/castcheck truth
       - run: .venv/bin/castcheck truth --date $(date -u -d '2 days ago' +%F)   # late/corrected reports
       - name: commit data
-        run: |
-          git config user.name "castcheck-bot" && git config user.email "bot@castcheck.zifanzhang.com"
-          git add data && (git diff --cached --quiet || git commit -m "[data] truth $(date -u +%Y-%m-%d)") && git pull --rebase && git push
+        run: scripts/commit_data.sh "[data] truth $(date -u +%Y-%m-%d)"
