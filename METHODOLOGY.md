@@ -1,6 +1,6 @@
 # CastCheck Methodology
 
-**Version 0.3 — 2026-08-31 (pre-release).** This document is versioned together with the data. Any change that alters a published score bumps the version and is listed in the changelog at the end. v0.3 is the response to an external methodological review (`docs/06-external-review-v02.md`); it changes what the headline number *is*, so v0.2 scores are not comparable to v0.3 scores.
+**Version 0.3.1 — 2026-08-31 (pre-release).** This document is versioned together with the data. Any change that alters a published score bumps the version and is listed in the changelog at the end. v0.3 is the response to an external methodological review (`docs/06-external-review-v02.md`); it changes what the headline number *is*, so v0.2 scores are not comparable to v0.3 scores.
 
 CastCheck is an independent, automated, station-level verification of publicly available weather forecasts. It answers one narrow question, every day, with full history: *at this station, at this valid time, how far was each model's raw 2 m temperature forecast from what the National Weather Service instrument actually measured?*
 
@@ -109,6 +109,22 @@ Only the **final** CLI value is used. A same-day preliminary report is discarded
 
 **Units and rounding.** NWS reports whole degrees Fahrenheit; forecasts are stored in °C at float precision. Errors are computed in °C and displayed in °F. The quantisation is a genuine rounding, not a truncation: ASOS holds the daily extremes internally in tenths of a degree Celsius and reports temperature "rounded to the nearest degree Fahrenheit", with "all mid-point temperature values … rounded **up** (e.g. +3.5 °F rounds up to +4.0 °F; −3.5 °F rounds up to −3.0 °F; while −3.6 °F rounds to −4.0 °F)" ([ASOS User's Guide](https://www.weather.gov/media/asos/aum-toc.pdf), §3.1.3). The published truth therefore carries a half-degree-Fahrenheit uncertainty of its own — the true extreme lies in `[F − 0.5 °F, F + 0.5 °F)` — which is not propagated into the confidence intervals and is one of the limitations in §10. The ±1/±2/±3 °F hit-rate thresholds are **inclusive**: a day with `|error| = 1.000 °F` counts as a ±1 °F hit.
 
+### 3.3 Plausibility check on the daily extremes (v0.3.1)
+
+First-final (§3.2) is what makes the daily truth reproducible, and it is kept. It has one failure mode that only became visible once `truth_instant` existed: a *garbled* first report is scored as truth. KLAX 2025-02-16 was issued with `MINIMUM 11R` and corrected to 49 six hours later, so the published minimum sat 38 °F below every observation taken that night; KLAX 2024-05-05 (17 → 53), KEWR 2026-03-04 (24 → 37) and KDCA 2025-05-18 (maximum 87 → 78) are the same thing. That is not a first-final ruling, it is a decode error surviving into the scores.
+
+Every CLI extreme is therefore checked against the four sampled observations of its own climatological day, and only on days where all four are present and none is flagged `suspect`. The four samples are part of the same trace as the daily extreme, so two statements hold:
+
+- **Impossible.** A daily maximum below the sampled maximum (or a minimum above the sampled minimum) by more than **1.5 °F** cannot happen. The tolerance covers whole-°F rounding on both sides and the up-to-35-minute offset between a synoptic instant and the METAR that represents it.
+- **Excursion.** The extreme lying *beyond* the sampled extreme is ordinary — a dawn minimum falls between the 06 and 12 UTC samples — so distance alone proves nothing. Measured on this archive the genuine excursions reach 20 °F on the maximum (dry high-plains afternoons at KDEN) and 25 °F on the minimum (winter frontal passages at KOKC/KORD), with no gap separating them from the decode errors. A pure magnitude threshold cannot tell the two apart, so an excursion beyond **10 °F** is acted on *only when there is corroborating evidence*: a corrected issuance, or a CF6 value, that passes the same check.
+
+Resolution, per variable, in fixed order: the corrected value if it passes (`cli_implausible_revised_used`), else the CF6 value if it passes (`cli_implausible_cf6_used`), else the value is dropped to `NaN` so the day leaves the scores (`cli_implausible_dropped`).
+
+An **uncorroborated excursion is kept**, not dropped, as long as it stays inside the envelope of excursions that are known to be real: dropping on distance alone would remove precisely the most extreme days, which is the worst possible bias for a verification site. That envelope is measured, not assumed — the widest genuine excursion anywhere in the 2024-2026 archive is **25 °F** (KOKC 2024-02-27: samples 62/64/73/74 °F, reported minimum 37 °F — 25 °F below the lowest sample, a February frontal passage after the last sample of the day; no correction was ever issued, because nothing was wrong), against 20 °F for the maximum (KDEN 2025-07-17, KEWR 2025-12-07). Beyond that bound the value is dropped even with nothing to replace it: an isolated reading further outside the envelope than three years of observations support is worth less as truth than the station-day is worth as coverage. KATL 2026-04-14 is the case this covers — a minimum of 32 °F reported against samples of 65/63/82/80 °F, 31 °F below the lowest of them, with a correction that touched only the maximum, so neither the corrected issuance nor CF6 could supply a replacement.
+
+Over 2024-01-01 → 2026-08-30 this touches **14 station-days out of 22,033** (0.06 %): 4 repaired from the correction — exactly the four cases above — 9 dropped as impossible, and 1 dropped as an uncorroborated excursion past the observed envelope. The check is idempotent (a repaired value passes it) and is re-run over a trailing 15-day window on every daily pass, since corrections arrive late. Rows whose published value it changed carry `methodology_version = "0.3.1"`; the superseded value remains in the NWS product archive and in the shard's git history.
+
+
 ## 4. Scores
 
 For each `station × model × initialization × lead_day × variable` and for the windows *last 30 days, last 90 days, last 365 days, all available*, we publish:
@@ -160,6 +176,7 @@ What remains inside `skill_persistence` is representativeness: a 0.25° grid cel
 - Per-model headline scores use all of that model's valid days (n is shown). Pairwise comparisons use the intersection.
 - If the CLI value and the hourly-observation-derived extreme differ by more than 2 °F the day is flagged (`qc_flag`) and reported with the flag; flagged days remain in the scores, and the count of flagged days is published per score row as `n_flagged`. A day whose truth came from the hourly-observation fallback rather than CLI is flagged `obs_fallback` and also counted there. For an `ALL` row a day counts as flagged as soon as any of its stations is.
 - Missing (`M`) or trace values in CLI make the day missing for that variable.
+- A CLI extreme that contradicts the day's own four sampled observations is repaired from the corrected issuance or CF6, or — when it is physically impossible and nothing can replace it — dropped for that variable (§3.3). All four outcomes are recorded in `qc_flag` (`cli_implausible` plus `…_revised_used` / `…_cf6_used` / `…_dropped`) and counted in `n_flagged` like every other flag. 14 station-days in the 2024-2026 archive are affected.
 
 ## 7. Fairness statement
 
@@ -222,6 +239,8 @@ Until (b), (c) and (d) exist, the correct sentence is: *under four-instant sampl
 
 ## Changelog
 
+- **0.3.1 (2026-08-31)** — CLI plausibility check against the instantaneous observations.
+  - §3.3 (new) / §6: the published daily extreme is checked against the four sampled observations of the same day and repaired from the corrected issuance or CF6, or dropped when it is physically impossible and nothing can replace it, or when it lies past the widest excursion three years of observations support (25 °F). First-final is unchanged; only values that contradict the station's own measurements are acted on. 14 station-days affected in the 2024-2026 archive.
 - **0.3 (2026-08-31)** — external methodological review (`docs/06-external-review-v02.md`). **Published scores are not comparable to v0.2.**
   - §2.3: the headline is now the **instantaneous** 2 m temperature at the four common instants (`t2`, plus `t2_00z…t2_18z`) against the observation at the same instant. Sampled daily extremes are scored **like for like** against the observed sampled extremes (`tmax_s`, `tmin_s`). The old comparison — sampled forecast extreme vs true CLI extreme — survives as the secondary `tmax_cli`/`tmin_cli`, explicitly labelled as carrying a sampling penalty whose size varies with each model's diurnal amplitude. The v0.2 claim that this penalty "applies identically to every model and is therefore fair for comparing models" is withdrawn.
   - §3.1: new instantaneous truth table `truth_instant` (ASOS routine METAR within ±35 min of the synoptic hour).

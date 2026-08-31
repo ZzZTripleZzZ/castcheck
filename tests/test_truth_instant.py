@@ -338,3 +338,232 @@ def test_one_stations_outage_does_not_lose_the_batch(monkeypatch):
     assert set(out["station_id"]) == {"KNYC", "KMSP"}
     assert out.set_index("station_id").loc["KMSP", "qc_flag"] == "no_report"
     assert out.set_index("station_id").loc["KNYC", "temp_c"] == pytest.approx(20.0)
+
+
+# --------------------------------------------------------------------------- plausibility QC
+
+
+"""The four cases below are real, taken from the 2024-2026 archive; each is a CLI report whose
+first-final value contradicts every observation the station took that day, together with the
+correction the NWS issued hours later."""
+
+KDCA = Station(id="KDCA", name="Washington Reagan", cli_pil="CLIDCA", tz="America/New_York",
+               std_offset_h=-5, lat=38.84833, lon=-77.03417, elev_m=4.0)
+KLAX = Station(id="KLAX", name="Los Angeles Intl", cli_pil="CLILAX", tz="America/Los_Angeles",
+               std_offset_h=-8, lat=33.93806, lon=-118.38889, elev_m=38.1)
+
+KEWR = Station(id="KEWR", name="Newark Liberty", cli_pil="CLIEWR", tz="America/New_York",
+               std_offset_h=-5, lat=40.6825, lon=-74.16944, elev_m=4.9)
+
+#: station, climo date, (first-final tmax, tmin), (revised tmax, tmin), the day's four samples in °F,
+#: and the values the check must publish. KDCA is the case that pins the rule down to *one variable
+#: at a time*: its maximum is garbled and repaired, while its minimum (66 against a sampled 71) is
+#: perfectly ordinary and must keep the first-final value even though a correction exists.
+GARBLED_CLI = [
+    (KLAX, date(2025, 2, 16), (69, 11), (69, 49), [52.0, 65.0, 65.0, 57.0], (69, 49)),  # "MINIMUM 11R"
+    (KLAX, date(2024, 5, 5), (66, 17), (66, 53), [53.0, 62.0, 61.0, 62.0], (66, 53)),
+    (KEWR, date(2026, 3, 4), (47, 24), (47, 37), [37.0, 39.0, 45.0, 46.0], (47, 37)),
+    (KDCA, date(2025, 5, 18), (87, 66), (78, 68), [73.4, 71.0, 74.0, 74.0], (78, 66)),
+]
+
+
+def truth_row(station, climo_date, tmax_f, tmin_f, revised=(None, None), source="CLI",
+              qc_flag="") -> dict:
+    from castcheck.truth import f_to_c
+
+    return {
+        "station_id": station.id, "climo_date": climo_date, "source": source,
+        "tmax_f": tmax_f, "tmin_f": tmin_f, "tmax_c": f_to_c(tmax_f), "tmin_c": f_to_c(tmin_f),
+        "issuance_time": pd.Timestamp(climo_date, tz="UTC") + pd.Timedelta(days=1, hours=8),
+        "is_final": True, "revised": revised != (None, None),
+        "revised_tmax_f": revised[0], "revised_tmin_f": revised[1],
+        "qc_flag": qc_flag, "product_id": "p", "schema_version": "0.3",
+        "methodology_version": "0.3",
+    }
+
+
+def instants_for(station, climo_date, temps_f) -> pd.DataFrame:
+    """A `truth_instant` frame holding the four samples of one station-day."""
+    from castcheck.climo_day import common_sample_times
+
+    times = common_sample_times(station, climo_date)
+    return pd.DataFrame({
+        "station_id": station.id,
+        "valid_time": pd.to_datetime(times, utc=True),
+        "temp_c": [(f - 32) * 5 / 9 for f in temps_f],
+        "obs_time": pd.to_datetime(times, utc=True) - pd.Timedelta(minutes=9),
+        "source": SOURCE_IEM, "n_reports": 1, "qc_flag": "",
+        "schema_version": "0.3", "methodology_version": "0.3",
+    })
+
+
+@pytest.mark.parametrize("station,climo_date,first,rev,samples,expected", GARBLED_CLI,
+                         ids=[f"{s.id}-{d}" for s, d, *_ in GARBLED_CLI])
+def test_a_garbled_first_final_is_replaced_by_its_correction(station, climo_date, first, rev,
+                                                             samples, expected):
+    from castcheck.truth import QC_IMPLAUSIBLE, QC_REVISED_USED, plausibility_qc
+
+    daily = pd.DataFrame([truth_row(station, climo_date, *first, revised=rev)])
+    out = plausibility_qc(daily, instants_for(station, climo_date, samples), [station])
+    row = out.iloc[0]
+
+    assert (row.tmax_f, row.tmin_f) == expected, "the correction must become the published value"
+    assert QC_IMPLAUSIBLE in row.qc_flag and QC_REVISED_USED in row.qc_flag
+    assert row.methodology_version == "0.3.1"
+    # °C mirrors the repaired °F, not the discarded one
+    assert row.tmax_c == pytest.approx((expected[0] - 32) * 5 / 9, abs=1e-6)
+    assert row.tmin_c == pytest.approx((expected[1] - 32) * 5 / 9, abs=1e-6)
+
+
+def test_the_check_is_idempotent():
+    from castcheck.truth import plausibility_qc
+
+    station, climo_date, first, rev, samples, _ = GARBLED_CLI[0]
+    instants = instants_for(station, climo_date, samples)
+    once = plausibility_qc(pd.DataFrame([truth_row(station, climo_date, *first, revised=rev)]),
+                           instants, [station])
+    twice = plausibility_qc(once, instants, [station])
+    assert (twice.iloc[0].tmax_f, twice.iloc[0].tmin_f) == rev
+    assert twice.iloc[0].qc_flag == once.iloc[0].qc_flag
+
+
+def test_an_ordinary_day_is_left_alone():
+    """The daily extremes normally sit outside the samples; that is weather, not an error."""
+    from castcheck.truth import plausibility_qc
+
+    daily = pd.DataFrame([truth_row(KDCA, date(2025, 5, 18), 79, 66)])
+    out = plausibility_qc(daily, instants_for(KDCA, date(2025, 5, 18), [73.4, 71.0, 74.0, 74.0]), [KDCA])
+    assert (out.iloc[0].tmax_f, out.iloc[0].tmin_f) == (79, 66)
+    assert out.iloc[0].qc_flag == ""
+
+
+def test_a_large_excursion_with_nothing_to_corroborate_it_is_kept():
+    """KOKC 2024-02-27: a 25 °F drop below the samples behind a winter front — real, and the
+    hardest kind of day to forecast. Dropping it would bias the scores towards easy days."""
+    from castcheck.truth import plausibility_qc
+
+    daily = pd.DataFrame([truth_row(KDCA, date(2025, 1, 10), 45, 20)])
+    out = plausibility_qc(daily, instants_for(KDCA, date(2025, 1, 10), [45.0, 44.0, 43.0, 44.0]), [KDCA])
+    assert (out.iloc[0].tmax_f, out.iloc[0].tmin_f) == (45, 20)
+    assert out.iloc[0].qc_flag == ""
+
+
+def test_a_physically_impossible_value_with_no_alternative_is_dropped():
+    """KMSY 2025-01-15: CLI reported a maximum of 51 °F on a day whose 17:53Z METAR read 58 °F."""
+    from castcheck.truth import QC_DROPPED, plausibility_qc
+
+    daily = pd.DataFrame([truth_row(KDCA, date(2025, 1, 15), 51, 50)])
+    out = plausibility_qc(daily, instants_for(KDCA, date(2025, 1, 15), [51.0, 50.0, 58.0, 53.0]), [KDCA])
+    row = out.iloc[0]
+    assert pd.isna(row.tmax_f) and pd.isna(row.tmax_c)
+    assert row.tmin_f == 50, "only the offending variable is dropped"
+    assert QC_DROPPED in row.qc_flag
+
+
+def test_cf6_is_used_when_the_correction_is_also_wrong():
+    from castcheck.truth import QC_CF6_USED, plausibility_qc
+
+    d = date(2025, 1, 15)
+    daily = pd.DataFrame([truth_row(KDCA, d, 51, 50, revised=(52, 50)),      # correction still too low
+                          truth_row(KDCA, d, 58, 50, source="CF6")])
+    out = plausibility_qc(daily, instants_for(KDCA, d, [51.0, 50.0, 58.0, 53.0]), [KDCA])
+    cli = out[out.source == "CLI"].iloc[0]
+    assert cli.tmax_f == 58 and QC_CF6_USED in cli.qc_flag
+
+
+def test_a_day_without_four_clean_samples_is_never_judged():
+    """Three samples would raise a false alarm whenever the missing one was the extreme."""
+    from castcheck.truth import plausibility_qc, sampled_extremes_f
+
+    station, climo_date, first, rev, samples, _ = GARBLED_CLI[0]
+    daily = pd.DataFrame([truth_row(station, climo_date, *first, revised=rev)])
+
+    partial = instants_for(station, climo_date, samples).iloc[:3]
+    assert plausibility_qc(daily, partial, [station]).iloc[0].tmin_f == first[1]
+
+    suspect = instants_for(station, climo_date, samples)
+    suspect.loc[suspect.index[1], "qc_flag"] = "suspect"
+    assert sampled_extremes_f(suspect, [station]) == {}
+    assert plausibility_qc(daily, suspect, [station]).iloc[0].tmin_f == first[1]
+
+
+def test_an_empty_instant_table_changes_nothing():
+    from castcheck.truth import plausibility_qc
+
+    station, climo_date, first, rev, *_ = GARBLED_CLI[0]
+    daily = pd.DataFrame([truth_row(station, climo_date, *first, revised=rev)])
+    out = plausibility_qc(daily, pd.DataFrame(columns=TRUTH_INSTANT_COLUMNS), [station])
+    assert (out.iloc[0].tmax_f, out.iloc[0].tmin_f) == first
+
+
+def test_overwrite_truth_replaces_rows_that_upsert_would_refuse_to_change(data_dir):
+    """`upsert_truth` keeps the earliest issuance; a re-run QC row has the *same* issuance time, so
+    only an overwriting writer can land the correction."""
+    from castcheck.store import overwrite_truth, read_truth, upsert_truth
+
+    station, climo_date, first, rev, *_ = GARBLED_CLI[0]
+    original = pd.DataFrame([truth_row(station, climo_date, *first, revised=rev)])
+    upsert_truth(original)
+
+    fixed = original.copy()
+    fixed.loc[0, ["tmin_f", "qc_flag"]] = [rev[1], "cli_implausible"]
+    upsert_truth(fixed)
+    assert read_truth().iloc[0].tmin_f == first[1]      # first-final refuses it, by design
+
+    overwrite_truth(fixed)
+    stored = read_truth().iloc[0]
+    assert stored.tmin_f == rev[1] and stored.qc_flag == "cli_implausible"
+
+
+KATL = Station(id="KATL", name="Atlanta Hartsfield", cli_pil="CLIATL", tz="America/New_York",
+               std_offset_h=-5, lat=33.64028, lon=-84.42694, elev_m=313.0)
+KOKC = Station(id="KOKC", name="Oklahoma City", cli_pil="CLIOKC", tz="America/Chicago",
+               std_offset_h=-6, lat=35.38861, lon=-97.60028, elev_m=394.1)
+
+
+def test_an_excursion_past_the_observed_envelope_is_dropped_even_without_a_replacement():
+    """KATL 2026-04-14: minimum 32 °F against samples of 65/63/82/80. The correction that day
+    touched only the maximum, so `revised_tmin_f` is absent and there is no CF6 row — nothing can
+    replace the value, and 31 °F is further outside the samples than any real excursion in three
+    years of this archive."""
+    from castcheck.truth import QC_DROPPED, QC_IMPLAUSIBLE, plausibility_qc
+
+    d = date(2026, 4, 14)
+    daily = pd.DataFrame([truth_row(KATL, d, 86, 32, revised=(86, None))])
+    row = plausibility_qc(daily, instants_for(KATL, d, [65.0, 63.0, 82.0, 80.0]), [KATL]).iloc[0]
+
+    assert pd.isna(row.tmin_f) and pd.isna(row.tmin_c)
+    assert row.tmax_f == 86, "the maximum is consistent with the samples and is left alone"
+    assert QC_IMPLAUSIBLE in row.qc_flag and QC_DROPPED in row.qc_flag
+
+
+def test_the_widest_real_excursion_in_the_archive_is_still_kept():
+    """KOKC 2024-02-27: minimum 37 °F, 25 °F below the day's lowest sample, because the front
+    arrived after the last one. This is the value the envelope is drawn at — it must survive, or
+    the bound is cutting into real weather instead of bounding it."""
+    from castcheck.truth import plausibility_qc
+
+    d = date(2024, 2, 27)
+    daily = pd.DataFrame([truth_row(KOKC, d, 80, 37)])
+    row = plausibility_qc(daily, instants_for(KOKC, d, [62.0, 64.0, 73.0, 74.0]), [KOKC]).iloc[0]
+
+    assert (row.tmax_f, row.tmin_f) == (80, 37)
+    assert row.qc_flag == ""
+
+
+def test_the_envelope_bound_is_compared_on_the_whole_degree_lattice():
+    """A 25 °F excursion arrives as 24.999999 after the °C round trip and must not be dropped."""
+    from castcheck.truth import PLAUSIBILITY_REVIEW_F, plausibility_qc
+
+    d = date(2024, 2, 27)
+    samples = [62.0, 64.0, 73.0, 74.0]
+    at_bound = int(min(samples) - PLAUSIBILITY_REVIEW_F)          # 37 °F, exactly on the bound
+    just_past = at_bound - 1                                       # 36 °F, one step outside it
+
+    keep = plausibility_qc(pd.DataFrame([truth_row(KOKC, d, 80, at_bound)]),
+                           instants_for(KOKC, d, samples), [KOKC]).iloc[0]
+    drop = plausibility_qc(pd.DataFrame([truth_row(KOKC, d, 80, just_past)]),
+                           instants_for(KOKC, d, samples), [KOKC]).iloc[0]
+
+    assert keep.tmin_f == at_bound
+    assert pd.isna(drop.tmin_f)

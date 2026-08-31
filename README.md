@@ -24,6 +24,19 @@ IEM ASOS (routine METAR at 00/06/12/18 UTC) ─▶ truth_instant ─────
 NWS CLI (first final report), CF6, hourly obs, IEM archive ─▶ truth_daily with QC flags ──┘
 ```
 
+## Published tables
+
+| table | one row per | what it is |
+|---|---|---|
+| `forecast_values` | model run × valid time × station × variable × method | the raw 6-hourly instantaneous layer, before any daily extreme is taken — the table to start from to re-derive or check anything |
+| `truth_instant` | station × valid time (00/06/12/18 UTC) | the observed 2 m temperature at the common instants: the routine METAR nearest the hour within ±35 min (`station_id, valid_time, temp_c, obs_time, source, n_reports, qc_flag`). Truth for `t2*` and for `tmax_s`/`tmin_s` |
+| `truth_daily` | station × climatological day × source | first-final NWS CLI daily extremes with QC flags and stored (never scored) corrections. Truth for `tmax_cli`/`tmin_cli` |
+| `daily_forecasts` | model run × station × climatological day | sampled and native daily extremes per lead day |
+| `scores` | station × model × init × lead × variable × method × window | the published aggregates with bootstrap intervals, skill and sample sizes |
+| `pairwise` | the same, per model pair | paired MAE differences on common days, with `p_boot`, `distinguishable_uncorrected` and `distinguishable_holm` |
+
+Column-by-column definitions with units are on [/data/](https://castcheck.zifanzhang.com/data/#schema).
+
 All logic lives in importable, tested functions; `castcheck` is a thin CLI over them. Pipelines run on GitHub Actions (with a local launchd mirror) and deploy a static site to Cloudflare Pages. See [DESIGN.md](DESIGN.md).
 
 ## Quick start

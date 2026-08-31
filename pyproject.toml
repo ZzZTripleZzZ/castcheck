@@ -15,6 +15,7 @@ dependencies = [
   # >=2.43 pulls the `eccodeslib` binary wheel on Linux/macOS, so cfgrib works without a system
   # libeccodes (this is what makes the GitHub Actions runner work with a plain `uv pip install`).
   "eccodes>=2.43",
+  "eccodeslib>=2.43",  # binary ecCodes library wheel; uv sync --frozen must ship it on every platform
   "h5netcdf>=1.3",
   "h5py>=3.11",           # h5netcdf's backend for file-like objects (AIWP remote NetCDF)
   "fsspec>=2024.6",

@@ -24,3 +24,7 @@ docs/
 *.tmp.parquet
 .*.tmp
 .wrangler/
+
+# macOS/iCloud conflict copies ("name 2.ext")
+* 2.*
+* 2
