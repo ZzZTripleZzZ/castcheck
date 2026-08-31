@@ -41,8 +41,9 @@ extreme is a <em>definition</em> and someone checking a claim should not have to
 interpolation method: the raw 2 m temperature at 00/06/12/18 UTC, before any extreme is taken.
 Parquet shards at <a href="{{ hf_files_url }}">{{ hf_files_url }}</a> under
 <code>forecast_values/year=YYYY/</code>; the signed daily errors derived from them are in
-<a href="/data/daily_errors.csv.gz"><code>daily_errors.csv.gz</code></a> above, one row per
-station, model, initialization, lead day, method, variable and day.</li>
+the <code>daily_errors/&lt;station&gt;.csv.gz</code> files above — one row per model,
+initialization, lead day, method, variable and day, and four rows a day for the pooled
+<code>t2</code>, with <code>valid_hour_utc</code> naming the instant.</li>
 <li><code>truth_instant</code> — the observed 2 m temperature at those same four instants: the
 routine METAR nearest the synoptic hour within &plusmn;35 minutes, from the IEM ASOS archive
 (<code>truth_instant/year=YYYY/</code> in the same dataset). This is the truth for the headline

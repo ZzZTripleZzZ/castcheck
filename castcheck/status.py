@@ -7,7 +7,9 @@ uptime window the site draws) days:
    station has a present ``t2`` value at every expected forecast step (``max_h / step_h`` steps,
    f000 excluded — METHODOLOGY §2.2 and the AIWP fill-value note in DESIGN §4);
 2. for every station, is there a first-final NWS CLI value for each climatological day;
-3. what is the newest initialization we hold per model.
+3. for every station, are all four synoptic instants present in ``truth_instant`` — the truth the
+   headline ``t2`` score is computed against, so a hole there silently shrinks the headline;
+4. what is the newest initialization we hold per model.
 
 Two kinds of day are **not** downtime and are excluded from the uptime denominator (review B8):
 
@@ -39,6 +41,8 @@ __all__ = ["DEFAULT_DAYS", "EXIT_GAPS", "EXIT_OK", "MAX_LISTED_GAPS", "build", "
 EXIT_OK = 0
 EXIT_GAPS = 1
 DEFAULT_DAYS = 90  # the uptime window drawn on /status/
+#: The four common synoptic instants (METHODOLOGY §2.2); a truth_instant day is complete at four.
+INSTANT_HOURS = (0, 6, 12, 18)
 MAX_LISTED_GAPS = 400  # `gaps` is a convenience list; the per-day grids are the full record
 
 
@@ -93,6 +97,7 @@ def build(
     days: int = DEFAULT_DAYS,
     values: pd.DataFrame | None = None,
     truth: pd.DataFrame | None = None,
+    truth_instant: pd.DataFrame | None = None,
     stations: list[Station] | None = None,
     models: list[ModelSpec] | None = None,
     upstream: bool = True,
@@ -104,13 +109,18 @@ def build(
     window = [as_of_d - timedelta(days=i) for i in range(days - 1, -1, -1)]
     station_ids = [s.id for s in stations]
 
-    if values is None or truth is None:
+    if values is None or truth is None or truth_instant is None:
         from . import store
         if values is None:
             values = store.read_forecast_values(start=(window[0] - timedelta(days=1)).isoformat())
+        years = sorted({d.year for d in window})
         if truth is None:
-            years = sorted({d.year for d in window})
             truth = store.read_truth(years)
+        if truth_instant is None:
+            try:
+                truth_instant = store.read_truth_instant(years)
+            except Exception:  # noqa: BLE001 - the table may not exist in an older checkout
+                truth_instant = None
 
     report: dict = {
         "castcheck_version": __version__,
@@ -124,6 +134,7 @@ def build(
         "n_stations": len(stations),
         "models": [],
         "truth": [],
+        "truth_instant": [],
         "gaps": [],
         "current_gaps": [],
     }
@@ -264,6 +275,54 @@ def build(
             "n_missing": sum(1 for r in day_rows if not r["cli_final"] and r["date"] <= truth_deadline.isoformat()),
         })
 
+    # ---- truth_instant --------------------------------------------------------------------
+    # The observation at 00/06/12/18 UTC is the truth of the headline t2 score, so its coverage
+    # belongs on the status page next to the CLI: a station quietly losing one instant a day loses
+    # a quarter of its headline sample without anything else turning red.
+    inst_counts: dict[tuple[str, date], int] = {}
+    if truth_instant is not None and len(truth_instant):
+        ti = truth_instant.copy()
+        vt = pd.to_datetime(ti["valid_time"], utc=True, errors="coerce")
+        keep = vt.notna() & ti["temp_c"].notna() & vt.dt.hour.isin(INSTANT_HOURS)
+        for st, d in zip(ti.loc[keep, "station_id"], vt[keep].dt.date):
+            inst_counts[(st, d)] = inst_counts.get((st, d), 0) + 1
+
+    # A UTC day's last instant is 18Z, so today is never expected; and, as for the models, a day
+    # before this station's own record begins is not a hole — the archive backfill decides that.
+    first_instant: dict[str, date] = {}
+    for (st, d) in inst_counts:
+        cur = first_instant.get(st)
+        if cur is None or d < cur:
+            first_instant[st] = d
+    for st_obj in stations:
+        started = first_instant.get(st_obj.id)
+        day_rows = []
+        for d in window:
+            n = inst_counts.get((st_obj.id, d), 0)
+            expected = d <= truth_deadline and started is not None and d >= started
+            day_rows.append({
+                "date": d.isoformat(), "n_instants": n,
+                "complete": n >= len(INSTANT_HOURS),
+                "any_source": n > 0,
+                "expected": bool(expected),
+                "reason": "" if expected else ("before_start" if d <= truth_deadline
+                                               else "not_due_yet"),
+            })
+            if expected and n < len(INSTANT_HOURS):
+                gap = {"type": "truth_instant", "station_id": st_obj.id, "date": d.isoformat(),
+                       "detail": f"{n}/{len(INSTANT_HOURS)} synoptic instants observed"}
+                report["gaps"].append(gap)
+                if d == truth_deadline:
+                    report["current_gaps"].append(gap)
+        report["truth_instant"].append({
+            "station_id": st_obj.id, "name": st_obj.name,
+            "iem_id": getattr(st_obj, "iem_id", None),
+            "period_start": started.isoformat() if started is not None else None,
+            "days": day_rows,
+            "n_expected": sum(1 for r in day_rows if r["expected"]),
+            "n_missing": sum(1 for r in day_rows if r["expected"] and not r["complete"]),
+        })
+
     report["n_gaps"] = len(report["gaps"])
     # The per-day grids above already carry the complete picture; the flat list is a convenience,
     # so it is capped (newest first) to keep status.json small. n_gaps stays the true total.
@@ -282,11 +341,14 @@ def build(
     # initializations the upstream archive never produced are not downtime (review B8).
     slots = [d for m in report["models"] for d in m["days"] if d["expected"]]
     tdays = [d for t in report["truth"] for d in t["days"]]
+    idays = [d for t in report["truth_instant"] for d in t["days"] if d["expected"]]
     report["uptime"] = {
         "model_runs": round(100.0 * sum(1 for d in slots if d["complete"]) / len(slots), 2)
         if slots else None,
         "truth": round(100.0 * sum(1 for d in tdays if d["cli_final"]) / len(tdays), 2)
         if tdays else None,
+        "truth_instant": round(100.0 * sum(1 for d in idays if d["complete"]) / len(idays), 2)
+        if idays else None,
         "window_days": days,
         "basis": "expected slots only: from each model's period_start, upstream-produced "
                  "initializations only",

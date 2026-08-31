@@ -377,6 +377,51 @@ def truth_backfill(start: str, end: str, stations: str = ""):
         summary.append(f"{start}..{end}: {len(rows)} rows, {len(sts)} station(s)")
 
 
+@app.command("truth-qc")
+def truth_qc(start: str = typer.Option("", "--start", help="first climatological date (default: all)"),
+             end: str = typer.Option("", "--end", help="last climatological date (default: all)")):
+    """Re-check stored CLI daily extremes against `truth_instant` and repair or drop bad ones.
+
+    Idempotent: a value the check has already repaired passes the check. Whole years are rewritten,
+    so this must not run concurrently with `truth`/`truth-backfill` on the same years.
+    """
+    with _journal("truth-qc") as summary:
+        import pandas as pd
+
+        from .store import overwrite_truth, read_truth, read_truth_instant
+        from .truth import QC_CF6_USED, QC_DROPPED, QC_IMPLAUSIBLE, QC_REVISED_USED, plausibility_qc
+
+        d0 = date.fromisoformat(start) if start else None
+        d1 = date.fromisoformat(end) if end else None
+        # whole years, because `overwrite_truth` replaces a shard rather than merging into it
+        years = list(range((d0 or date(2000, 1, 1)).year, (d1 or _now().date()).year + 1))
+        truth_rows = read_truth(years=years if (d0 or d1) else None)
+        if truth_rows.empty:
+            typer.echo("no stored truth to check")
+            summary.append("no stored truth")
+            return
+        truth_rows["climo_date"] = pd.to_datetime(truth_rows["climo_date"]).dt.date
+        window = truth_rows
+        if d0 or d1:
+            keep = pd.Series(True, index=truth_rows.index)
+            if d0:
+                keep &= truth_rows["climo_date"] >= d0
+            if d1:
+                keep &= truth_rows["climo_date"] <= d1
+            window = truth_rows[keep]
+        checked = plausibility_qc(window, read_truth_instant(), load_stations())
+        merged = pd.concat([truth_rows.drop(index=window.index), checked], ignore_index=True)
+
+        flags = checked["qc_flag"].fillna("")
+        n = {tok: int(flags.str.contains(tok, regex=False).sum())
+             for tok in (QC_IMPLAUSIBLE, QC_REVISED_USED, QC_CF6_USED, QC_DROPPED)}
+        out = overwrite_truth(merged)
+        typer.echo(f"{len(window)} row(s) checked: {n[QC_IMPLAUSIBLE]} implausible "
+                   f"({n[QC_REVISED_USED]} revised, {n[QC_CF6_USED]} CF6, {n[QC_DROPPED]} dropped) -> {out}")
+        summary.append(f"{len(window)} checked, {n[QC_IMPLAUSIBLE]} implausible, "
+                       f"{n[QC_REVISED_USED]} revised, {n[QC_CF6_USED]} cf6, {n[QC_DROPPED]} dropped")
+
+
 def _instant_summary(rows) -> str:
     n = len(rows)
     if not n:

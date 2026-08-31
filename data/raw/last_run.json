@@ -12,13 +12,13 @@
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.067,
-      "exit_code": 1,
-      "finished_at": "2026-08-31T04:41:42+00:00",
-      "last_success_at": "2026-08-31T04:33:33+00:00",
-      "started_at": "2026-08-31T04:41:42+00:00",
-      "status": "error",
-      "summary": "ArrowInvalid: Could not open Parquet input source 'data/scores/latest.parquet': Parquet file size is 0 bytes"
+      "duration_s": 309.498,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:49:11+00:00",
+      "last_success_at": "2026-08-31T04:49:11+00:00",
+      "started_at": "2026-08-31T04:44:01+00:00",
+      "status": "ok",
+      "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.1.0",
@@ -32,13 +32,13 @@
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 5.198,
-      "exit_code": 1,
-      "finished_at": "2026-08-31T04:41:39+00:00",
-      "last_success_at": "2026-08-31T04:37:44+00:00",
-      "started_at": "2026-08-31T04:41:34+00:00",
-      "status": "error",
-      "summary": "ArrowInvalid: Could not open Parquet input source 'data.../model_id=aifs_single/year=2026.parquet': Parquet file size is 0 bytes"
+      "duration_s": 4.569,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:42:29+00:00",
+      "last_success_at": "2026-08-31T04:42:29+00:00",
+      "started_at": "2026-08-31T04:42:24+00:00",
+      "status": "ok",
+      "summary": "1484282 values (full) -> 209394 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -62,23 +62,23 @@
     },
     "publish-hf": {
       "castcheck_version": "0.1.0",
-      "duration_s": 9.274,
+      "duration_s": 18.75,
       "exit_code": 0,
-      "finished_at": "2026-08-31T04:41:57+00:00",
-      "last_success_at": "2026-08-31T04:41:57+00:00",
-      "started_at": "2026-08-31T04:41:48+00:00",
+      "finished_at": "2026-08-31T04:54:52+00:00",
+      "last_success_at": "2026-08-31T04:54:52+00:00",
+      "started_at": "2026-08-31T04:54:33+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.02,
-      "exit_code": 1,
-      "finished_at": "2026-08-31T04:41:58+00:00",
-      "last_success_at": null,
-      "started_at": "2026-08-31T04:41:58+00:00",
-      "status": "error",
-      "summary": "ArrowInvalid: Could not open Parquet input source '<Buffer>': Parquet file size is 0 bytes"
+      "duration_s": 34.281,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:55:28+00:00",
+      "last_success_at": "2026-08-31T04:55:28+00:00",
+      "started_at": "2026-08-31T04:54:53+00:00",
+      "status": "ok",
+      "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
     "truth": {
       "castcheck_version": "0.1.0",
@@ -120,16 +120,26 @@
       "status": "ok",
       "summary": "2024-01-01..2026-08-30: 89516 instants, 89345 with a value (99.8%), gap_gt35min=155 no_report=16 suspect=69, 23 station(s)"
     },
+    "truth-qc": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 4.818,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:55:15+00:00",
+      "last_success_at": "2026-08-31T04:55:15+00:00",
+      "started_at": "2026-08-31T04:55:11+00:00",
+      "status": "ok",
+      "summary": "22420 checked, 14 implausible, 4 revised, 0 cf6, 10 dropped"
+    },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.045,
-      "exit_code": 1,
-      "finished_at": "2026-08-31T04:41:40+00:00",
-      "last_success_at": "2026-08-31T04:38:21+00:00",
-      "started_at": "2026-08-31T04:41:40+00:00",
-      "status": "error",
-      "summary": "ArrowInvalid: Could not open Parquet input source 'data.../model_id=aifs_single/year=2026.parquet': Parquet file size is 0 bytes"
+      "duration_s": 36.111,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T04:43:05+00:00",
+      "last_success_at": "2026-08-31T04:43:05+00:00",
+      "started_at": "2026-08-31T04:42:29+00:00",
+      "status": "ok",
+      "summary": "scores=231136 pairwise=713584 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T04:41:58+00:00"
+  "updated_at": "2026-08-31T04:55:28+00:00"
 }

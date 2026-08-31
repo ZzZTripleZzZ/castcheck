@@ -83,8 +83,9 @@ best = (scores.query("window == '90d' and init_hour == 0 and method == 'bilinear
               .sort_values("mae"))
 print(best[["model_id", "n", "mae", "mae_ci_low", "mae_ci_high", "bias"]])
 
-# the full per-day record (°C), ~one row per station/model/init/lead/method/variable/day
-errors = pd.read_csv("{{ site_url }}/data/daily_errors.csv.gz")</pre>
+# the per-day record for one station (°C): one row per model/init/lead/method/variable/day,
+# and four rows a day for the pooled t2 (valid_hour_utc says which instant). One file per station.
+errors = pd.read_csv("{{ site_url }}/data/daily_errors/KNYC.csv.gz")</pre>
 <p class="note">MAE, bias, RMSE and the interval bounds are in <strong>°C</strong> in the API and
 the CSVs; the site displays them in °F (multiply a difference by 1.8).</p>
 </section>

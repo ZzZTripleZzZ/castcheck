@@ -16,6 +16,9 @@
   <li>window <b>last {{ report.days }} days</b></li>
   <li>stations <b>{{ report.n_stations }}</b></li>
   <li>gaps in window <b>{{ report.n_gaps }}</b></li>
+{% if report.uptime and report.uptime.truth_instant is not none %}
+  <li>observed instants <b>{{ report.uptime.truth_instant }}%</b></li>
+{% endif %}
 </ul>
 <p class="note">A model run counts as complete only when every station has a value at every
 expected forecast step (the analysis step f000 is not one); nothing is silently skipped
@@ -90,6 +93,34 @@ title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations,
 </table>
 </div>
 </section>
+
+{% if instant_bars %}
+<section>
+<h2 id="instants">Observed instants — last {{ report.days }} days</h2>
+<p class="note">The truth of the headline <code>t2</code> score is the routine METAR nearest each
+of 00/06/12/18&nbsp;UTC, within &plusmn;35&nbsp;minutes (<code>truth_instant</code>). A day counts
+as complete only with all four: a station that quietly loses one instant a day loses a quarter of
+its headline sample without anything else turning red. Today is never counted — its 18Z instant
+has not happened — and neither are the days before a station's own archive begins.</p>
+<div class="scroll">
+<table class="scores">
+<thead><tr><th scope="col">Station</th><th scope="col" class="num">Complete</th>
+<th scope="col">Last {{ report.days }} days</th><th scope="col">Since</th>
+<th scope="col" class="num">Incomplete</th></tr></thead>
+<tbody>
+{% for t in instant_bars %}
+<tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a>
+<span class="sub">{{ t.name }}{% if t.iem_id %} · IEM {{ t.iem_id }}{% endif %}</span></th>
+<td class="num">{{ t.uptime }}</td>
+<td>{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ t.n_expected }} days expected, {{ t.n_missing }} incomplete</span></td>
+<td class="tiny">{{ t.period_start or '—' }}</td>
+<td class="num">{{ t.n_missing }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endif %}
 
 {% if report.current_gaps %}
 <section>

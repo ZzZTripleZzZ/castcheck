@@ -367,6 +367,32 @@ def upsert_truth(df: pd.DataFrame) -> dict[str, int]:
     return out
 
 
+def overwrite_truth(df: pd.DataFrame) -> dict[str, int]:
+    """Replace whole ``truth_daily`` year shards with `df`, bypassing the first-final merge.
+
+    :func:`upsert_truth` exists to make *arrival order* irrelevant: whatever it is handed, the
+    earliest issuance wins. That is exactly wrong for re-running a quality check over rows that are
+    already stored — the stored row and the corrected row carry the same key *and the same issuance
+    time*, so the merge would keep the stored one and the correction would vanish without a trace.
+
+    This is therefore the only writer that overwrites. The caller must pass **every row of each year
+    it touches** (``castcheck truth-qc`` reads whole years for this reason); a partial frame would
+    delete the rest of the year.
+    """
+    if df.empty:
+        return {}
+    df = df[TRUTH_COLUMNS].copy()
+    df["climo_date"] = pd.to_datetime(df["climo_date"]).dt.date
+    df["issuance_time"] = pd.to_datetime(df["issuance_time"], utc=True)
+    out = {}
+    for year, part in df.groupby(pd.to_datetime(df["climo_date"]).dt.year):
+        path = truth_path(int(year))
+        merged = part.sort_values(TRUTH_KEY).reset_index(drop=True)
+        _write(_cast(merged, _TRUTH_DTYPES), path)
+        out[str(path.relative_to(DATA_DIR))] = len(merged)
+    return out
+
+
 def read_truth(years: list[int] | None = None) -> pd.DataFrame:
     frames = [_read(f, TRUTH_COLUMNS) for f in _shards(DATA_DIR / "truth_daily", "year=*.parquet")
               if not years or int(f.stem.split("=")[1]) in years]

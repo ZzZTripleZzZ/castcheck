@@ -11,7 +11,7 @@ are merged with the *same* semantics the store uses for upserts:
 - ``daily_forecasts``: one row per DAILY_KEY, later side wins. It used to be safe to keep whichever
   file was newer, because ``derive`` rewrote every shard from scratch; once ``derive`` takes a date
   window the newer file is only newer *for that window*, so the sides have to be unioned.
-- ``scores``: fully re-derived from the tables above — keep the newer file (by mtime), the next
+- ``scores``: fully re-derived from the tables above — keep the later-computed file (methodology version, computed_at), the next
   ``castcheck verify`` regenerates it anyway.
 """
 
@@ -84,7 +84,15 @@ def kind_of(path: Path) -> str:
 def merge_files(ours: Path, theirs: Path, out: Path) -> str:
     kind = kind_of(out)
     if kind == "scores":
-        newer = ours if ours.stat().st_mtime >= theirs.stat().st_mtime else theirs
+        # Fully re-derived: keep the later-computed table (methodology version, then computed_at), not mtime.
+        def _stamp(p: Path) -> tuple:
+            names = pq.read_schema(p).names
+            cols = [c for c in ("methodology_version", "computed_at") if c in names]
+            d = pq.read_table(p, columns=cols).to_pandas() if cols else None
+            mv = str(d["methodology_version"].iloc[0]) if d is not None and "methodology_version" in d and len(d) else ""
+            ca = str(d["computed_at"].max()) if d is not None and "computed_at" in d and len(d) else ""
+            return (mv, ca, p.stat().st_mtime)
+        newer = ours if _stamp(ours) >= _stamp(theirs) else theirs
         out.write_bytes(newer.read_bytes())
         return f"{out}: derived table, kept newer ({newer.name})"
     a = pq.read_table(ours).to_pandas()

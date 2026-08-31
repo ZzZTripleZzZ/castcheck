@@ -21,7 +21,7 @@ Endpoints
                                                variable for that combination, its pairwise
                                                comparisons, and the last 90 days of signed daily
                                                error (the matching forecasts and observations are
-                                               in ``/data/daily_errors.csv.gz``)
+                                               in ``/data/daily_errors/{station}.csv.gz``)
 ``pairwise/latest.json``                       the ``station_id="ALL"`` pairwise slice
 ``leaderboard/{window}-{init}z-{method}-{variable}.json``
                                                one pre-ranked file per site view, results as
@@ -291,7 +291,7 @@ def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[di
     Only the headline initialization and interpolation (00Z, bilinear) are carried here, for both
     variables. The card would otherwise repeat eight near-identical series per model, lead day and
     station; the other slices, and the matching forecasts and observations, are in
-    ``/data/daily_errors.csv.gz``, which is one file instead of thousands.
+    ``/data/daily_errors/{station}.csv.gz``, which is 24 files instead of thousands.
     """
     if errors is None or len(errors) == 0:
         return {}
@@ -306,13 +306,13 @@ def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[di
     keys = ["station_id", "model_id", "lead_day", "init_hour", "method", "variable"]
     # The pooled t2 variable carries four rows per day (one per common instant); a *series* needs
     # one point per calendar day, so those four are averaged. The per-instant values are in
-    # /data/daily_errors.csv.gz.
+    # /data/daily_errors/{station}.csv.gz.
     e = (e.groupby([*keys, "climo_date"], observed=True, as_index=False)["err"].mean())
     for key, grp in e.sort_values("climo_date").groupby(keys, observed=True):
         st, mid, lead, init_hour, method, variable = key
         # Only the signed error: this is a score card, and repeating the forecast and the
         # observation here would double every card for numbers that already live, in full and for
-        # every day of the record, in /data/daily_errors.csv.gz.
+        # every day of the record, in /data/daily_errors/{station}.csv.gz.
         out.setdefault((st, mid, int(lead)), []).append({
             "init_hour": int(init_hour), "method": method, "variable": variable,
             "dates": [d.date().isoformat() for d in grp["climo_date"]],
@@ -447,7 +447,7 @@ def export_api(
                 "series_days": series_days,
                 "series_scope": {"init_hour": SERIES_INIT, "method": SERIES_METHOD,
                                  "note": "other init/method slices and the matching forecast and "
-                                         "observation values are in /data/daily_errors.csv.gz"},
+                                         "observation values are in /data/daily_errors/{station}.csv.gz"},
                 "series": series.get((st, mid, lead), []),
             }
             write_json(base / "scores" / str(st) / str(mid) / f"{lead}.json", payload)

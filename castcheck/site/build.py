@@ -234,6 +234,8 @@ COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
                  "both the model and the persistence baseline have a value (in the pairwise table, "
                  "days on which both models of the pair have a forecast)"),
     "n_samples": ("int8", "count", "how many of the four common samples were present (0–4)"),
+    "valid_hour_utc": ("int8", "UTC hour", "which of the four common instants a row belongs to; 0 "
+                       "for the one-row-per-day variables"),
     "n_debiased": ("int32", "days", "days that had at least 15 of the preceding 30 scored days "
                    "available to estimate the out-of-sample bias correction"),
     "mae": ("float32", "°C", "mean absolute error"),
@@ -1826,7 +1828,7 @@ def _write_status(env, w, base_ctx, report, names: dict[str, str] | None = None)
 def _status_view(report: dict | None, names: dict[str, str] | None = None) -> dict:
     """Turn the raw completeness report into uptime bars and a headline state."""
     if not report:
-        return {"model_bars": [], "truth_bars": [], "overall": "unknown",
+        return {"model_bars": [], "truth_bars": [], "instant_bars": [], "overall": "unknown",
                 "overall_text": "No status report has been generated yet."}
     days = report.get("days", 0)
 
@@ -1860,6 +1862,11 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
         b = bar(t.get("days", []), "cli_final", "any_source",
                 f"{t['station_id']} truth availability, last {days} days")
         truth_bars.append({**t, **b})
+    instant_bars = []
+    for t in report.get("truth_instant", []):
+        b = bar(t.get("days", []), "complete", "any_source",
+                f"{t['station_id']} observed-instant coverage, last {days} days")
+        instant_bars.append({**t, **b})
 
     if report.get("ok"):
         overall, text = "ok", "All systems operational — nothing is missing for the current day."
@@ -1869,7 +1876,7 @@ def _status_view(report: dict | None, names: dict[str, str] | None = None) -> di
                 f"{report.get('n_gaps', 0)} over the last {days} days.")
     else:  # pragma: no cover - defensive
         overall, text = "warn", "Degraded."
-    return {"model_bars": model_bars, "truth_bars": truth_bars,
+    return {"model_bars": model_bars, "truth_bars": truth_bars, "instant_bars": instant_bars,
             "overall": overall, "overall_text": text}
 
 
@@ -1934,21 +1941,35 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
         "bootstrap interval and the significance flag (°C).",
         len(pairwise) if pairwise is not None else 0)
 
-    n_err = 0
+    # One file per station, not one file for everything: the combined table reached 25 MB — the
+    # size at which Cloudflare Pages refuses a file outright — as soon as the pooled t2 variable
+    # added four rows per day. Sharding by station is the same cut the JSON API uses, keeps each
+    # file a couple of MB, and is what someone asking for one station actually wants.
+    err_dir = d / "daily_errors"
+    err_dir.mkdir(parents=True, exist_ok=True)
+    for stale in err_dir.glob("*.csv.gz"):
+        stale.unlink()
+    (d / "daily_errors.csv.gz").unlink(missing_ok=True)
     cols = ["station_id", "model_id", "init_hour", "lead_day", "method", "variable",
-            "climo_date", "fcst_c", "obs_c", "err"]
-    with gzip.open(d / "daily_errors.csv.gz", "wt", encoding="utf-8", newline="") as f:
-        if errors is not None and len(errors):
-            e = errors[[c for c in cols if c in errors.columns]].copy()
-            e["climo_date"] = pd.to_datetime(e["climo_date"]).dt.date
-            e.round(4).to_csv(f, index=False)
-            n_err = len(e)
-        else:
-            f.write(",".join(cols) + "\n")
-    add("daily_errors.csv.gz", "the complete per-day record behind every score: one row per "
-        "station, model, initialization, lead day, method, variable and climatological day, with "
-        "the forecast, the observation and the signed error (°C). This is the file to download if "
-        "you want to recompute anything.", n_err)
+            "sub", "climo_date", "fcst_c", "obs_c", "err"]
+    shards: list[tuple[str, int]] = []
+    if errors is not None and len(errors):
+        e = errors[[c for c in cols if c in errors.columns]].copy()
+        # `sub` carries the valid hour of the four rows a pooled t2 day has; without it those
+        # four rows are indistinguishable in the download.
+        e = e.rename(columns={"sub": "valid_hour_utc"})
+        e["climo_date"] = pd.to_datetime(e["climo_date"]).dt.date
+        for sid, grp in e.groupby("station_id", observed=True):
+            with gzip.open(err_dir / f"{sid}.csv.gz", "wt", encoding="utf-8", newline="") as f:
+                grp.round(4).to_csv(f, index=False)
+            shards.append((str(sid), len(grp)))
+    n_err = sum(n for _, n in shards)
+    for sid, n in shards:
+        add(f"daily_errors/{sid}.csv.gz",
+            f"every scored value at {sid}: one row per model, initialization, lead day, method, "
+            f"variable and climatological day (four rows a day for the pooled t2), with the "
+            f"forecast, the observation and the signed error (°C). Download all "
+            f"{len(shards)} to recompute anything.", n)
 
     st_lines = ["station_id,name,cli_pil,iem_id,tz,std_offset_h,lat,lon,elev_m,grid_elev_m,dz_m,"
                 "lapse_k,market_city"]
