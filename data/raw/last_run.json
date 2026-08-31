@@ -1,34 +1,44 @@
 {
   "commands": {
+    "backfill": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 581.199,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:36:46+00:00",
+      "last_success_at": "2026-08-31T03:36:46+00:00",
+      "started_at": "2026-08-31T03:27:04+00:00",
+      "status": "ok",
+      "summary": "aurora_gfs 2026-08-01..2026-08-29: 39/58 runs with data"
+    },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 32.756,
+      "duration_s": 76.782,
       "exit_code": 0,
-      "finished_at": "2026-08-31T01:00:05+00:00",
-      "last_success_at": "2026-08-31T01:00:05+00:00",
-      "started_at": "2026-08-31T00:59:32+00:00",
+      "finished_at": "2026-08-31T03:26:58+00:00",
+      "last_success_at": "2026-08-31T03:26:58+00:00",
+      "started_at": "2026-08-31T03:25:41+00:00",
       "status": "ok",
       "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
     },
     "daily": {
       "castcheck_version": "0.1.0",
-      "duration_s": 55.097,
+      "duration_s": 104.581,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:43:10+00:00",
-      "last_success_at": "2026-08-31T00:43:10+00:00",
-      "started_at": "2026-08-31T00:42:15+00:00",
+      "finished_at": "2026-08-31T03:26:58+00:00",
+      "last_success_at": "2026-08-31T03:26:58+00:00",
+      "started_at": "2026-08-31T03:25:13+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 1.287,
+      "duration_s": 2.054,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:16+00:00",
-      "last_success_at": "2026-08-31T00:42:16+00:00",
-      "started_at": "2026-08-31T00:42:15+00:00",
+      "finished_at": "2026-08-31T03:25:15+00:00",
+      "last_success_at": "2026-08-31T03:25:15+00:00",
+      "started_at": "2026-08-31T03:25:13+00:00",
       "status": "ok",
-      "summary": "402040 values -> 40548 daily rows"
+      "summary": "1699976 values -> 249496 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -50,6 +60,26 @@
       "status": "ok",
       "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
     },
+    "publish-hf": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 18.958,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:30:00+00:00",
+      "last_success_at": "2026-08-31T03:30:00+00:00",
+      "started_at": "2026-08-31T03:29:41+00:00",
+      "status": "ok",
+      "summary": "pushed to https://huggingface.co/datasets/castcheck/temperature-verification (https://huggingface.co/datasets/castcheck/temperature-verification/commit/c2a303bc19ad988d9748ca334990940501c99c03)"
+    },
+    "publish-kaggle": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 19.927,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T03:37:48+00:00",
+      "last_success_at": "2026-08-31T03:37:48+00:00",
+      "started_at": "2026-08-31T03:37:28+00:00",
+      "status": "ok",
+      "summary": "The following are not valid tags and could not be added to the dataset: ['weather', 'forecast verification', 'time series', 'climate', 'ecmwf', 'gfs', 'ai weather models']"
+    },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
       "duration_s": 17.806,
@@ -62,14 +92,14 @@
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 12.284,
+      "duration_s": 25.664,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:42:29+00:00",
-      "last_success_at": "2026-08-31T00:42:29+00:00",
-      "started_at": "2026-08-31T00:42:16+00:00",
+      "finished_at": "2026-08-31T03:25:41+00:00",
+      "last_success_at": "2026-08-31T03:25:41+00:00",
+      "started_at": "2026-08-31T03:25:15+00:00",
       "status": "ok",
-      "summary": "scores=24624 pairwise=30432 as_of=2026-08-31"
+      "summary": "scores=78752 pairwise=391280 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T01:00:05+00:00"
+  "updated_at": "2026-08-31T03:37:48+00:00"
 }

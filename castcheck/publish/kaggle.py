@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from pathlib import Path
 from .. import METHODOLOGY_VERSION
 from ..config import DATA_DIR, REPO_ROOT
 
-KAGGLE_USER = "triplez716"
+KAGGLE_USER = "zhangzifan716"
 
 
 def _env() -> dict:
@@ -36,10 +37,12 @@ def _stage(slug: str) -> Path:
     stage.mkdir()
     import pandas as pd
 
-    for name in ("latest", "pairwise_latest"):
-        src = DATA_DIR / "scores" / f"{name}.parquet"
-        if src.exists():
-            pd.read_parquet(src).to_csv(stage / f"scores_{name}.csv", index=False)
+    src = DATA_DIR / "scores" / "latest.parquet"
+    if src.exists():
+        pd.read_parquet(src).to_csv(stage / "scores_latest.csv", index=False)
+    src = DATA_DIR / "scores" / "pairwise_latest.parquet"
+    if src.exists():
+        shutil.copy(src, stage / "scores_pairwise_latest.parquet")  # ~50 MB as CSV; keep parquet
     daily_dir = DATA_DIR / "daily_forecasts"
     if daily_dir.exists():
         frames = [pd.read_parquet(f) for f in daily_dir.rglob("*.parquet")]
@@ -52,16 +55,16 @@ def _stage(slug: str) -> Path:
             pd.concat(frames, ignore_index=True).to_csv(stage / "truth_daily.csv", index=False)
     shutil.copy(REPO_ROOT / "METHODOLOGY.md", stage / "METHODOLOGY.md")
     meta = {
-        "title": "CastCheck: U.S. temperature forecast verification (NWP + AI models)",
+        "title": "CastCheck: US temperature forecast verification",
         "id": f"{KAGGLE_USER}/{slug}",
         "licenses": [{"name": "CC-BY-4.0"}],
-        "subtitle": "Daily station-level errors of IFS, AIFS, GFS, GraphCast, Pangu, FourCastNet, Aurora vs NWS climate reports",
+        "subtitle": "Daily station-level errors of NWP and AI weather models vs NWS reports",
         "description": (
             "Independent daily verification of raw 2 m temperature forecasts at 23 U.S. airport stations. "
             f"Methodology v{METHODOLOGY_VERSION}: https://castcheck.zifanzhang.com/methodology/ . "
             "Primary home and full raw values: https://huggingface.co/datasets/castcheck/temperature-verification"
         ),
-        "keywords": ["weather", "forecast verification", "time series", "climate", "ecmwf", "gfs", "ai weather models"],
+        "keywords": ["weather and climate", "earth and nature"],
     }
     (stage / "dataset-metadata.json").write_text(json.dumps(meta, indent=2))
     return stage
@@ -107,4 +110,8 @@ def push_dataset(slug: str, dry_run: bool = False) -> str:
         cmd = [_kaggle_bin(), "datasets", "create", "-p", str(stage), "-r", "zip", "--public"]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
     shutil.rmtree(stage, ignore_errors=True)
-    return (r.stdout + r.stderr).strip()[-500:]
+    lines = [ln for ln in (r.stdout + "\n" + r.stderr).splitlines() if ln.strip() and "%|" not in ln]
+    out = "\n".join(lines[-6:])
+    if r.returncode != 0 or re.search(r"error", out, re.I):
+        raise RuntimeError(f"kaggle publish failed: {out}")
+    return out
