@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Stations — CastCheck{% endblock %}
+{% block description %}The {{ rows|length }} U.S. first-order stations CastCheck verifies against, with their truth product, standard time offset, elevation and current sample size.{% endblock %}
+{% block content %}
+<h1>Stations</h1>
+<p class="lede">Every station is a first-order NWS site that issues a Daily Climate Report (CLI),
+which is the truth for that station. The climatological day is local <em>standard</em> time all
+year, so each station carries a fixed UTC offset and daylight saving is never applied
+(<a href="/methodology/#21-climatological-day">methodology §2.1</a>).</p>
+<ul class="meta">
+  <li>stations <b>{{ rows|length }}</b></li>
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+</ul>
+<div class="scroll tall">
+<table class="scores">
+<caption>Scored days are for lead day 1, {{ window_label }}, {{ init_hour }}Z, {{ method }}, daily
+maximum — the default view. A station with no number has no scored day in that view yet.</caption>
+<thead><tr><th scope="col">ICAO</th><th scope="col">Name</th><th scope="col">Truth product</th>
+<th scope="col">Time zone</th><th scope="col" class="num">Std offset</th>
+<th scope="col" class="num">Elevation</th><th scope="col" class="num">Scored days</th>
+<th scope="col" class="num">Models</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="{{ 'low-n' if r.low_n }}">
+<th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a></th>
+<td>{{ r.name }}</td><td class="mono">{{ r.cli_pil }}</td><td class="tiny">{{ r.tz }}</td>
+<td class="num">UTC{{ r.offset }}</td><td class="num">{{ r.elev }}</td>
+<td class="num">{{ r.n }}</td><td class="num">{{ r.n_models }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="downloads"><a href="/data/stations.csv">stations.csv</a>
+<a href="/api/v1/stations.json">stations.json</a>
+<a href="/station/ALL/">cross-station aggregate</a></p>
+{% endblock %}

@@ -33,7 +33,7 @@ every cell links to its permanent page. The sparkline shows the same model acros
 <th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
 <tbody>
 {% for row in b.rows %}
-<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.key }}/">{{ row.key }}</a></th>
+<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.key }}/" title="{{ row.key }}">{{ row.name }}</a><span class="sub mono">{{ row.key }}</span></th>
 {% for c in row.cells %}
 {% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
 {% else %}<td class="low-n">—</td>{% endif %}
@@ -89,7 +89,7 @@ nowhere else.</p>
 <th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
 <tbody>
 {% for a in availability %}
-<tr><th scope="row"><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></th>
+<tr><th scope="row"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
 <td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
 <td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
 {% endfor %}

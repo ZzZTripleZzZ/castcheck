@@ -31,10 +31,10 @@ Daily Climate Report, which can only exist from the day after the climatological
 <th scope="col">Latest init held</th></tr></thead>
 <tbody>
 {% for m in model_bars %}
-<tr><th scope="row"><a href="/model/{{ m.model_id }}/">{{ m.model_id }}</a></th>
+<tr><th scope="row"><a href="/model/{{ m.model_id }}/" title="{{ m.model_id }}">{{ m.display }}</a></th>
 <td class="num">{{ '%02d'|format(m.init_hour) }}Z</td>
 <td class="num">{{ m.uptime }}</td>
-<td>{{ m.svg }}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete</span></td>
+<td>{% if m.svg %}{{ m.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}<span class="sr">{{ m.n_complete }} complete, {{ m.n_missing }} incomplete</span></td>
 <td class="tiny">{{ m.latest_init or '—' }}</td></tr>
 {% endfor %}
 </tbody>
@@ -72,7 +72,7 @@ title="{{ d.date }}: {{ d.stations_complete }}/{{ report.n_stations }} stations,
 {% for t in truth_bars %}
 <tr><th scope="row"><a href="/station/{{ t.station_id }}/">{{ t.station_id }}</a> <span class="sub">{{ t.name }}</span></th>
 <td class="num">{{ t.uptime }}</td>
-<td>{{ t.svg }}</td>
+<td>{% if t.svg %}{{ t.svg }}{% else %}<span class="dimtext">no days in the window</span>{% endif %}</td>
 <td class="num">{{ t.n_missing }}</td></tr>
 {% endfor %}
 </tbody>

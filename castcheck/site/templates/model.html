@@ -3,7 +3,7 @@
 {% block title %}{{ model.model_id }} — CastCheck{% endblock %}
 {% block description %}Verification of {{ model.family }} ({{ model.model_id }}) 2 m temperature forecasts at every station and lead day.{% endblock %}
 {% block content %}
-<h1>{{ model.family }} <span class="mono">({{ model.model_id }})</span></h1>
+<h1>{{ model.display }} <span class="mono">({{ model.model_id }})</span></h1>
 <p class="lede">source {{ model.source }} · product {{ model.product }}{% if model.init_field %} ·
 initial conditions from {{ model.init_field }}{% endif %} · steps every {{ model.step_h }} h to
 {{ model.max_h }} h · initializations {{ model.inits|join(', ') }} UTC{% if model.native_extremes %} ·

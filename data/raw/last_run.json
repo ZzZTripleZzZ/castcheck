@@ -2,23 +2,33 @@
   "commands": {
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 14.177,
+      "duration_s": 32.756,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:40:03+00:00",
-      "last_success_at": "2026-08-31T00:40:03+00:00",
-      "started_at": "2026-08-31T00:39:49+00:00",
+      "finished_at": "2026-08-31T01:00:05+00:00",
+      "last_success_at": "2026-08-31T01:00:05+00:00",
+      "started_at": "2026-08-31T00:59:32+00:00",
       "status": "ok",
       "summary": "site written to /Users/zifanzhang/Documents/GitHub/castcheck/public"
     },
+    "daily": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 55.097,
+      "exit_code": 0,
+      "finished_at": "2026-08-31T00:43:10+00:00",
+      "last_success_at": "2026-08-31T00:43:10+00:00",
+      "started_at": "2026-08-31T00:42:15+00:00",
+      "status": "ok",
+      "summary": "derive + verify + build-site"
+    },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.753,
+      "duration_s": 1.287,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:26:28+00:00",
-      "last_success_at": "2026-08-31T00:26:28+00:00",
-      "started_at": "2026-08-31T00:26:27+00:00",
+      "finished_at": "2026-08-31T00:42:16+00:00",
+      "last_success_at": "2026-08-31T00:42:16+00:00",
+      "started_at": "2026-08-31T00:42:15+00:00",
       "status": "ok",
-      "summary": "391000 values -> 37968 daily rows"
+      "summary": "402040 values -> 40548 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
@@ -52,14 +62,14 @@
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 2.876,
+      "duration_s": 12.284,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:26:31+00:00",
-      "last_success_at": "2026-08-31T00:26:31+00:00",
-      "started_at": "2026-08-31T00:26:29+00:00",
+      "finished_at": "2026-08-31T00:42:29+00:00",
+      "last_success_at": "2026-08-31T00:42:29+00:00",
+      "started_at": "2026-08-31T00:42:16+00:00",
       "status": "ok",
-      "summary": "scores=10096 pairwise=5088 as_of=2026-08-31"
+      "summary": "scores=24624 pairwise=30432 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T00:40:03+00:00"
+  "updated_at": "2026-08-31T01:00:05+00:00"
 }

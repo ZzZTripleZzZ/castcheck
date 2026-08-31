@@ -15,6 +15,7 @@ from castcheck.api import LEADERBOARD_VIEWS, export_api, openapi_document
 from castcheck.config import ModelSpec, Station
 from castcheck.site.build import (
     FAIRNESS,
+    FAIRNESS_BANNER,
     SITE_URL,
     SUBVIEWS,
     VIEWS,
@@ -186,6 +187,8 @@ def test_key_routes_exist(built):
         "status/index.html",
         "data/index.html",
         "api/v1/index.html",
+        "stations/index.html",
+        "models/index.html",
         "feed.xml",
         "_headers",
         "station/KAAA/index.html",
@@ -208,7 +211,7 @@ def test_key_routes_exist(built):
     assert len(SUBVIEWS) == 8
     assert counts["permalinks"] > 0
     assert counts["pages"] == counts["leaderboards"] + counts["permalinks"] \
-        + len(SUBVIEWS) * counts["stations"] + len(SUBVIEWS) * counts["models"] + 4
+        + len(SUBVIEWS) * counts["stations"] + len(SUBVIEWS) * counts["models"] + 6
 
 
 def test_every_leaderboard_view_is_a_static_page_with_working_switchers(built):
@@ -223,12 +226,56 @@ def test_every_leaderboard_view_is_a_static_page_with_working_switchers(built):
         assert "<select" not in html and "onclick" not in html
 
 
-def test_every_page_carries_the_fairness_statement(built):
+def test_every_page_carries_the_fairness_banner(built):
     out, _, _, _ = built
     pages = list(out.rglob("index.html"))
     assert len(pages) > 20
     for p in pages:
-        assert FAIRNESS in p.read_text(encoding="utf-8"), p
+        html = p.read_text(encoding="utf-8")
+        assert FAIRNESS_BANNER in html, p
+        assert "/methodology/#7-fairness-statement" in html, p
+    # the banner is the short form; the full statement stays available for quoting
+    assert "without MOS, bias correction" in FAIRNESS
+
+
+def test_assets_are_content_hashed_so_a_deploy_is_not_served_stale(built):
+    out, _, _, _ = built
+    html = (out / "index.html").read_text(encoding="utf-8")
+    m = re.search(r'href="(/assets/site\.[0-9a-f]{10}\.css)"', html)
+    assert m, "the stylesheet link must carry a content hash"
+    assert (out / m.group(1).lstrip("/")).exists()
+    assert re.search(r'src="/assets/chart\.[0-9a-f]{10}\.js"', html)
+    # the plain names stay reachable for anyone who linked them
+    assert (out / "assets" / "site.css").exists()
+    assert (out / "assets" / "chart.js").exists()
+
+
+def test_station_and_model_indexes_list_the_registry(built):
+    out, _, _, _ = built
+    stations = (out / "stations" / "index.html").read_text(encoding="utf-8")
+    for st in STATION_OBJS:
+        assert f'href="/station/{st.id}/"' in stations
+        assert st.name in stations
+        assert st.cli_pil in stations
+    assert "America/New_York" in stations and "UTC-5" in stations
+    models = (out / "models" / "index.html").read_text(encoding="utf-8")
+    for m in MODEL_OBJS:
+        assert f'href="/model/{m.model_id}/"' in models
+    assert "Persistence (baseline)" in models
+    assert 'href="/stations/"' in stations and 'href="/models/"' in models  # navigation
+
+
+def test_model_ids_are_shown_as_human_names(built):
+    out, _, _, _ = built
+    html = (out / "index.html").read_text(encoding="utf-8")
+    # display label as the link text, the id kept as a subtitle and a title attribute
+    assert "warm1 family" in html
+    assert '<span class="sub mono">warm1' in html
+    assert 'title="warm1"' in html
+    status = (out / "status" / "index.html").read_text(encoding="utf-8")
+    assert "warm1 family" in status
+    card = (out / "station" / "KAAA" / "model" / "warm1" / "lead" / "1" / "index.html").read_text()
+    assert "<h1>Alpha Regional · warm1 family · lead day 1</h1>" in card
 
 
 def test_pages_are_theme_aware_and_keyboard_reachable(built):
@@ -297,7 +344,7 @@ def test_leaderboard_ranks_by_mae_and_marks_low_n(dataset, tmp_path):
                permalinks=False)
     html = (tmp_path / "index.html").read_text()
     assert "How far off was each weather model?" in html
-    assert html.index(">exact<") < html.index(">cold3<")
+    assert html.index("exact family") < html.index("cold3 family")
     assert "Data availability" in html
     assert f"n&nbsp;&lt;&nbsp;{MIN_N}" in html
     # MAE and bias are published side by side, each with its own interval
@@ -390,12 +437,14 @@ def test_build_site_without_data_produces_a_page_not_a_crash(tmp_path):
                         pairwise=pd.DataFrame(), daily=pd.DataFrame(columns=DAILY_COLUMNS),
                         truth=pd.DataFrame(columns=TRUTH_COLUMNS), stations=STATION_OBJS,
                         models=MODEL_OBJS)
-    assert counts["pages"] == 5
+    assert counts["pages"] == 7
     html = (tmp_path / "index.html").read_text()
     assert "no data" in html.lower() or "nothing to score" in html.lower()
-    assert FAIRNESS in html
+    assert FAIRNESS_BANNER in html
     for rel in ("methodology/index.html", "status/index.html", "data/index.html",
-                "api/v1/index.html", "feed.xml", "_headers", "data/scores_latest.csv"):
+                "api/v1/index.html",
+        "stations/index.html",
+        "models/index.html", "feed.xml", "_headers", "data/scores_latest.csv"):
         assert (tmp_path / rel).exists(), rel
 
 

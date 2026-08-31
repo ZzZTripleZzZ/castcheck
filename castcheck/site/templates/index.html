@@ -11,7 +11,7 @@
 {% set top = headline.rows[0] %}
 <p class="verdict">Over {{ window_label }}, across {{ n_stations }} U.S. stations, the most accurate
 raw {{ variable_label }} temperature forecast <strong>{{ headline.lead }} day{{ '' if headline.lead == 1 else 's' }} ahead</strong>
-is <strong>{{ top.model_id }}</strong>: mean absolute error
+is <strong>{{ top.model_name }}</strong>: mean absolute error
 <span class="num">{{ top.mae }} °F</span> <span class="ci">{{ top.mae_ci }}</span>,
 bias <span class="num">{{ top.bias }} °F</span>, on <span class="num">n = {{ top.n }}</span> scored days.</p>
 {% else %}
@@ -44,9 +44,11 @@ Every number links to its permanent page. <em>Skill</em> is measured against per
 <em>skill, debiased</em> repeats it after removing each station's constant offset, which is why a
 station with a steady warm bias can look skill-less in one column and skilful in the other.
 Under <em>n</em>: the mean number of stations behind each scored day, and how many of those days
-carry a QC flag on the observation.</caption>
+carry a QC flag on the observation.
+{% if not b.any_ranked %}<strong>—</strong> in the rank column means fewer than {{ min_n }} scored
+days, so the group is published but not ranked.{% endif %}</caption>
 <thead><tr>
-<th scope="col">#</th><th scope="col">Model</th>
+<th scope="col">rank</th><th scope="col">Model</th>
 <th scope="col" class="num">MAE °F</th><th scope="col" class="num">Bias °F</th>
 <th scope="col" class="num">±3 °F</th>
 <th scope="col" class="num"><abbr title="1 − MAE ÷ MAE(persistence). Positive means better than yesterday's observation.">Skill</abbr></th>
@@ -57,7 +59,7 @@ carry a QC flag on the observation.</caption>
 {% for r in b.rows %}
 <tr class="{{ 'low-n' if r.low_n }}{{ ' baseline' if r.baseline }}">
 <td class="num">{{ r.rank or '—' }}</td>
-<td><a href="{{ r.permalink }}">{{ r.model_id }}</a>{% if r.baseline %} <span class="sub">baseline</span>{% endif %}</td>
+<td><a href="{{ r.permalink }}" title="{{ r.model_id }}">{{ r.model_name }}</a><span class="sub mono">{{ r.model_id }}{% if r.baseline %} · baseline{% endif %}</span></td>
 <td class="num{{ ' best' if r.best_mae }}"><a href="{{ r.permalink }}">{{ r.mae }}</a> <span class="ci">{{ r.mae_ci }}</span></td>
 <td class="num bias"><i class="c {{ r.bias_class }}"></i><a href="{{ r.permalink }}">{{ r.bias }}</a> <span class="ci">{{ r.bias_ci }}</span></td>
 <td class="num"><a href="{{ r.permalink }}">{{ r.hit3f }}</a></td>
@@ -87,7 +89,7 @@ carry a QC flag on the observation.</caption>
 <th scope="col">lead {{ spark_leads[0] }}–{{ spark_leads[-1] }}</th></tr></thead>
 <tbody>
 {% for row in matrix.rows %}
-<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.model_id }}/">{{ row.model_id }}</a></th>
+<tr class="{{ 'baseline' if row.baseline }}"><th scope="row"><a href="/model/{{ row.model_id }}/" title="{{ row.model_id }}">{{ row.name }}</a><span class="sub mono">{{ row.model_id }}</span></th>
 {% for c in row.cells %}
 {% if c %}<td class="{{ 'low-n' if c.low_n }}"><a href="{{ c.permalink }}">{{ c.mae }}</a><span class="sub"><i class="c {{ c.bias_class }}"></i>{{ c.bias }} · n={{ c.n }}</span></td>
 {% else %}<td class="low-n">—</td>{% endif %}
@@ -121,7 +123,7 @@ graticule. <span class="readout">Hover a dot for its numbers.</span></figcaption
 <tbody>
 {% for r in map_rows %}
 <tr class="{{ 'low-n' if r.low_n }}"><th scope="row"><a href="/station/{{ r.id }}/">{{ r.id }}</a> {{ r.name }}</th>
-<td>{{ r.model_id }}</td><td class="num">{{ r.mae }}</td>
+<td><a href="/model/{{ r.model_id }}/">{{ r.model_name }}</a></td><td class="num">{{ r.mae }}</td>
 <td class="num bias"><i class="c {{ r.bias_class }}"></i>{{ r.bias }}</td>
 <td class="num">{{ r.n }}</td></tr>
 {% endfor %}
@@ -144,7 +146,7 @@ comparisons on the permanent-link pages use common days only.</p>
 <th scope="col" class="num">Scored days</th><th scope="col">Coverage</th></tr></thead>
 <tbody>
 {% for a in availability %}
-<tr><th scope="row"><a href="/model/{{ a.model_id }}/">{{ a.model_id }}</a></th>
+<tr><th scope="row"><a href="/model/{{ a.model_id }}/" title="{{ a.model_id }}">{{ a.name }}</a></th>
 <td class="period">{{ a.period }}</td><td class="num">{{ a.n }}</td>
 <td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
 {% endfor %}

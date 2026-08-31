@@ -22,6 +22,7 @@ links too.  Errors are stored in °C (METHODOLOGY §3) and displayed in °F thro
 from __future__ import annotations
 
 import gzip
+import hashlib
 import shutil
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -31,7 +32,15 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from .. import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
-from ..config import PUBLIC_DIR, REPO_ROOT, ModelSpec, Station, load_models, load_stations
+from ..config import (
+    PUBLIC_DIR,
+    REPO_ROOT,
+    ModelSpec,
+    Station,
+    display_names,
+    load_models,
+    load_stations,
+)
 from ..store import DAILY_COLUMNS, TRUTH_COLUMNS
 from ..verify import (
     ALL_STATIONS,
@@ -47,6 +56,7 @@ from . import svg
 __all__ = [
     "COLUMN_DOCS",
     "FAIRNESS",
+    "FAIRNESS_BANNER",
     "SITE_URL",
     "VIEWS",
     "build_site",
@@ -64,7 +74,14 @@ SITE_URL = "https://castcheck.zifanzhang.com"
 REPO_URL = "https://github.com/zifanzhang/castcheck"
 HF_URL = "https://huggingface.co/datasets/castcheck/temperature-verification"
 
-#: METHODOLOGY §7, shown at the top of every page.
+#: METHODOLOGY §7 in one line — the banner on every page, which must not cost two lines of
+#: screen at desktop width. The full statement is the methodology section it links to.
+FAIRNESS_BANNER = (
+    "Raw model output on the native 0.25° grid — no MOS, no bias correction, no post-processing. "
+    "Scores understate operational forecast quality."
+)
+
+#: METHODOLOGY §7 in full; quoted in the API and the data page.
 FAIRNESS = (
     "These are raw model outputs on the native 0.25° grid, without MOS, bias correction, "
     "downscaling or any post-processing. They are not equivalent to the products end users receive "
@@ -304,7 +321,12 @@ def _human_size(n: int) -> str:
 # view rows
 # ------------------------------------------------------------------------------------------
 
-def _row_view(r, station_id: str, model_id: str, lead: int) -> dict:
+def _mname(model_idx: dict | None, model_id: str) -> str:
+    """The human label for a model id; the id itself is the fallback and the subtitle."""
+    return (model_idx or {}).get(model_id, {}).get("display") or model_id
+
+
+def _row_view(r, station_id: str, model_id: str, lead: int, model_idx: dict | None = None) -> dict:
     bias_f = _f(r["bias"])
     bias_sig = not (_isnan(r["bias_ci_low"]) or _isnan(r["bias_ci_high"])) and not (
         float(r["bias_ci_low"]) <= 0.0 <= float(r["bias_ci_high"])
@@ -313,6 +335,7 @@ def _row_view(r, station_id: str, model_id: str, lead: int) -> dict:
     n_flagged = r.get("n_flagged")
     seg = r.get("segment_start")
     return {
+        "model_name": _mname(model_idx, model_id),
         "mae_debiased": f_delta(r.get("mae_debiased")),
         "skill_debiased": f_skill(r.get("skill_persistence_debiased")),
         "rmse_ci": f_ci(r.get("rmse_ci_low"), r.get("rmse_ci_high")),
@@ -425,6 +448,21 @@ def _render_markdown(text: str) -> Markup:
         return Markup(f"<pre class='mono'>{escape(text)}</pre>")
 
 
+def _display_map(model_idx: dict) -> dict[str, str]:
+    """``model_id -> human label``, matching :func:`castcheck.config.display_names`.
+
+    Derived from the models this build actually used (so an injected registry works in tests),
+    with the real ``config/models.yaml`` filling any gap.
+    """
+    names: dict[str, str] = {}
+    for mid, info in model_idx.items():
+        family = info.get("family") or mid
+        names[mid] = f"{family} ({info['init_field']} init)" if info.get("init_field") else family
+    for mid, label in display_names().items():
+        names.setdefault(mid, label)
+    return names
+
+
 def _model_index(models: list[ModelSpec]) -> dict[str, dict]:
     idx = {
         m.model_id: {
@@ -516,6 +554,7 @@ def build_site(
             data_through = ends.max().date().isoformat()
     base_ctx = {
         "fairness": FAIRNESS,
+        "fairness_banner": FAIRNESS_BANNER,
         "methodology_version": METHODOLOGY_VERSION,
         "schema_version": SCHEMA_VERSION,
         "castcheck_version": __version__,
@@ -535,18 +574,16 @@ def build_site(
     _prune_variants(out)
 
     # assets and the Cloudflare Pages header rules
-    asset_dir = out / "assets"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    for f in sorted(ASSETS.glob("*")):
-        if f.is_file():
-            shutil.copyfile(f, asset_dir / f.name)
+    asset_urls = _write_assets(out)
+    base_ctx.update(asset_urls)
     _write_headers(out)
 
     counts = {"pages": 0, "stations": 0, "models": 0, "permalinks": 0, "leaderboards": 0}
 
     # ---- always-present pages -------------------------------------------------------------
     _write_methodology(env, w, base_ctx)
-    _write_status(env, w, base_ctx, status_report)
+    _write_status(env, w, base_ctx, status_report, _display_map(_model_index(models)))
+    _write_indexes(env, w, base_ctx, scores, stations, _model_index(models))
     _write_api_index(env, w, base_ctx, api_written)
 
     empty = scores is None or len(scores) == 0
@@ -581,6 +618,9 @@ def build_site(
         pw["init_hour"] = pw["init_hour"].astype(int)
 
     model_idx = _model_index(models)
+    names = _display_map(model_idx)
+    for mid, info in model_idx.items():
+        info["display"] = names[mid]
     station_idx = {s.id: s for s in stations}
     leads = sorted(sc["lead_day"].unique().tolist())
     scored_ids = set(sc["station_id"])
@@ -623,7 +663,7 @@ def build_site(
                     "variants": _variant_links(f"/station/{sid}/", view2, _DIMS2),
                     "availability": _availability(
                         avail_all[(avail_all["init_hour"] == view2[1])
-                                  & (avail_all["method"] == DEFAULT_METHOD)])[0]
+                                  & (avail_all["method"] == DEFAULT_METHOD)], model_idx)[0]
                     if canonical_view else [],
                     "months": months if canonical_view else [],
                     "canonical_view": canonical_view,
@@ -802,8 +842,8 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         & (sc["variable"] == variable) & (sc["init_hour"] == int(init_hour))
         & (sc["method"] == method) & (sc["lead_day"] == 1)
     ]
-    availability, avail_start, avail_end = _availability(avail)
-    map_points, map_rows = _map_points(sc, station_idx, view)
+    availability, avail_start, avail_end = _availability(avail, model_idx)
+    map_points, map_rows = _map_points(sc, station_idx, view, model_idx)
 
     return env.get_template("index.html").render(
         **base_ctx,
@@ -825,8 +865,8 @@ def _leaderboard_html(env, base_ctx, sc, pw, model_idx, station_links, station_i
         station_links=station_links,
         map_svg=Markup(svg.us_map(
             map_points,
-            label=(f"Mean bias in °F by station, lead day 1, {VAR_LABEL[variable]}, "
-                   f"{window} window, {int(init_hour):02d}Z, {method}"))),
+            label=(f"Mean bias in °F of each station's best model, lead day 1, "
+                   f"{VAR_LABEL[variable]}, {window} window, {int(init_hour):02d}Z, {method}"))),
         map_rows=map_rows,
         canonical=f"{SITE_URL}{_view_href('/', view)}",
     )
@@ -836,7 +876,7 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
     part = part.sort_values("mae")
     rows = []
     for _, r in part.iterrows():
-        v = _row_view(r, ALL_STATIONS, r["model_id"], lead)
+        v = _row_view(r, ALL_STATIONS, r["model_id"], lead, model_idx)
         v["baseline"] = model_idx.get(r["model_id"], {}).get("baseline", False)
         rows.append(v)
     ranked = [r for r in rows if not (r["low_n"] or r["baseline"])]
@@ -864,7 +904,8 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
         r["mark_title"] = ""
         r["best_mae"] = r["best_skill"] = False
     return {"lead": lead, "rows": ranked + others, "leader": leader,
-            "n_ranked": len(ranked)}
+            "leader_name": _mname(model_idx, leader) if leader else "",
+            "n_ranked": len(ranked), "any_ranked": bool(ranked)}
 
 
 _MARK_TITLE = {
@@ -916,7 +957,7 @@ def _lead_matrix(sub: pd.DataFrame, model_idx: dict, leads: list[int]) -> dict:
             r = q.loc[ld]
             if isinstance(r, pd.DataFrame):
                 r = r.iloc[0]
-            v = _row_view(r, ALL_STATIONS, mid, ld)
+            v = _row_view(r, ALL_STATIONS, mid, ld, model_idx)
             cells.append(v)
             if v["mae_f"]:
                 vmax = max(vmax, v["mae_f"])
@@ -929,16 +970,17 @@ def _lead_matrix(sub: pd.DataFrame, model_idx: dict, leads: list[int]) -> dict:
             else:
                 spark.append(None)
         rows.append({
-            "model_id": mid, "cells": cells, "spark": spark,
+            "model_id": mid, "name": _mname(model_idx, mid), "cells": cells, "spark": spark,
             "baseline": model_idx.get(mid, {}).get("baseline", False),
         })
     for row in rows:
         row["spark_svg"] = Markup(svg.sparkline(
-            row["spark"], label=f"{row['model_id']} MAE by lead day 1 to 9", vmax=vmax or None))
+            row["spark"], label=f"{row['name']} MAE by lead day 1 to 9", vmax=vmax or None))
     return {"leads": use_leads, "rows": rows, "spark_leads": list(SPARK_LEADS)}
 
 
-def _map_points(sc: pd.DataFrame, station_idx: dict, view) -> tuple[list[dict], list[dict]]:
+def _map_points(sc: pd.DataFrame, station_idx: dict, view,
+                model_idx: dict | None = None) -> tuple[list[dict], list[dict]]:
     """One dot per station: bias of the leading model at lead day 1 in this view."""
     window, init_hour, method, variable = view
     sub = sc[(sc["station_id"] != ALL_STATIONS) & (sc["window"] == window)
@@ -958,6 +1000,7 @@ def _map_points(sc: pd.DataFrame, station_idx: dict, view) -> tuple[list[dict], 
             "id": sid, "name": st.name if st else sid,
             "lat": st.lat if st else None, "lon": st.lon if st else None,
             "n": int(best["n"]), "model_id": best["model_id"],
+            "model_name": _mname(model_idx, best["model_id"]),
             "mae": f_delta(best["mae"]), "bias": f_signed(best["bias"]),
             "bias_class": svg.bias_class(bias_f, sig),
             "sign": "" if bias_f is None else ("+" if bias_f > 0 else "−"),
@@ -990,7 +1033,7 @@ def _segment_note(sub: pd.DataFrame) -> dict:
     return out
 
 
-def _availability(avail: pd.DataFrame):
+def _availability(avail: pd.DataFrame, model_idx: dict | None = None):
     if avail is None or avail.empty:
         return [], "", ""
     avail = avail.sort_values("model_id").copy()
@@ -1004,7 +1047,7 @@ def _availability(avail: pd.DataFrame):
         left = 100.0 * (s - lo).days / span
         width = max(100.0 * ((e - s).days + 1) / span, 1.0)
         out.append({
-            "model_id": r["model_id"], "n": int(r["n"]),
+            "model_id": r["model_id"], "name": _mname(model_idx, r["model_id"]), "n": int(r["n"]),
             "period": f_period(r["period_start"], r["period_end"]),
             "left": round(left, 2), "width": round(min(width, 100.0 - left), 2),
         })
@@ -1059,13 +1102,15 @@ def _grid_html(env, template, base_ctx, sub, view2, leads, model_idx, *, row_key
                 else:
                     spark.append(None)
             rows.append({
-                "key": key, "cells": cells, "spark": spark,
+                "key": key,
+                "name": _mname(model_idx, key) if row_key == "model_id" else key,
+                "cells": cells, "spark": spark,
                 "baseline": bool(model_idx.get(key, {}).get("baseline", False))
                 if row_key == "model_id" else False,
             })
         for row in rows:
             row["spark_svg"] = Markup(svg.sparkline(
-                row["spark"], label=f"{row['key']} MAE by lead day 1 to 9, {var}",
+                row["spark"], label=f"{row['name']} MAE by lead day 1 to 9, {var}",
                 vmax=vmax or None))
         flagged = max((c["n_flagged"] for row in rows for c in row["cells"] if c), default=0)
         blocks.append({"variable": var, "rows": rows, "flagged": flagged})
@@ -1079,7 +1124,8 @@ def _grid_html(env, template, base_ctx, sub, view2, leads, model_idx, *, row_key
     )
 
 
-def _pair_views(grp: pd.DataFrame | None, model_id: str) -> list[dict]:
+def _pair_views(grp: pd.DataFrame | None, model_id: str,
+                model_idx: dict | None = None) -> list[dict]:
     if grp is None or len(grp) == 0:
         return []
     out = []
@@ -1095,6 +1141,7 @@ def _pair_views(grp: pd.DataFrame | None, model_id: str) -> list[dict]:
             lo, hi = (None if _isnan(hi) else -hi), (None if _isnan(lo) else -lo)
         out.append({
             "other": other,
+            "other_name": _mname(model_idx, other),
             "n_common": int(r["n_common"]),
             "diff": f_signed(sign * r["mae_diff"]),
             "ci": f_ci(lo, hi),
@@ -1149,9 +1196,9 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
     for (sid, mid, lead), grp in sc.groupby(["station_id", "model_id", "lead_day"], observed=True):
         lead = int(lead)
         grp = grp.assign(_w=grp["window"].map(WINDOW_ORDER).fillna(9))
-        rows = [_row_view(r, sid, mid, lead) for _, r in
+        rows = [_row_view(r, sid, mid, lead, model_idx) for _, r in
                 grp.sort_values(["variable", "init_hour", "method", "_w"]).iterrows()]
-        pairs = _pair_views(pw_idx.get((sid, lead)), mid)
+        pairs = _pair_views(pw_idx.get((sid, lead)), mid, model_idx)
         st = station_idx.get(sid)
         st_name = st.name if st else ("All stations (mean of daily station errors)"
                                       if sid == ALL_STATIONS else sid)
@@ -1159,12 +1206,13 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
         ser = series_idx.get(key)
         chart = Markup(svg.line_chart(
             ser["dates"] if ser else [], ser["values"] if ser else [],
-            label=(f"Daily forecast minus observed error in °F for {mid} at {sid}, lead day "
-                   f"{lead}, {DEFAULT_INIT:02d}Z {DEFAULT_METHOD} {DEFAULT_VARIABLE}")))
+            label=(f"Daily forecast minus observed error in °F for {_mname(model_idx, mid)} at "
+                   f"{sid}, lead day {lead}, {DEFAULT_INIT:02d}Z {DEFAULT_METHOD} "
+                   f"{DEFAULT_VARIABLE}")))
         hist_svg, hist_rows = svg.histogram(
             allday_idx.get(key, []),
-            label=(f"Distribution of the signed daily error in °F for {mid} at {sid}, lead day "
-                   f"{lead}"))
+            label=(f"Distribution of the signed daily error in °F for {_mname(model_idx, mid)} "
+                   f"at {sid}, lead day {lead}"))
         series_rows = []
         if ser:
             series_rows = [
@@ -1178,6 +1226,7 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
             station_id=sid, model_id=mid, lead=lead,
             station_name=st_name,
             station=st,
+            model_name=_mname(model_idx, mid),
             model_family=model_idx.get(mid, {}).get("family", mid),
             model_info=model_idx.get(mid, {}),
             segment=_segment_note(grp),
@@ -1191,7 +1240,8 @@ def _write_permalinks(env, w, out, base_ctx, sc, pw, model_idx, station_idx, ser
             hist_svg=Markup(hist_svg), hist_rows=hist_rows,
             months=month_idx.get(key, [])[::-1][:24],
             availability=_availability(grp[(grp["window"] == "all")
-                                           & (grp["variable"] == DEFAULT_VARIABLE)])[0],
+                                           & (grp["variable"] == DEFAULT_VARIABLE)],
+                                       model_idx)[0],
             json_url=f"/api/v1/scores/{sid}/{mid}/{lead}.json",
             csv_url=f"/{base}/errors.csv",
             citation=citation(sid, mid, lead, as_of_s),
@@ -1224,6 +1274,32 @@ def _prune_variants(out: Path) -> None:
     for path in (out / "v", *(out / "station").glob("*/v"), *(out / "model").glob("*/v")):
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
+
+
+def _write_assets(out: Path) -> dict[str, str]:
+    """Copy the assets under a content-hashed name and return the URLs to link.
+
+    The plain ``/assets/site.css`` is cached for an hour by ``_headers``, so a deploy that changes
+    the stylesheet would otherwise leave every returning visitor on the previous one for up to an
+    hour — a real bug, not a theoretical one. Pages therefore link ``site.<hash>.css``, which
+    changes whenever the bytes change. The unhashed name is still written so that an external
+    link to it keeps working.
+    """
+    asset_dir = out / "assets"
+    if asset_dir.is_dir():
+        shutil.rmtree(asset_dir, ignore_errors=True)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    urls: dict[str, str] = {}
+    for f in sorted(ASSETS.glob("*")):
+        if not f.is_file():
+            continue
+        data = f.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()[:10]
+        hashed = f"{f.stem}.{digest}{f.suffix}"
+        (asset_dir / hashed).write_bytes(data)
+        (asset_dir / f.name).write_bytes(data)
+        urls[f"asset_{f.stem}"] = f"/assets/{hashed}"
+    return urls
 
 
 def _write_headers(out: Path) -> Path:
@@ -1264,13 +1340,13 @@ def _write_methodology(env, w, base_ctx) -> None:
         **base_ctx, heading="Methodology", body=_render_markdown(text)))
 
 
-def _write_status(env, w, base_ctx, report) -> None:
-    view = _status_view(report)
+def _write_status(env, w, base_ctx, report, names: dict[str, str] | None = None) -> None:
+    view = _status_view(report, names)
     w.write("status/index.html", env.get_template("status.html").render(
         **base_ctx, report=report, **view))
 
 
-def _status_view(report: dict | None) -> dict:
+def _status_view(report: dict | None, names: dict[str, str] | None = None) -> dict:
     """Turn the raw completeness report into uptime bars and a headline state."""
     if not report:
         return {"model_bars": [], "truth_bars": [], "overall": "unknown",
@@ -1283,11 +1359,13 @@ def _status_view(report: dict | None) -> dict:
         return {"svg": Markup(svg.availability_row(flags, label=label)),
                 "uptime": f"{pct:.1f}%", "flags": flags}
 
+    names = names or display_names()
     model_bars = []
     for m in report.get("models", []):
+        label = names.get(m["model_id"], m["model_id"])
         b = bar(m.get("days", []), "complete", "stations_any",
-                f"{m['model_id']} {m['init_hour']:02d}Z completeness, last {days} days")
-        model_bars.append({**m, **b})
+                f"{label} {m['init_hour']:02d}Z completeness, last {days} days")
+        model_bars.append({**m, **b, "display": label})
     truth_bars = []
     for t in report.get("truth", []):
         b = bar(t.get("days", []), "cli_final", "any_source",
@@ -1433,6 +1511,59 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads) -> N
     ))
 
 
+def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
+    """``/stations/`` and ``/models/``: the two directories the top navigation points at.
+
+    Both are built from the registry, so they exist and are complete even before a single day has
+    been scored; the sample sizes come from the default view and are simply blank until then.
+    """
+    names = _display_map(model_idx)
+    head = pd.DataFrame()
+    if scores is not None and len(scores):
+        sc = scores
+        head = sc[(sc["window"] == DEFAULT_WINDOW) & (sc["init_hour"].astype(int) == DEFAULT_INIT)
+                  & (sc["method"] == DEFAULT_METHOD) & (sc["variable"] == DEFAULT_VARIABLE)
+                  & (sc["lead_day"].astype(int) == 1)]
+
+    st_rows = []
+    for st in stations:
+        part = head[head["station_id"] == st.id] if len(head) else head
+        n = int(part["n"].max()) if len(part) else 0
+        st_rows.append({
+            "id": st.id, "name": st.name, "cli_pil": st.cli_pil, "tz": st.tz,
+            "offset": f"{st.std_offset_h:+d}",
+            "elev": "—" if st.elev_m is None else f"{st.elev_m:.0f} m",
+            "n": n or "—", "n_models": int(part["model_id"].nunique()) if len(part) else "—",
+            "low_n": n < MIN_N,
+        })
+
+    md_rows = []
+    for mid in sorted(model_idx, key=lambda k: (model_idx[k].get("baseline", False), names[k])):
+        info = model_idx[mid]
+        part = head[(head["model_id"] == mid) & (head["station_id"] == ALL_STATIONS)] \
+            if len(head) else head
+        allw = pd.DataFrame()
+        if scores is not None and len(scores):
+            allw = scores[(scores["model_id"] == mid) & (scores["window"] == "all")]
+        n = int(part["n"].max()) if len(part) else 0
+        md_rows.append({
+            "model_id": mid, "name": names[mid], "source": info.get("source", ""),
+            "product": info.get("product", ""), "init_field": info.get("init_field"),
+            "baseline": info.get("baseline", False),
+            "n": n or "—", "low_n": n < MIN_N,
+            "period": f_period(allw["period_start"].min(), allw["period_end"].max())
+            if len(allw) else "—",
+            **_segment_note(allw),
+        })
+
+    shared = {"window_label": f"the last {DEFAULT_WINDOW[:-1]} days",
+              "init_hour": f"{DEFAULT_INIT:02d}", "method": DEFAULT_METHOD}
+    w.write("stations/index.html",
+            env.get_template("stations.html").render(**base_ctx, **shared, rows=st_rows))
+    w.write("models/index.html",
+            env.get_template("models.html").render(**base_ctx, **shared, rows=md_rows))
+
+
 def _write_api_index(env, w, base_ctx, api_written) -> None:
     w.write("api/v1/index.html", env.get_template("api.html").render(
         **base_ctx, api_written=api_written or {}))
@@ -1455,7 +1586,8 @@ def _feed_entries(sc: pd.DataFrame, model_idx: dict, as_of_s: str, built_at: str
         top = board.sort_values("mae").iloc[0]
         summary = (f"Lead day 1, daily maximum, {DEFAULT_WINDOW} window, "
                    f"{DEFAULT_INIT:02d}Z, {DEFAULT_METHOD}: lowest MAE is "
-                   f"{f_delta(top['mae'])} °F ({top['model_id']}, n = {int(top['n'])}).")
+                   f"{f_delta(top['mae'])} °F ({_mname(model_idx, top['model_id'])}, "
+                   f"n = {int(top['n'])}).")
     else:
         summary = (f"No group in the default view has reached {MIN_N} scored days yet, so nothing "
                    f"is ranked; every number is published with its sample size.")

@@ -193,13 +193,16 @@ button.theme:hover { color: var(--ink); border-color: var(--ink-3); }
    sticks inside it. Long tables therefore get their own capped, scrollable box — that is where a
    sticky header actually earns its keep. */
 .scroll.tall { max-height: 78vh; overflow: auto; }
+/* Sticky only inside a box that actually scrolls vertically. On the page itself a sticky header
+   is opaque and, while its table is still partly in view, parks over whatever follows — which is
+   how it swallowed the next heading. */
+.scroll.tall table.scores thead th { position: sticky; top: 0; z-index: 2; }
 table.scores { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 table.scores caption { text-align: left; color: var(--ink-2); font-size: 12.5px; padding-bottom: 6px; }
 table.scores th, table.scores td {
   padding: 5px 9px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: baseline;
 }
 table.scores thead th {
-  position: sticky; top: 0; z-index: 2;
   background: var(--bg);
   border-bottom: 2px solid var(--border);
   font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
@@ -227,7 +230,11 @@ table.scores tr.baseline { font-style: italic; }
 table.scores tr.baseline th[scope="row"], table.scores tr.baseline td:first-child { font-style: italic; }
 table.grid th[scope="row"] { white-space: nowrap; }
 table.grid td .sub { display: block; font-family: var(--sans); font-size: 10.5px; white-space: nowrap; }
-table.scores td.num .sub { display: block; font-family: var(--sans); font-size: 10.5px; white-space: nowrap; }
+table.scores td .sub, table.scores th .sub {
+  display: block; font-family: var(--sans); font-size: 10.5px; white-space: nowrap;
+  font-weight: 400; font-style: normal; color: var(--ink-3);
+}
+table.scores td .sub.mono, table.scores th .sub.mono { font-family: var(--mono); }
 abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 table.scores.grid tbody th[scope="row"] { text-align: left; font-family: var(--sans); font-size: 13.5px; }
 table.scores td.sig { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }

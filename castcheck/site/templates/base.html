@@ -6,7 +6,7 @@
 <title>{% block title %}CastCheck{% endblock %}</title>
 <meta name="description" content="{% block description %}Independent, automated, station-level verification of public weather forecasts.{% endblock %}">
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="{{ asset_site }}">
 <link rel="alternate" type="application/atom+xml" title="CastCheck updates" href="/feed.xml">
 {% block head %}{% endblock %}
 <script>/* theme: honour a stored choice, otherwise follow the system. Absent JS the page
@@ -16,11 +16,14 @@ if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
-<p class="fairness" role="note">{{ fairness }}</p>
+<p class="fairness" role="note">{{ fairness_banner }}
+<a href="/methodology/#7-fairness-statement">Read the fairness statement&nbsp;&rarr;</a></p>
 <header class="site">
   <a class="brand" href="/">CastCheck</a>
   <nav aria-label="Main">
     <a href="/">Overview</a>
+    <a href="/stations/">Stations</a>
+    <a href="/models/">Models</a>
     <a href="/methodology/">Methodology</a>
     <a href="/status/">Status</a>
     <a href="/data/">Data</a>
@@ -50,6 +53,6 @@ if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)
   <a href="/methodology/">methodology v{{ methodology_version }}</a> ·
   CastCheck {{ castcheck_version }} · schema v{{ schema_version }} · built {{ built_at }}</p>
 </footer>
-<script src="/assets/chart.js" defer></script>
+<script src="{{ asset_chart }}" defer></script>
 </body>
 </html>

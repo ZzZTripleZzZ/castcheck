@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
-{% block title %}{{ station_id }} · {{ model_id }} · lead {{ lead }} — CastCheck{% endblock %}
-{% block description %}CastCheck score card: {{ model_id }} 2 m temperature at {{ station_id }}, lead day {{ lead }} — MAE, bias, bootstrap intervals, daily errors and monthly slices.{% endblock %}
+{% block title %}{{ station_id }} · {{ model_name }} · lead {{ lead }} — CastCheck{% endblock %}
+{% block description %}CastCheck score card: {{ model_name }} 2 m temperature at {{ station_id }}, lead day {{ lead }} — MAE, bias, bootstrap intervals, daily errors and monthly slices.{% endblock %}
 {% block head %}<link rel="canonical" href="{{ canonical }}">{% endblock %}
 {% block content %}
-<h1>{{ station_id }} · {{ model_id }} · lead day {{ lead }}</h1>
-<p class="lede">{{ station_name }} · {{ model_family }} · target day = initialization date +
+<h1>{{ station_name }} · {{ model_name }} · lead day {{ lead }}</h1>
+<p class="sub mono">{{ station_id }} · {{ model_id }} · lead {{ lead }}</p>
+<p class="lede">Target day = initialization date +
 {{ lead }} day{{ '' if lead == 1 else 's' }}. This page is a permanent link: the numbers change as
 history accumulates, the address and the methodology version do not.</p>
 {% if segment.model_version or segment.segment_start %}
@@ -128,7 +129,7 @@ mirrored on both sides. <span class="readout">Hover a bar for its bin and count.
 <th scope="col" class="num">Days</th><th scope="col">Coverage</th></tr></thead>
 <tbody>
 {% for a in availability %}
-<tr><th scope="row">{{ a.model_id }}</th><td class="period">{{ a.period }}</td>
+<tr><th scope="row" title="{{ a.model_id }}">{{ a.name }}</th><td class="period">{{ a.period }}</td>
 <td class="num">{{ a.n }}</td>
 <td class="barcell"><span class="bar" style="margin-left:{{ a.left }}%;width:{{ a.width }}%"></span></td></tr>
 {% endfor %}
@@ -143,7 +144,7 @@ mirrored on both sides. <span class="readout">Hover a bar for its bin and count.
 <h2 id="pairwise">Compared with other models</h2>
 <p class="note">Paired bootstrap on the days both models cover ({{ pairwise_window }},
 {{ chart_init }}Z, {{ chart_method }}, {{ chart_variable_label }}). Negative means
-<strong>{{ model_id }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval
+<strong>{{ model_name }}</strong> has the lower MAE. "Distinguishable" means the 95 % interval
 excludes zero.</p>
 <div class="scroll">
 <table class="scores">
@@ -151,7 +152,7 @@ excludes zero.</p>
 <th scope="col" class="num">MAE difference °F</th><th scope="col">Distinguishable</th></tr></thead>
 <tbody>
 {% for p in pairwise %}
-<tr><td><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/">{{ p.other }}</a></td>
+<tr><td><a href="/station/{{ station_id }}/model/{{ p.other }}/lead/{{ lead }}/" title="{{ p.other }}">{{ p.other_name }}</a></td>
 <td class="num">{{ p.n_common }}</td>
 <td class="num">{{ p.diff }} <span class="ci">{{ p.ci }}</span></td>
 <td class="sig">{{ 'yes' if p.significant else 'no' }}</td></tr>

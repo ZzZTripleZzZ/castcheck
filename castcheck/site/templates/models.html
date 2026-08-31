@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Models — CastCheck{% endblock %}
+{% block description %}Every forecast system CastCheck scores: source, initial conditions, version segment and the period of record.{% endblock %}
+{% block content %}
+<h1>Models</h1>
+<p class="lede">Each system is scored on the identical sampling — instantaneous 2 m temperature at
+00/06/12/18 UTC, interpolated to the station from the native 0.25° grid, with no post-processing.
+Scores cover only the newest model-version segment, so an upgrade upstream starts a new record
+rather than being averaged into the old one
+(<a href="/methodology/#9-versioning">methodology §9</a>).</p>
+<ul class="meta">
+  <li>systems <b>{{ rows|length }}</b></li>
+  <li>data through <b>{{ data_through }}</b></li>
+  <li>updated <b>{{ built_at }}</b></li>
+  <li>next update <b>{{ next_update }}</b></li>
+</ul>
+<div class="scroll tall">
+<table class="scores">
+<caption>Scored days are for lead day 1, all stations pooled, {{ window_label }}, {{ init_hour }}Z,
+{{ method }}, daily maximum.</caption>
+<thead><tr><th scope="col">Model</th><th scope="col">Source</th><th scope="col">Initial conditions</th>
+<th scope="col">Version segment</th><th scope="col">Period of record</th>
+<th scope="col" class="num">Scored days</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="{{ 'low-n ' if r.low_n }}{{ 'baseline' if r.baseline }}">
+<th scope="row"><a href="/model/{{ r.model_id }}/">{{ r.name }}</a>
+<span class="sub mono">{{ r.model_id }}</span></th>
+<td>{{ r.source }}{% if r.product %} · <span class="mono">{{ r.product }}</span>{% endif %}</td>
+<td>{{ r.init_field or '—' }}</td>
+<td class="mono tiny">{{ r.model_version or '—' }}{% if r.segment_start %}<span class="sub">from {{ r.segment_start }}</span>{% endif %}</td>
+<td class="period">{{ r.period }}</td>
+<td class="num">{{ r.n }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="legend">Rows in italic are baselines, not forecast systems: they are the bar every model
+has to clear, never a competitor in the ranking.</p>
+<p class="downloads"><a href="/data/models.csv">models.csv</a>
+<a href="/api/v1/models.json">models.json</a></p>
+{% endblock %}

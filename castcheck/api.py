@@ -55,6 +55,11 @@ __all__ = [
 ]
 
 SERIES_DAYS = 90
+#: The card's daily series is published for the headline slice only (see :func:`_daily_series`).
+SERIES_INIT = 0
+SERIES_METHOD = "bilinear"
+#: Window of the pairwise block inside a permanent-link card.
+CARD_PAIRWISE_WINDOW = "90d"
 N_BOOT = 1000
 CI_LEVEL = 0.95
 _ENVELOPE_CONSTANTS = ("computed_at", "methodology_version", "schema_version")
@@ -113,7 +118,8 @@ def _clean(value):
         return int(value)
     if isinstance(value, (np.floating, float)):
         v = float(value)
-        return None if math.isnan(v) else round(v, 4)
+        # 3 dp in °C is 0.001 °C — two orders of magnitude finer than the whole-°F truth.
+        return None if math.isnan(v) else round(v, 3)
     if isinstance(value, (pd.Timestamp, datetime)):
         return value.isoformat()
     if isinstance(value, date):
@@ -251,10 +257,19 @@ def _model_payload(models: list[ModelSpec]) -> list[dict]:
 
 
 def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[dict]]:
-    """(station_id, model_id, lead_day) → list of per-(init,method,variable) error series."""
+    """(station_id, model_id, lead_day) → per-variable error series for the headline slice.
+
+    Only the headline initialization and interpolation (00Z, bilinear) are carried here, for both
+    variables. The card would otherwise repeat eight near-identical series per model, lead day and
+    station; the other slices, and the matching forecasts and observations, are in
+    ``/data/daily_errors.csv.gz``, which is one file instead of thousands.
+    """
     if errors is None or len(errors) == 0:
         return {}
-    e = errors.copy()
+    e = errors[(errors["init_hour"].astype(int) == SERIES_INIT)
+               & (errors["method"] == SERIES_METHOD)].copy()
+    if len(e) == 0:
+        return {}
     e["climo_date"] = pd.to_datetime(e["climo_date"])
     cutoff = e["climo_date"].max() - pd.Timedelta(days=series_days - 1)
     e = e[e["climo_date"] >= cutoff]
@@ -353,14 +368,38 @@ def export_api(
             pw_grp = pw_idx.get((st, lead))
             if pw_grp is not None and len(pw_grp):
                 mask = (pw_grp["model_a"] == mid) | (pw_grp["model_b"] == mid)
+                # Headline slice only: the same comparison otherwise appears in this card 32 times
+                # over (window × init × method × variable) and again in the other model's card.
+                # The complete table is one download away at pairwise/latest.json.
+                mask &= (pw_grp["window"] == CARD_PAIRWISE_WINDOW)
+                mask &= pw_grp["init_hour"].astype(int) == SERIES_INIT
+                mask &= pw_grp["method"] == SERIES_METHOD
                 pw_grp = pw_grp[mask]
+            # Columns that are constant for this card live in the envelope, not in every row.
+            card_drop = _ENVELOPE_CONSTANTS + ("station_id", "model_id", "lead_day")
+            versions = sorted({str(v) for v in grp.get("model_version", pd.Series(dtype=str))
+                               .dropna().unique()})
+            segments = sorted({str(v) for v in grp.get("segment_start", pd.Series(dtype=str))
+                               .dropna().unique()})
+            if len(versions) == 1:
+                card_drop += ("model_version",)
+            if len(segments) == 1:
+                card_drop += ("segment_start",)
             payload = {
                 **_envelope(scores),
                 "station_id": st, "model_id": mid, "lead_day": lead,
+                "model_version": versions[0] if len(versions) == 1 else versions,
+                "segment_start": segments[0] if len(segments) == 1 else segments,
                 "permalink": f"/station/{st}/model/{mid}/lead/{lead}/",
-                "scores": compact_table(_with_permalink(grp)),
+                "scores": compact_table(grp, drop=card_drop),
+                "pairwise_scope": {"window": CARD_PAIRWISE_WINDOW, "init_hour": SERIES_INIT,
+                                   "method": SERIES_METHOD,
+                                   "note": "every window/init/method is in pairwise/latest.json"},
                 "pairwise": compact_table(pw_grp) if pw_grp is not None else {"columns": [], "rows": []},
                 "series_days": series_days,
+                "series_scope": {"init_hour": SERIES_INIT, "method": SERIES_METHOD,
+                                 "note": "other init/method slices and the matching forecast and "
+                                         "observation values are in /data/daily_errors.csv.gz"},
                 "series": series.get((st, mid, lead), []),
             }
             write_json(base / "scores" / str(st) / str(mid) / f"{lead}.json", payload)
