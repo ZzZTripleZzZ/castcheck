@@ -12,11 +12,11 @@
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 100.992,
+      "duration_s": 103.064,
       "exit_code": 0,
-      "finished_at": "2026-08-31T07:17:08+00:00",
-      "last_success_at": "2026-08-31T07:17:08+00:00",
-      "started_at": "2026-08-31T07:15:27+00:00",
+      "finished_at": "2026-08-31T07:26:38+00:00",
+      "last_success_at": "2026-08-31T07:26:38+00:00",
+      "started_at": "2026-08-31T07:24:55+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
@@ -62,21 +62,21 @@
     },
     "publish-hf": {
       "castcheck_version": "0.1.0",
-      "duration_s": 21.668,
+      "duration_s": 5.105,
       "exit_code": 0,
-      "finished_at": "2026-08-31T06:34:54+00:00",
-      "last_success_at": "2026-08-31T06:34:54+00:00",
-      "started_at": "2026-08-31T06:34:32+00:00",
+      "finished_at": "2026-08-31T07:27:52+00:00",
+      "last_success_at": "2026-08-31T07:27:52+00:00",
+      "started_at": "2026-08-31T07:27:47+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.1.0",
-      "duration_s": 31.217,
+      "duration_s": 31.357,
       "exit_code": 0,
-      "finished_at": "2026-08-31T06:35:25+00:00",
-      "last_success_at": "2026-08-31T06:35:25+00:00",
-      "started_at": "2026-08-31T06:34:54+00:00",
+      "finished_at": "2026-08-31T07:28:24+00:00",
+      "last_success_at": "2026-08-31T07:28:24+00:00",
+      "started_at": "2026-08-31T07:27:53+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
@@ -141,5 +141,5 @@
       "summary": "scores=244100 pairwise=739520 as_of=2026-08-31"
     }
   },
-  "updated_at": "2026-08-31T07:17:08+00:00"
+  "updated_at": "2026-08-31T07:28:24+00:00"
 }
