@@ -983,6 +983,7 @@ def build_site(
 
     # ---- always-present pages -------------------------------------------------------------
     _write_methodology(env, w, base_ctx)
+    _write_404(env, w, base_ctx)
     _write_status(env, w, base_ctx, status_report, _display_map(_model_index(models)))
     _write_indexes(env, w, base_ctx, scores, stations, _model_index(models))
     _write_api_index(env, w, base_ctx, api_written)
@@ -2017,6 +2018,17 @@ def _write_methodology(env, w, base_ctx) -> None:
     text = path.read_text(encoding="utf-8") if path.exists() else "# Methodology\n\nNot available."
     w.write("methodology/index.html", env.get_template("page.html").render(
         **base_ctx, heading="Methodology", body=_render_markdown(text)))
+
+
+def _write_404(env, w, base_ctx) -> None:
+    """Cloudflare Pages serves /404.html for unknown paths; without it a stale URL returns the home page with 200."""
+    body = (
+        "<p>There is nothing at this address. Permanent links have the form "
+        "<code>/station/{ICAO}/model/{model_id}/lead/{day}/</code>; the "
+        "<a href=\"/stations/\">stations</a> and <a href=\"/models/\">models</a> indexes list every valid combination, "
+        "and the <a href=\"/data/\">data page</a> lists everything that can be downloaded.</p>"
+    )
+    w.write("404.html", env.get_template("page.html").render(**base_ctx, heading="Page not found", body=body))
 
 
 def _write_status(env, w, base_ctx, report, names: dict[str, str] | None = None) -> None:

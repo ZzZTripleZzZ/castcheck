@@ -1168,3 +1168,11 @@ def test_the_home_chart_draws_bars_and_whiskers_in_the_same_unit(built):
     axis = max(float(x) for x in re.findall(r'class="c-tick">([\d.]+)</text>', html))
     printed = [float(x) for x in re.findall(r'class="c-val">([\d.]+)</text>', html)]
     assert printed and max(printed) <= axis
+
+
+def test_404_page_is_generated(tmp_path):
+    from castcheck.site.build import build_site
+
+    build_site(as_of="2026-08-31", out=tmp_path, scores=None, permalinks=False)
+    html = (tmp_path / "404.html").read_text(encoding="utf-8")
+    assert "Page not found" in html and "/stations/" in html
