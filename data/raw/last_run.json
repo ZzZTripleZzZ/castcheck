@@ -2,103 +2,93 @@
   "commands": {
     "backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 10763.62,
+      "duration_s": 8861.599,
       "exit_code": 0,
-      "finished_at": "2026-08-31T13:57:41+00:00",
-      "last_success_at": "2026-08-31T13:57:41+00:00",
-      "started_at": "2026-08-31T10:58:17+00:00",
+      "finished_at": "2026-08-31T22:50:20+00:00",
+      "last_success_at": "2026-08-31T22:50:20+00:00",
+      "started_at": "2026-08-31T20:22:38+00:00",
       "status": "ok",
-      "summary": "pangu_gfs 2026-01-01..2026-07-31: 347/424 runs with data"
+      "summary": "aurora_gfs 2026-01-01..2026-07-31: 347/424 runs with data"
     },
     "build-site": {
       "castcheck_version": "0.1.0",
-      "duration_s": 248.529,
+      "duration_s": 1311.926,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:29:31+00:00",
-      "last_success_at": "2026-09-01T15:29:31+00:00",
-      "started_at": "2026-09-01T15:25:22+00:00",
+      "finished_at": "2026-09-01T15:24:42+00:00",
+      "last_success_at": "2026-09-01T15:24:42+00:00",
+      "started_at": "2026-09-01T15:02:50+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.1.0",
-      "duration_s": 399.573,
+      "duration_s": 2002.325,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:29:31+00:00",
-      "last_success_at": "2026-09-01T15:29:31+00:00",
-      "started_at": "2026-09-01T15:22:51+00:00",
+      "finished_at": "2026-09-01T15:24:42+00:00",
+      "last_success_at": "2026-09-01T15:24:42+00:00",
+      "started_at": "2026-09-01T14:51:20+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.1.0",
-      "duration_s": 10.782,
+      "duration_s": 103.406,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:23:02+00:00",
-      "last_success_at": "2026-09-01T15:23:02+00:00",
-      "started_at": "2026-09-01T15:22:51+00:00",
+      "finished_at": "2026-09-01T14:53:03+00:00",
+      "last_success_at": "2026-09-01T14:53:03+00:00",
+      "started_at": "2026-09-01T14:51:20+00:00",
       "status": "ok",
-      "summary": "5016760 values (full) -> 1008526 daily rows"
+      "summary": "7532684 values (full) -> 1582146 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.253,
+      "duration_s": 300.613,
       "exit_code": 0,
-      "finished_at": "2026-09-01T14:14:27+00:00",
-      "last_success_at": "2026-09-01T14:14:27+00:00",
-      "started_at": "2026-09-01T14:14:27+00:00",
+      "finished_at": "2026-09-01T14:50:16+00:00",
+      "last_success_at": "2026-09-01T14:50:16+00:00",
+      "started_at": "2026-09-01T14:45:16+00:00",
       "status": "ok",
-      "summary": "nothing to fetch"
+      "summary": "22/22 run(s) with data"
     },
     "publish-bluesky": {
       "castcheck_version": "0.1.0",
-      "duration_s": 6.636,
+      "duration_s": 25.108,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:31:07+00:00",
-      "last_success_at": "2026-09-01T15:31:07+00:00",
-      "started_at": "2026-09-01T15:31:01+00:00",
+      "finished_at": "2026-08-31T00:00:48+00:00",
+      "last_success_at": "2026-08-31T00:00:48+00:00",
+      "started_at": "2026-08-31T00:00:23+00:00",
       "status": "ok",
-      "summary": "posted as castcheck.zifanzhang.com (268 chars, window=90d)"
+      "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
     },
     "publish-hf": {
       "castcheck_version": "0.1.0",
-      "duration_s": 6.788,
+      "duration_s": 5.105,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:30:47+00:00",
-      "last_success_at": "2026-09-01T15:30:47+00:00",
-      "started_at": "2026-09-01T15:30:40+00:00",
+      "finished_at": "2026-08-31T07:27:52+00:00",
+      "last_success_at": "2026-08-31T07:27:52+00:00",
+      "started_at": "2026-08-31T07:27:47+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.1.0",
-      "duration_s": 13.226,
+      "duration_s": 31.357,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:31:00+00:00",
-      "last_success_at": "2026-09-01T15:31:00+00:00",
-      "started_at": "2026-09-01T15:30:47+00:00",
+      "finished_at": "2026-08-31T07:28:24+00:00",
+      "last_success_at": "2026-08-31T07:28:24+00:00",
+      "started_at": "2026-08-31T07:27:53+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
-    "status": {
-      "castcheck_version": "0.1.0",
-      "duration_s": 2.587,
-      "exit_code": 0,
-      "finished_at": "2026-09-01T15:29:34+00:00",
-      "last_success_at": "2026-09-01T15:29:34+00:00",
-      "started_at": "2026-09-01T15:29:31+00:00",
-      "status": "ok",
-      "summary": "0 gap(s) today"
-    },
     "truth": {
       "castcheck_version": "0.1.0",
-      "duration_s": 5.043,
+      "duration_s": 8.727,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:06:41+00:00",
-      "last_success_at": "2026-09-01T15:06:41+00:00",
-      "started_at": "2026-09-01T15:06:36+00:00",
+      "finished_at": "2026-09-01T14:50:31+00:00",
+      "last_success_at": "2026-09-01T14:50:31+00:00",
+      "started_at": "2026-09-01T14:50:23+00:00",
       "status": "ok",
-      "summary": "2026-08-30: 46 rows, 23 final CLI"
+      "summary": "2026-08-31: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -112,44 +102,44 @@
     },
     "truth-instant": {
       "castcheck_version": "0.1.0",
-      "duration_s": 4.059,
+      "duration_s": 4.956,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:06:45+00:00",
-      "last_success_at": "2026-09-01T15:06:45+00:00",
-      "started_at": "2026-09-01T15:06:41+00:00",
+      "finished_at": "2026-09-01T14:50:38+00:00",
+      "last_success_at": "2026-09-01T14:50:38+00:00",
+      "started_at": "2026-09-01T14:50:33+00:00",
       "status": "ok",
       "summary": "2026-08-31: 92 instants, 92 with a value (100.0%)"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 49.381,
+      "duration_s": 37.297,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:07:35+00:00",
-      "last_success_at": "2026-09-01T15:07:35+00:00",
-      "started_at": "2026-09-01T15:06:46+00:00",
+      "finished_at": "2026-09-01T14:51:16+00:00",
+      "last_success_at": "2026-09-01T14:51:16+00:00",
+      "started_at": "2026-09-01T14:50:39+00:00",
       "status": "ok",
       "summary": "2026-08-22..2026-08-30: 828 instants, 826 with a value (99.8%), gap_gt35min=2 suspect=1, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.317,
+      "duration_s": 0.912,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:07:36+00:00",
-      "last_success_at": "2026-09-01T15:07:36+00:00",
-      "started_at": "2026-09-01T15:07:35+00:00",
+      "finished_at": "2026-09-01T14:51:19+00:00",
+      "last_success_at": "2026-09-01T14:51:19+00:00",
+      "started_at": "2026-09-01T14:51:18+00:00",
       "status": "ok",
       "summary": "414 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
     "verify": {
       "castcheck_version": "0.1.0",
-      "duration_s": 139.977,
+      "duration_s": 586.255,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:25:22+00:00",
-      "last_success_at": "2026-09-01T15:25:22+00:00",
-      "started_at": "2026-09-01T15:23:02+00:00",
+      "finished_at": "2026-09-01T15:02:50+00:00",
+      "last_success_at": "2026-09-01T15:02:50+00:00",
+      "started_at": "2026-09-01T14:53:04+00:00",
       "status": "ok",
-      "summary": "scores=332698 pairwise=1129440 as_of=2026-09-01"
+      "summary": "scores=407424 pairwise=1653220 as_of=2026-09-01"
     }
   },
-  "updated_at": "2026-09-01T15:31:07+00:00"
+  "updated_at": "2026-09-01T15:24:42+00:00"
 }
