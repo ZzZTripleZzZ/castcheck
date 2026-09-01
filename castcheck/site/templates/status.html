@@ -23,7 +23,7 @@
     <div><dt>Next update</dt><dd><time datetime="{{ next_update }}">{{ next_update_human }}</time></dd></div>
     <div><dt>Window</dt><dd>{{ report.days }} days</dd></div>
     <div><dt>Stations</dt><dd>{{ report.n_stations }}</dd></div>
-    <div><dt>Gaps</dt><dd>{{ report.n_gaps }}</dd></div>
+    <div><dt>Historical gaps</dt><dd>{{ report.n_gaps }} in {{ report.days }} d · open today {{ report.n_current_gaps if report.n_current_gaps is defined else 0 }}</dd></div>
     <div><dt>Not due yet</dt><dd>{{ report.n_pending if report.n_pending is defined else 0 }}</dd></div>
   </dl>
 </div>
@@ -221,7 +221,7 @@
 
 {% if report.gaps and report.gaps|length > report.current_gaps|length %}
 <section class="panel" id="allgaps">
-  <div class="panel__head"><h2 class="panel__title">All gaps in the window<span class="lead-tag">{{ report.n_gaps }}</span></h2></div>
+  <div class="panel__head"><h2 class="panel__title">All gaps in the window<span class="lead-tag">{{ report.n_gaps }} over {{ report.days }} days</span></h2></div>
   <details class="behind">
     <summary>Show the full list</summary>
     <div class="table-wrap table-wrap--tall"><table class="data">

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% set nav_current = 'diagnostics' %}
+{% block title %}Diurnal structure of the error — CastCheck{% endblock %}
+{% block description %}CastCheck diagnostics: per-model bias at 00/06/12/18 UTC, bias against lead day, and the sampling penalty of the daily-extreme comparison. Reported without attribution.{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Diagnostics · rebuilt with every publication</p>
+  <h1 class="hero__title">Diurnal structure of the error</h1>
+  <p class="hero__scope hero__scope--lede">{{ lede }}{% if spread %} In the window this build
+  covers, the models are furthest apart at <strong>{{ spread.widest }}</strong> —
+  {{ spread.widest_f }} °F between the two extremes — and closest together at
+  {{ spread.narrowest }}, {{ spread.narrowest_f }} °F apart.{% endif %}</p>
+  <dl class="metastrip">
+    <div><dt>Window</dt><dd>{{ window[:-1] }} d</dd></div>
+    <div><dt>Variable</dt><dd>{{ 'instantaneous 2 m temperature' }}</dd></div>
+    <div><dt>Init</dt><dd>{{ "%02d"|format(init_hour) }}Z</dd></div>
+    <div><dt>Interpolation</dt><dd>{{ method }}</dd></div>
+    <div><dt>Stations</dt><dd>{{ n_stations }} pooled</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+  </dl>
+  <ul class="downloads" style="margin-top:var(--sp-4)">
+    <li><a href="/api/v1/diagnostics.json"><span class="fmt">JSON</span> every number on this page</a></li>
+    <li><a href="/methodology/#102-an-unattributed-empirical-observation-the-ai-models-1800-utc-cold-bias"><span class="fmt">MD</span> methodology §10.2</a></li>
+    <li><a href="/data/#download"><span class="fmt">CSV</span> the daily errors underneath</a></li>
+  </ul>
+</section>
+
+<section class="panel" id="reading">
+  <div class="panel__head">
+    <h2 class="panel__title">What this page does and does not claim</h2>
+  </div>
+  <div class="panel__body">
+    <p class="panel__sub" style="max-width:78ch">The three figures below describe a pattern in
+    <em>these measurements</em>. They are <strong>not yet attributed</strong> to any cause, because
+    the analyses that would separate the candidates have not been run. Three explanations are all
+    consistent with what is drawn here, and this page excludes none of them:</p>
+    <ol class="numlist">
+    {% for title, body in candidates %}
+      <li><strong>{{ title }}</strong> — {{ body }}.</li>
+    {% endfor %}
+    </ol>
+    <p class="panel__sub" style="max-width:78ch">The full statement, and the ordered list of
+    analyses that would settle it, is
+    <a href="/methodology/#102-an-unattributed-empirical-observation-the-ai-models-1800-utc-cold-bias">methodology
+    §10.2</a>. Until those exist, the correct sentence is that the afternoon bias differs between
+    models and we have not separated model diurnal amplitude, sampling penalty and initial
+    conditions.</p>
+    <div class="table-wrap"><table class="data">
+      <caption>What each UTC instant is in local time. Offsets are standard time across the
+      {{ n_stations }} stations, which span four zones; local clocks read one hour later while
+      daylight saving is in force.</caption>
+      <thead><tr><th scope="col">Instant</th><th scope="col">Local standard time</th>
+      <th scope="col">Roughly</th></tr></thead>
+      <tbody>
+      {% for h in hour_when %}
+        <tr><th scope="row" class="k">{{ h.utc }}</th><td class="mono">{{ h.local }}</td>
+        <td>{{ h.when }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="panel" id="by-hour">
+  <div class="panel__head">
+    <h2 class="panel__title">A. Bias at each synoptic instant<span class="lead-tag">t2_00z … t2_18z</span></h2>
+    <p class="panel__sub">Each model is scored at a single instant against the observation at the
+    same instant, so nothing in this figure depends on a model's own daily temperature range or on
+    a definition of a daily extreme. Bars run from a shared zero; positive is too warm. Lead day
+    {{ lead }}, {{ window }} window, {{ "%02d"|format(init_hour) }}Z initialization, {{ method }} interpolation,
+    {{ n_stations }} stations pooled.</p>
+  </div>
+  <div class="panel__body">
+{% if hour_rows %}
+    <figure class="fig">
+      <div class="fig__body">{{ hour_fig }}</div>
+      <p class="fig__source">Source: CastCheck {{ castcheck_version }}, methodology
+      v{{ methodology_version }} · ECMWF open data, NOAA/NCEP GFS, NOAA/CIRA AIWP, NWS ASOS ·
+      data through {{ data_through }} · CC&nbsp;BY&nbsp;4.0.
+      <span class="readout">Hover a bar for its value and sample size.</span></p>
+    </figure>
+{% else %}
+    <p class="dimtext">No instant has enough scored days yet. This figure appears as soon as the
+    first model has a scored day at {{ "%02d"|format(init_hour) }}Z.</p>
+{% endif %}
+  </div>
+{% if hour_rows %}
+  <details class="behind">
+    <summary>The same figure as a table</summary>
+    <div class="table-wrap"><table class="data">
+      <caption>Bias in °F (forecast &minus; observed) with the sample size under each value, and
+      the spread between a model's own highest and lowest instant in the last column.</caption>
+      <thead><tr><th scope="col">Model</th>
+      {% for c in hour_cats %}<th scope="col" class="is-num">{{ c }}</th>{% endfor %}
+      <th scope="col" class="is-num">Spread</th></tr></thead>
+      <tbody>
+      {% for r in hour_rows %}
+        <tr class="{{ 'is-baseline' if r.baseline }}">
+        <th scope="row" class="model-cell"><a href="/model/{{ r.id }}/">{{ r.name }}</a><span class="sub mono">{{ r.id }}</span></th>
+        {% for c in r.cells %}<td class="n bias">{{ c.bias }}<i class="c">n={{ c.n }}</i></td>{% endfor %}
+        <td class="n"><span class="val">{{ r.range }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </details>
+{% endif %}
+</section>
+
+<section class="panel" id="by-lead">
+  <div class="panel__head">
+    <h2 class="panel__title">B. Bias against lead day<span class="lead-tag">t2, pooled over the four instants</span></h2>
+    <p class="panel__sub">The same instantaneous variable, pooled over all four instants, at every
+    lead day the record covers. A bias that is flat across leads is present in the first forecast
+    hours; one that grows with lead accumulates as the forecast runs. Each line is named where it
+    ends; the two initial-condition variants of one architecture share a colour and are told apart
+    by the dashed stroke. {{ window }} window, {{ "%02d"|format(init_hour) }}Z, {{ method }}.</p>
+  </div>
+  <div class="panel__body">
+{% if lead_rows %}
+    <figure class="fig">
+      <div class="fig__body">{{ lead_fig }}</div>
+      <p class="fig__source">Source: CastCheck {{ castcheck_version }}, methodology
+      v{{ methodology_version }} · data through {{ data_through }} · CC&nbsp;BY&nbsp;4.0.
+      <span class="readout">Hover a point for its value.</span></p>
+    </figure>
+    <p class="legend" style="margin-top:var(--sp-4)">
+      <span>Solid: the first initial-condition variant of a family</span>
+      <span>Dashed: the second variant of the same architecture</span>
+      <span>Grey dotted: the persistence baseline</span>
+      <span>Every line is also labelled at its right-hand end</span>
+    </p>
+{% else %}
+    <p class="dimtext">No lead day has a scored value yet.</p>
+{% endif %}
+  </div>
+{% if lead_rows %}
+  <details class="behind">
+    <summary>The same figure as a table</summary>
+    <div class="table-wrap"><table class="data">
+      <caption>Bias in °F at each lead day, with the sample size under each value.</caption>
+      <thead><tr><th scope="col">Model</th>
+      {% for d in leads %}<th scope="col" class="is-num">d{{ d }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for r in lead_rows %}
+        <tr class="{{ 'is-baseline' if r.baseline }}">
+        <th scope="row" class="model-cell"><a href="/model/{{ r.id }}/">{{ r.name }}</a><span class="sub mono">{{ r.id }}</span></th>
+        {% for c in r.cells %}<td class="n bias">{{ c.bias }}<i class="c">n={{ c.n }}</i></td>{% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </details>
+{% endif %}
+</section>
+
+<section class="panel" id="sampling-penalty">
+  <div class="panel__head">
+    <h2 class="panel__title">C. The sampling penalty, model by model</h2>
+    <p class="panel__sub">The like-for-like extreme <span class="mono">tmax_s</span> scores a
+    model's four forecast samples against the highest of the four <em>observations</em> at the same
+    instants; <span class="mono">tmax_cli</span> scores exactly the same four forecast samples
+    against the true NWS daily maximum. The difference is the sampling penalty, in °F, at lead day
+    {{ lead }}.</p>
+    <p class="panel__sub"><strong>How to read the last column.</strong>
+    {{ penalty_identity }}</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+{% if penalty_rows %}
+    <div class="table-wrap"><table class="data">
+      <caption>Bias in °F (forecast &minus; observed) at lead day {{ lead }}, {{ window }} window,
+      {{ "%02d"|format(init_hour) }}Z, {{ method }}, {{ n_stations }} stations pooled. Rows are ordered by the
+      daily-maximum penalty, most negative first. The persistence baseline is shown last and is
+      never ranked.</caption>
+      <thead>
+      <tr><th scope="col" rowspan="2">Model</th>
+      {% for p in penalty_pairs %}<th scope="col" colspan="4" class="is-num">{{ p.sampled }} vs {{ p.cli }}</th>{% endfor %}</tr>
+      <tr>{% for p in penalty_pairs %}
+      <th scope="col" class="is-num">{{ p.sampled }}</th>
+      <th scope="col" class="is-num">{{ p.cli }}</th>
+      <th scope="col" class="is-num">Penalty</th>
+      <th scope="col" class="is-num">n</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+      {% for r in penalty_rows %}
+        <tr class="{{ 'is-baseline' if r.baseline }}">
+        <th scope="row" class="model-cell"><a href="/model/{{ r.id }}/">{{ r.name }}</a><span class="sub mono">{{ r.id }}</span></th>
+        {% for c in r.cells %}
+        <td class="n bias">{{ c.sampled }}</td>
+        <td class="n bias">{{ c.cli }}</td>
+        <td class="n"><span class="val">{{ c.penalty }}</span></td>
+        <td class="n"><span class="val">{{ c.n_sampled }}</span><i class="c">cli n={{ c.n_cli }}</i></td>
+        {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+{% else %}
+    <p class="dimtext" style="padding:var(--sp-4)">No daily extreme has been scored yet.</p>
+{% endif %}
+  </div>
+  <div class="panel__foot">
+    <p>{{ cli_caveat }}</p>
+  </div>
+</section>
+
+<section class="panel" id="update">
+  <div class="panel__head"><h2 class="panel__title">These numbers move</h2></div>
+  <div class="panel__body">
+    <p class="panel__sub" style="max-width:78ch">Every figure and table on this page is rebuilt
+    from scratch on each publication, over a rolling {{ window }} window, so the sample behind it
+    grows every day and the ordering of models can change. Nothing here is a fixed result: the
+    record is short, the confidence intervals published on the leaderboard are wide, and a
+    difference visible today may not survive another month of data. The
+    <a href="/api/v1/diagnostics.json">JSON</a> carries the same numbers with their sample sizes,
+    and each row links to the model page where the intervals live. Next rebuild:
+    <time datetime="{{ next_update }}">{{ next_update_human }}</time>.</p>
+  </div>
+</section>
+{% endblock %}

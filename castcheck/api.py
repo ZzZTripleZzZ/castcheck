@@ -32,6 +32,10 @@ Endpoints
                                                objects with a ``permalink`` each
 ``openapi.json``                               OpenAPI 3.1 description of all of the above
 ``status.json``                                data-completeness report (see ``status.py``)
+``diagnostics.json``                           the diurnal-structure diagnostic behind
+                                               ``/diagnostics/``: per-model bias at each of the
+                                               four synoptic instants, bias against lead day, and
+                                               the sampling penalty of the ``*_cli`` variables
 
 Every response carries the same envelope (docs/05 §D): ``schema_version``, ``generated_at``,
 ``data_through``, ``next_update``, ``window {type, days, start, end}``, ``units``,
@@ -57,12 +61,20 @@ from .config import PUBLIC_DIR, ModelSpec, Station, load_models, load_stations
 from .verify import ALL_STATIONS, BLOCK_DAYS, MIN_N, PERSISTENCE_ID, error_table
 
 __all__ = [
+    "DIAGNOSTICS_HOURS",
+    "DIAGNOSTICS_INIT",
+    "DIAGNOSTICS_LEAD",
+    "DIAGNOSTICS_LEADS",
+    "DIAGNOSTICS_METHOD",
+    "DIAGNOSTICS_PENALTY_PAIRS",
+    "DIAGNOSTICS_WINDOW",
     "LEADERBOARD_VIEWS",
     "SERIES_DAYS",
     "SKILL_MIN_COMMON",
     "UNITS",
     "api_dir",
     "compact_table",
+    "diagnostics_payload",
     "export_api",
     "openapi_document",
     "write_json",
@@ -140,6 +152,23 @@ LEADERBOARD_VIEWS = tuple(
 )
 SITE = "https://castcheck.zifanzhang.com"
 PUBLISH_HOUR_UTC = 11
+
+#: The one slice ``/diagnostics/`` and ``diagnostics.json`` are cut from.  Fixing every dimension
+#: but the one under examination is the whole point of a diagnostic: the diurnal figure varies the
+#: valid instant, the lead figure varies the lead day, and the sampling-penalty table varies the
+#: truth definition — nothing else moves between them.
+DIAGNOSTICS_WINDOW = "90d"
+DIAGNOSTICS_INIT = 0
+DIAGNOSTICS_METHOD = "bilinear"
+DIAGNOSTICS_LEAD = 1
+#: The four common synoptic instants, in UTC.  At the 23 U.S. stations 18Z is early-to-late
+#: afternoon local time and 12Z is around dawn; the page says so in words, because "18Z" is not
+#: a time of day to a reader who does not already live in UTC.
+DIAGNOSTICS_HOURS = (0, 6, 12, 18)
+DIAGNOSTICS_LEADS = tuple(range(1, 10))
+#: The like-for-like extreme and the NWS-daily-extreme comparison of the same forecast samples.
+#: Their difference is the sampling penalty (METHODOLOGY §2.3), one number per model.
+DIAGNOSTICS_PENALTY_PAIRS = (("tmax_s", "tmax_cli"), ("tmin_s", "tmin_cli"))
 
 
 def api_dir(out: str | Path | None = None) -> Path:
@@ -354,6 +383,114 @@ def _daily_series(errors: pd.DataFrame, series_days: int) -> dict[tuple, list[di
     return out
 
 
+# ------------------------------------------------------------------------------------------
+# diurnal-structure diagnostic (METHODOLOGY §10.2)
+# ------------------------------------------------------------------------------------------
+
+def _diag_index(scores: pd.DataFrame | None) -> dict[tuple[str, str, int], dict]:
+    """``(variable, model_id, lead_day) -> row`` over the fixed diagnostic slice.
+
+    Everything the diagnostic reads is already a published aggregate, so the page cannot drift
+    from the leaderboard: it is the same ``scores`` table, cut along a different axis.
+    """
+    needed = {"station_id", "model_id", "variable", "lead_day", "window", "init_hour", "method"}
+    if scores is None or len(scores) == 0 or not needed <= set(scores.columns):
+        return {}
+    sub = scores[
+        (scores["station_id"] == ALL_STATIONS)
+        & (scores["window"] == DIAGNOSTICS_WINDOW)
+        & (scores["init_hour"].astype(int) == DIAGNOSTICS_INIT)
+        & (scores["method"] == DIAGNOSTICS_METHOD)
+    ]
+    keep = [c for c in ("variable", "model_id", "lead_day", "n", "mae", "bias",
+                        "bias_ci_low", "bias_ci_high", "period_start", "period_end")
+            if c in sub.columns]
+    return {
+        (str(r["variable"]), str(r["model_id"]), int(r["lead_day"])): r
+        for r in sub[keep].to_dict("records")
+    }
+
+
+def _diag_cell(row: dict | None, field: str = "bias"):
+    return None if row is None else _clean(row.get(field))
+
+
+def diagnostics_payload(scores: pd.DataFrame | None,
+                        models: list[ModelSpec] | None = None) -> dict:
+    """The three diagnostic cuts behind ``/diagnostics/``, in °C like every other endpoint.
+
+    ``hourly_bias`` is the bias of each model at each of the four synoptic instants
+    (``t2_00z … t2_18z``) at one lead day; ``bias_by_lead`` is the pooled ``t2`` bias against lead
+    day; ``sampling_penalty`` is ``bias(*_cli) − bias(*_s)`` — how much of a model's daily-extreme
+    bias is the four-instant sampling rather than the model.  No causal claim is attached to any
+    of them here or on the page: see METHODOLOGY §10.2.
+    """
+    models = list(models) if models is not None else load_models()
+    order = [m.model_id for m in models]
+    idx = _diag_index(scores)
+    present = {mid for _, mid, _ in idx}
+    order = [m for m in order if m in present] + sorted(present - set(order))
+
+    hourly = [
+        {"model_id": mid,
+         "bias": [_diag_cell(idx.get((f"t2_{h:02d}z", mid, DIAGNOSTICS_LEAD))) for h in
+                  DIAGNOSTICS_HOURS],
+         "n": [_diag_cell(idx.get((f"t2_{h:02d}z", mid, DIAGNOSTICS_LEAD)), "n") for h in
+               DIAGNOSTICS_HOURS]}
+        for mid in order
+    ]
+    by_lead = [
+        {"model_id": mid,
+         "bias": [_diag_cell(idx.get(("t2", mid, d))) for d in DIAGNOSTICS_LEADS],
+         "mae": [_diag_cell(idx.get(("t2", mid, d)), "mae") for d in DIAGNOSTICS_LEADS],
+         "n": [_diag_cell(idx.get(("t2", mid, d)), "n") for d in DIAGNOSTICS_LEADS]}
+        for mid in order
+    ]
+    penalty = []
+    for mid in order:
+        row: dict = {"model_id": mid}
+        for sampled, cli in DIAGNOSTICS_PENALTY_PAIRS:
+            a = _diag_cell(idx.get((sampled, mid, DIAGNOSTICS_LEAD)))
+            b = _diag_cell(idx.get((cli, mid, DIAGNOSTICS_LEAD)))
+            row[f"{sampled}_bias"] = a
+            row[f"{cli}_bias"] = b
+            row[f"{sampled}_penalty"] = _clean(b - a) if a is not None and b is not None else None
+            row[f"{sampled}_n"] = _diag_cell(idx.get((sampled, mid, DIAGNOSTICS_LEAD)), "n")
+            row[f"{cli}_n"] = _diag_cell(idx.get((cli, mid, DIAGNOSTICS_LEAD)), "n")
+        penalty.append(row)
+
+    scope = (f"station_id={ALL_STATIONS}; window={DIAGNOSTICS_WINDOW}; "
+             f"init_hour={DIAGNOSTICS_INIT:02d}Z; method={DIAGNOSTICS_METHOD}")
+    return {
+        **_envelope(scores, DIAGNOSTICS_WINDOW, scope=scope),
+        "attribution": "None of these cuts is attributed to a cause. See METHODOLOGY §10.2 for "
+                       "the three candidate explanations and the analyses that would separate "
+                       "them.",
+        "hourly_bias": {
+            "variables": [f"t2_{h:02d}z" for h in DIAGNOSTICS_HOURS],
+            "hours_utc": list(DIAGNOSTICS_HOURS),
+            "lead_day": DIAGNOSTICS_LEAD,
+            "rows": hourly,
+        },
+        "bias_by_lead": {
+            "variable": "t2",
+            "lead_days": list(DIAGNOSTICS_LEADS),
+            "rows": by_lead,
+        },
+        "sampling_penalty": {
+            "lead_day": DIAGNOSTICS_LEAD,
+            "pairs": [{"sampled": s, "cli": c, "penalty": f"bias({c}) - bias({s})"}
+                      for s, c in DIAGNOSTICS_PENALTY_PAIRS],
+            "identity": "Both terms are formed from the same forecast value, so the forecast "
+                        "cancels and the difference is the gap between the two truth definitions "
+                        "over the days and stations that model was scored on. Read the level of "
+                        "each column for a model's own diurnal behaviour and the sample sizes "
+                        "for why the differences are not identical.",
+            "rows": penalty,
+        },
+    }
+
+
 def export_api(
     scores: pd.DataFrame,
     pairwise: pd.DataFrame,
@@ -402,6 +539,9 @@ def export_api(
     written["scores/leaderboard.json"] = len(board)
 
     written["leaderboard/{view}.json"] = _write_leaderboards(base, scores)
+
+    write_json(base / "diagnostics.json", diagnostics_payload(scores, models))
+    written["diagnostics.json"] = 1
 
     write_json(base / "openapi.json", openapi_document())
     written["openapi.json"] = 1
@@ -801,7 +941,8 @@ def openapi_document() -> dict:
         ]
     }
 
-    def get(summary: str, schema_ref: str, params: list | None = None) -> dict:
+    def get(summary: str, schema_ref: str, params: list | None = None,
+            servers: list | None = None) -> dict:
         op = {
             "summary": summary,
             "responses": {"200": {"description": "OK", "content": {
@@ -809,6 +950,10 @@ def openapi_document() -> dict:
         }
         if params:
             op["parameters"] = params
+        if servers:
+            # The per-station bundle is served from /station/{ICAO}/, not from /api/v1: without
+            # its own server the document's base URL composes a path that does not exist.
+            op["servers"] = servers
         return {"get": op}
 
     def path_param(name: str, example, description: str) -> dict:
@@ -852,28 +997,61 @@ def openapi_document() -> dict:
                 "The station_id=ALL slice of the scores table.",
                 "#/components/schemas/Table"),
             "/leaderboard/{view}.json": get(
-                "One pre-ranked leaderboard per site view, e.g. 90d-00z-bilinear-tmax.",
+                "One pre-ranked leaderboard per site view, e.g. 90d-00z-bilinear-t2.",
                 "#/components/schemas/Leaderboard",
-                [path_param("view", "90d-00z-bilinear-tmax",
-                            "{window}-{init}z-{method}-{variable}")]),
+                [path_param("view", "90d-00z-bilinear-t2",
+                            "{window}-{init}z-{method}-{variable}; window is one of "
+                            f"{'/'.join(WINDOWS)}, variable one of {'/'.join(VARIABLES)}")]),
             "/station/{station}/cards.json": get(
                 "The per-station bundle: every published aggregate for the station under "
                 "`scores`, and one entry in `cards` per model and lead day with that card's "
                 "pairwise comparisons and daily error series. A permanent-link page addresses "
-                "its card by fragment, e.g. /station/KNYC/cards.json#gfs-1.",
+                "its card by fragment, e.g. /station/KNYC/cards.json#gfs-1. This one file is "
+                "served from the site root, not from /api/v1.",
                 "#/components/schemas/Card",
                 [path_param("station", "KNYC",
-                            "ICAO identifier, or ALL for the aggregate")]),
+                            "ICAO identifier, or ALL for the aggregate")],
+                servers=[{"url": SITE}]),
             "/pairwise/latest.json": get(
                 "Paired model-vs-model MAE differences on common days.",
                 "#/components/schemas/Table"),
             "/stations.json": get("Station metadata.", "#/components/schemas/Envelope"),
             "/models.json": get("Model registry.", "#/components/schemas/Envelope"),
-            "/status.json": get("Pipeline completeness report.",
-                                "#/components/schemas/Envelope"),
+            "/status.json": get(
+                "Pipeline completeness report. Unlike every score response this one is not an "
+                "envelope: it has no window, units, method or truth block, because it describes "
+                "which runs and observations arrived, not a score.",
+                "#/components/schemas/Status"),
+            "/diagnostics.json": get(
+                "Diurnal-structure diagnostic for station_id=ALL over the 90d, 00Z, bilinear "
+                "slice: per-model bias at each of the four synoptic instants, bias against lead "
+                "day, and the sampling penalty bias(*_cli) - bias(*_s). Reported without "
+                "attribution (METHODOLOGY §10.2).",
+                "#/components/schemas/Diagnostics"),
         },
         "components": {"schemas": {
             "Envelope": envelope,
+            "Status": {
+                "type": "object",
+                "description": "Data-completeness report (see castcheck/status.py). Additional "
+                               "properties are permitted: the report grows as the pipeline does.",
+                "properties": {
+                    "schema_version": {"type": "string"},
+                    "methodology_version": {"type": "string"},
+                    "generated_at": {"type": "string", "format": "date-time"},
+                    "as_of": {"type": ["string", "null"], "format": "date"},
+                    "days": {"type": "integer"},
+                    "ok": {"type": "boolean"},
+                    "n_stations": {"type": "integer"},
+                    "n_gaps": {"type": "integer"},
+                    "n_current_gaps": {"type": "integer"},
+                    "n_pending": {"type": "integer"},
+                    "gaps_today": {"type": "array", "items": {"type": "string"}},
+                    "models": {"type": "array", "items": {"type": "object"}},
+                    "truth": {"type": "array", "items": {"type": "object"}},
+                    "uptime": {"type": "object"},
+                },
+            },
             "Table": table,
             "Leaderboard": {
                 "allOf": [
@@ -894,6 +1072,31 @@ def openapi_document() -> dict:
                                 "bias": {"type": ["number", "null"]},
                                 "permalink": {"type": "string"},
                             },
+                        }},
+                    }},
+                ]
+            },
+            "Diagnostics": {
+                "allOf": [
+                    {"$ref": "#/components/schemas/Envelope"},
+                    {"type": "object", "properties": {
+                        "scope": {"type": "string"},
+                        "attribution": {"type": "string"},
+                        "hourly_bias": {"type": "object", "properties": {
+                            "variables": {"type": "array", "items": {"type": "string"}},
+                            "hours_utc": {"type": "array", "items": {"type": "integer"}},
+                            "lead_day": {"type": "integer"},
+                            "rows": {"type": "array", "items": {"type": "object"}},
+                        }},
+                        "bias_by_lead": {"type": "object", "properties": {
+                            "variable": {"type": "string"},
+                            "lead_days": {"type": "array", "items": {"type": "integer"}},
+                            "rows": {"type": "array", "items": {"type": "object"}},
+                        }},
+                        "sampling_penalty": {"type": "object", "properties": {
+                            "lead_day": {"type": "integer"},
+                            "pairs": {"type": "array", "items": {"type": "object"}},
+                            "rows": {"type": "array", "items": {"type": "object"}},
                         }},
                     }},
                 ]

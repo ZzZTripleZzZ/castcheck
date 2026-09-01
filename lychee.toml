@@ -1,0 +1,49 @@
+# Configuration for the weekly link check (.github/workflows/links.yml).
+#
+# What belongs here is a URL that a *browser* resolves fine but a CI runner cannot: a host that
+# blocks datacentre IPs, one that demands a login, or one whose rate limiter answers a bare GET with
+# 403. Suppressing anything else defeats the point of the check — if a link is genuinely dead, the
+# fix is to update the document.
+
+# Retry a bit harder than the default before believing a host is down; a single 503 from an
+# overloaded government server is not link rot.
+max_retries = 2
+retry_wait_time = 4
+timeout = 30
+max_concurrency = 4
+
+# 429 is a rate limiter, not a broken link. 206 is a range response from a large PDF.
+accept = ["200", "206", "429"]
+
+# HEAD is refused by a surprising number of government and publisher hosts; ask for the document.
+method = "get"
+# Some hosts (weather.gov among them) serve a redirect chain before the file.
+max_redirects = 10
+
+exclude = [
+  # Kalshi: the settlement-market pages behind the `market_city` column. Cloudflare-protected and
+  # geofenced, so CI gets a 403 from every runner while the link works for a reader. Listed even
+  # though no document links there today — the station rationale in METHODOLOGY §1 is one edit away
+  # from citing a contract page, and a check that starts failing the week someone adds a link is a
+  # check people learn to ignore.
+  "^https?://([a-z0-9-]+\\.)*kalshi\\.(com|co)/",
+
+  # Login walls: these resolve to a sign-in page with a 200, or refuse CI outright. Neither answer
+  # says anything about whether the target still exists.
+  "^https?://([a-z0-9-]+\\.)*huggingface\\.co/settings",
+  "^https?://([a-z0-9-]+\\.)*kaggle\\.com/",
+  "^https?://([a-z0-9-]+\\.)*bsky\\.app/",
+  "^https?://([a-z0-9-]+\\.)*x\\.com/",
+  "^https?://([a-z0-9-]+\\.)*twitter\\.com/",
+  "^https?://([a-z0-9-]+\\.)*linkedin\\.com/",
+
+  # Placeholders in documentation prose, not addresses.
+  "^https?://castcheck\\.zifanzhang\\.com/api/v1/\\.\\.",
+  "example\\.com",
+  "localhost",
+  "127\\.0\\.0\\.1",
+
+  # Anchors into our own single-page documents: lychee cannot see a heading that the site build
+  # generates, and the site build has its own anchor test (tests/test_site.py).
+  "^https?://castcheck\\.zifanzhang\\.com/[a-z/]*#",
+]

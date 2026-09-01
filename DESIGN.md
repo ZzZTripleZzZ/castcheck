@@ -1,4 +1,4 @@
-# CastCheck — Engineering Design (v0.1)
+# CastCheck — Engineering Design (methodology v0.3.1, schema v0.3)
 
 Read `METHODOLOGY.md` first; this document turns it into code contracts. Implementers (human or agent) must not change the contracts below without editing this file in the same change.
 
@@ -28,12 +28,16 @@ castcheck/                 python package
     nws_cli.py             CLI product discovery/parsing (api.weather.gov + IEM AFOS archive)
     nws_cf6.py             CF6 monthly parsing
     nws_obs.py             hourly station observations (fallback / QC)
+    iem_asos.py            IEM ASOS archive: routine METARs for truth_instant (§10.1)
   derive.py                station values → sampled/native daily extremes per (model, init, station, lead_day)
-  truth.py                 assemble truth table from CLI/CF6/obs with first-final policy and qc flags
+  truth.py                 assemble truth_daily from CLI/CF6/obs with first-final policy and qc flags
+  truth_instant.py         truth_instant: the METAR nearest each synoptic hour, ±35 min (§10.1)
+  merge.py                 shared join helpers for forecast values × truth
   verify.py                scores, bootstrap CIs, pairwise comparisons, persistence baseline
   site/
     build.py               static site generator (Jinja2) → public/
     templates/*.html
+    svg.py                 inline SVG charts and maps drawn at build time
     assets/                css, small js (charts drawn client-side from JSON; no build step)
   api.py                   JSON export → public/api/v1/...
   schedule.py              availability deadlines shared by cli.plan_runs and status.build
@@ -51,6 +55,10 @@ scripts/
   commit_data.sh           commit + push data/ from a workflow, retrying the rebase/push race
   run_daily.sh             local mirror of the daily pipeline (launchd)
   backfill_local.sh, truth_backfill_local.sh   detached local backfills
+  release_local.sh         build + deploy the site from a laptop when Actions is unavailable
+  clean_conflict_copies.sh delete the "name 2.parquet" copies a syncing filesystem leaves behind
+  health_gaps.py           gap report over the archive, independent of status.py
+  crosscheck_grid.py, crosscheck_verify.py, crosscheck_bootstrap.py   independent recomputations (§8)
   launchd/                 local backup schedules
 tests/                     pytest; network tests marked @pytest.mark.network
 .github/workflows/         cron pipelines (see §7)
@@ -67,8 +75,10 @@ class Station:
     cli_pil: str       # AFOS pil, e.g. "CLINYC"
     tz: str            # IANA tz; used ONLY to derive the fixed standard offset
     std_offset_h: int  # e.g. -5; computed once in scripts/build_stations.py and frozen
-    lat: float; lon: float; elev_m: float | None
-    kalshi: str | None # informational
+    lat: float | None; lon: float | None; elev_m: float | None
+    market_city: str | None   # informational; the `kalshi` field of v0.2 (§10.4)
+    iem_id: str | None        # IEM ASOS archive id, frozen per station (§10.1)
+    grid_elev_m: float | None # mean elevation of the 0.25° cell (§10.4); dz_m is a property
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -83,7 +93,8 @@ class ModelSpec:
 
 ## 3. Data model (parquet, long format)
 
-All tables carry `schema_version: str` (currently `"0.1"`) and `methodology_version: str`.
+All tables carry `schema_version: str` (currently `"0.3"`, `castcheck.SCHEMA_VERSION`) and
+`methodology_version: str` (currently `"0.3.1"`, `castcheck.METHODOLOGY_VERSION`).
 
 ### 3.1 `forecast_values` — one row per extracted value
 Path: `data/forecast_values/model_id=<id>/year_month=<YYYY-MM>.parquet` (partition by init month).
@@ -126,6 +137,9 @@ Path: `data/truth_daily/year=<YYYY>.parquet`.
 ### 3.3 `daily_forecasts` — derived, one row per (model, init, station, lead_day)
 Path: `data/daily_forecasts/model_id=<id>/year=<YYYY>.parquet`.
 
+The authoritative column list is `castcheck.store.DAILY_COLUMNS`; this table must be edited in the
+same change as that constant.
+
 | column | type |
 |---|---|
 | model_id, model_version, init_time, station_id | as above |
@@ -136,10 +150,24 @@ Path: `data/daily_forecasts/model_id=<id>/year=<YYYY>.parquet`.
 | tmax_native_c, tmin_native_c | float32 (NaN if model has no native field) |
 | method | `bilinear` \| `nearest` |
 | missing_reason | str |
+| tmax_obs_s_c, tmin_obs_s_c | float32 — the observed max/min of the *same* four instants, the truth for `tmax_s`/`tmin_s` (v0.3, METHODOLOGY §2.3) |
+| n_obs_samples | Int8 (0–4) — how many of the four observations were present; a day is scored like for like only at 4 |
+| native_overhang_h | Int8, hours — the overhang the native bucket run actually realised (METHODOLOGY §2.4), 0 when there is no native value |
+| schema_version, methodology_version | str |
 
 ### 3.4 `scores` — published aggregates
 Path: `data/scores/latest.parquet` (overwritten daily), `data/scores/pairwise_latest.parquet`, and a
 dated snapshot `data/scores/history/<YYYY-MM-DD>.parquet`.
+
+**History retention.** A snapshot is a few MB and one is written every day, so an unpruned history
+grows by roughly a gigabyte a decade inside a git repository that every workflow run has to clone.
+`castcheck prune-history` (run by `publish.yml` immediately after `daily`, in the same commit that
+adds the day's snapshot) keeps **every snapshot from the last 90 days** and **the 1st of every month
+forever**, and deletes the rest. That is dense enough near the present to bisect a regression day by
+day, and dense enough far from it to plot a decade of monthly milestones. Files whose name is not a
+plain `YYYY-MM-DD.parquet` — conflict copies, anything a human put there — are never touched. The
+retention window is `cli.HISTORY_KEEP_DAYS`; the rule itself is the pure `cli._history_prune_plan`,
+which is what the tests exercise against a fixed date.
 
 The authoritative column list is `castcheck.verify.SCORE_COLUMNS`; this table must be edited in the
 same change as that constant.
@@ -239,11 +267,15 @@ castcheck [-v] fetch   --model ifs_hres --init 2026-08-30T00   [--stations KNYC,
 castcheck fetch-latest [--lookback-days 3] [--workers 3] [--models gfs,ifs_hres] [--min-retry-h 3]
 castcheck backfill gfs 2024-01-01 2024-03-31 [--workers 2] [--no-skip-existing]
 castcheck truth    --date 2026-08-29         # CLI first-final for all stations (+ obs fallback)
-castcheck truth-backfill 2024-01-01 2024-12-31 [--stations KNYC]   # IEM
+castcheck truth-backfill 2024-01-01 2024-12-31 [--stations KNYC]   # IEM AFOS
+castcheck truth-instant --date 2026-08-29     # observed 00/06/12/18 UTC, api.weather.gov (recent days)
+castcheck truth-instant-backfill 2024-01-01 2024-12-31             # the same, from the IEM ASOS archive
+castcheck truth-qc                            # re-check stored CLI extremes against truth_instant (§3.3)
 castcheck derive                              # values → daily_forecasts
 castcheck verify                              # → scores, pairwise
 castcheck build-site                          # → public/
 castcheck status [--no-fail-on-gaps]          # → public/api/v1/status.json (+ exit 1 if *due* gaps today)
+castcheck prune-history [--keep-days N]       # thin data/scores/history/ (§3.4)
 castcheck daily                               # derive → verify → build-site
 castcheck publish hf|kaggle|bluesky [--dry-run]   # optional, token-gated
 ```
@@ -289,11 +321,22 @@ Charts: minimal inline SVG or a tiny client-side script reading the JSON; no fra
 
 | workflow | schedule (UTC) | steps |
 |---|---|---|
-| `fetch.yml` | 05:00, 06:00, 08:00, 09:30 (00Z cycle); 18:00, 21:00, 23:00 (12Z cycle) | `fetch-latest` (each run only fetches what is new) |
-| `truth.yml` | 10:30, 16:00 | `truth` (yesterday) + `truth --date` two days ago for corrections |
-| `publish.yml` | 11:00 | `daily` (= `derive` → `verify` → `build-site`) → `status --no-fail-on-gaps` → Cloudflare Pages deploy → HF/Kaggle/Bluesky (each gated on its secret) → commit data shards |
+| `fetch.yml` (daily) | 05:00, 06:00, 08:00, 09:30 (00Z cycle); 18:00, 21:00, 23:00 (12Z cycle) | `fetch-latest --workers 3` (each run only fetches what is new) |
+| `fetch.yml` (sweep) | **03:00 Sun** | `fetch-latest --lookback-days 10 --min-retry-h 0` — one weekly pass that re-asks upstream for everything still incomplete in ten days |
+| `truth.yml` | 10:30, 16:00 | `truth` (yesterday) + `truth --date` two days ago + `truth-instant` + `truth-instant-backfill` (10 d) + `truth-qc --start` (15 d) |
+| `publish.yml` | 11:00 | `daily` (= `derive` → `verify` → `build-site`) → `status --no-fail-on-gaps` → `prune-history` → Cloudflare Pages deploy → HF/Kaggle/Bluesky (each gated on its secret) → commit data shards |
+| `health.yml` | **12:30** | `status --no-fail-on-gaps` → `scripts/health_gaps.py`; opens/updates/closes one `data-gap` issue (§7.4) |
+| `links.yml` | **09:00 Mon** | lychee over the deployed site plus the outbound links in `README.md` and `METHODOLOGY.md`; opens/closes a `link-rot` issue |
+| `deps.yml` | **04:00 on the 1st** | `uv lock --upgrade` → ruff + eccodes import + full test suite → opens a **pull request** if the lock changed (never auto-merged) |
+| `consistency.yml` | **13:00 on the 2nd** | `derive --full` + `verify` on the pinned snapshot → `crosscheck_verify.py --compare-incremental`; opens/closes a `consistency` issue (§7.5) |
 | `backfill.yml` | manual dispatch | ranges per model |
 | `test.yml` | push / PR | `ruff check .` → import `eccodes`/`cfgrib` → `pytest -q -m "not network"` |
+| `_failure-issue.yml` | called, never scheduled | the shared `if: failure()` handler every workflow above ends with (§7.4) |
+
+Every time in that table is UTC and every one is deliberate: `health.yml` is after `publish.yml` has
+committed the day's data, `consistency.yml` is on the 2nd so a `publish.yml` run on both the 1st and
+the 2nd has already written the scores it compares against, and `deps.yml` is at 04:00 — the only
+hour of the day with no fetch, truth or publish job in it.
 
 **Cron and availability.** A run is fetched once `init + availability_delay` has passed, where the
 delay is per source (GFS 5.5 h, ECMWF 8 h) and, for AIWP, per initial field (GFS-initialised 6 h,
@@ -384,6 +427,120 @@ hitting the same mirror: 17 requests to `ecmwf-forecasts.s3.amazonaws.com`, **8 
 (47 %), 8 retries, 0 given up**, 16/16 values present; the host interval rose to the 5 s cap and one
 summary line was logged. The portal (`data.ecmwf.int`) served 9 requests with no throttling.
 
+### 7.4 Alerting — nobody is watching the Actions tab
+
+A pipeline meant to run for ten years unattended needs its failures to arrive somewhere a person
+actually looks. Two mechanisms, both writing to GitHub issues, both self-closing:
+
+**Workflow failure → `pipeline-failure` issue.** Every workflow ends with a job that calls the shared
+reusable workflow `.github/workflows/_failure-issue.yml` under `if: failure()`. Deduplication is by
+*(workflow, UTC day)*: the first failure of a workflow on a day opens
+`[pipeline-failure] <workflow> failed on <date>`, and every later failure of the same workflow that
+day is appended as a **comment**. A day of flapping is then one thread instead of twenty issues, and
+the issue list stays a list of bad days. The handler does no `actions/checkout` — it has to work on
+the run where the checkout is what failed — so its script is inline and its only tool is the runner's
+`gh`. `test.yml` calls it only for pushes to `main`; a red PR check is already in front of the person
+who caused it, and an issue per red PR would train people to ignore the label.
+
+Because a reusable workflow may never request more permission than its caller, and every data
+workflow sets `permissions: {contents: write}` at the workflow level, each calling job overrides it
+with `permissions: {contents: read, issues: write}`.
+
+**Data overdue → `data-gap` issue.** `health.yml` (12:30 UTC daily) recomputes `status.json` from the
+committed `data/` — not from the deployed site, so it still works on a day when the Cloudflare deploy
+is what broke — and hands it to `scripts/health_gaps.py`. That script asks the sharper question
+`castcheck status` cannot: not "is anything missing right now" (at 12:30 a 12Z run is legitimately
+absent, and one failed fetch is picked up an hour later) but **"has anything been overdue for more
+than 24 h"**. It reads the per-day grids rather than `current_gaps`, because `current_gaps` only
+covers today while a slot stuck since Tuesday is exactly what this looks for; each grid row already
+carries the `due_at` that `castcheck/schedule.py` computed, so "how long overdue" is read off the data
+and no state has to be carried between runs. Exit code 2 opens or updates a single `data-gap` issue,
+exit code 0 closes it.
+
+One deliberate narrowing: only slots whose deadline passed within the last **7 days** can raise the
+alarm. An in-flight backfill leaves months of legitimately empty slots behind it, and an alarm that
+counted them would be red the day it was switched on and stay red forever — which is the same as
+having no alarm. The older holes are still counted in the issue body, so the number never silently
+disappears.
+
+### 7.5 Self-checks — catching what does not fail loudly
+
+`deps.yml` (04:00 on the 1st) runs `uv lock --upgrade`, then ruff, the eccodes/cfgrib import check and
+the full test suite against the new lock, and opens a **pull request** with a table of the version
+changes. It never merges. A dependency bump that silently moves a published number is precisely the
+class of error this project exists to make visible, so a human reads the diff; the PR body says to
+dispatch `consistency.yml` on the branch if numpy, pandas, pyarrow, xarray or eccodes moved. (Needs
+"Allow GitHub Actions to create and approve pull requests" enabled in the repository settings.)
+
+`links.yml` (09:00 Monday) walks the deployed site's key routes and every outbound link in `README.md`
+and `METHODOLOGY.md` with lychee. A verification project's credibility rests on its citations
+resolving, and over ten years the NWS reorganises its product pages and publishers move their DOIs.
+The rules live in `lychee.toml` rather than in the workflow's args, so they are reviewable in a diff:
+excluded there are Kalshi's market pages (Cloudflare-protected and geofenced — a 403 from every
+runner, a working link for a reader) and the login-walled hosts, which answer a signed-out GET with a
+sign-in page and say nothing about whether the target exists.
+
+`consistency.yml` (13:00 on the 2nd) is the one that guards the numbers themselves. The daily pipeline
+is incremental by necessity — `derive --since 14` reopens two weeks of initialisations and upserts
+them, which is what makes a ten-year pipeline affordable — and that means a bug in the upsert path, a
+dtype that rounds, or a shard written by an older code version would drift the published scores a
+little at a time, invisibly. So once a month the whole archive is re-derived from `forecast_values`,
+re-scored, and required to reproduce the incremental answer to **1e-6** on `n`, `mae`, `bias`, `rmse`,
+the hit rates, `mae_debiased` and `skill_persistence` (`scripts/crosscheck_verify.py
+--compare-incremental`). A row present on only one side is a failure too, not something to skip.
+
+The comparison is only meaningful if both sides see the same tables, so the workflow first pins
+`data/` to the commit that last wrote `data/scores/latest.parquet` (`git checkout <sha> -- data/`,
+code stays at HEAD). `verify` takes its `as_of` — and therefore the 30d/90d/365d window edges — from
+`max(climo_date)` in the data rather than from the clock, so with the same snapshot in front of them
+the two paths must agree exactly. Without the pin, forecasts that arrived between the 11:00 publish
+and 13:00 would land in the full recompute only, and every window would "disagree" for a reason that
+is not a bug.
+
+`health.yml`, `links.yml` and `consistency.yml` all stay **out of** the `data-writes` concurrency
+group and hold `contents: read`. None of them commits, and a monitor that could be blocked by the very
+job it is monitoring is not a monitor.
+
+### 7.6 Hugging Face history — the annual squash
+
+`publish/hf.py` pushes one commit a day, and because every push rewrites the same parquet shards, a
+year of pushes is also a year of *superseded* blobs. The Hub keeps every blob forever, so an
+un-squashed decade would make `git clone` of the dataset download ten years of dead revisions to
+reconstruct one day's table. `maybe_squash()` therefore calls `super_squash_history` once a year, on
+1 January, before that day's upload.
+
+This is **irreversible and non-fast-forward**: every past commit SHA disappears, and anyone who pinned
+`revision="<sha>"` gets a 404 afterwards. That is the deliberate trade, and it is why CastCheck's
+citable snapshots are the dated files in `data/scores/history/` and the tagged releases of the *code*
+repo — never Hub commit SHAs. Two safety properties: it is idempotent (after a squash the repo has one
+commit, so the `> 1` test is false for every later push that day), and a squash that fails or cannot
+be listed returns a note and lets the upload proceed, because housekeeping must never cost a day of
+data. `CASTCHECK_HF_SQUASH=1` forces an attempt on any date, `=0` disables it for anyone mirroring to
+a repo whose history they want kept.
+
+### 7.7 Timeouts
+
+`timeout-minutes` is set from measured cost with room for a growing archive, not guessed. From
+`data/raw/last_run.json` on 2026-09-01: `fetch-latest` 300 s for 22 runs, `derive --full` 103 s,
+`verify` 586 s, `build-site` 1312 s, `daily` 2002 s.
+
+| workflow | timeout | basis |
+|---|---|---|
+| `fetch.yml` (daily) | 50 min | ~5 min measured; the headroom is for the retry ladders when a host is throttling (§7.3 measured 47 % `503` from one ECMWF mirror) |
+| `fetch.yml` (sweep) | 120 min | ~5x the daily pass: ten days of slots, and `--min-retry-h 0` means it cannot skip what it already tried this morning |
+| `truth.yml` | 20 min | measured ~70 s for all five steps; text products, not grids |
+| `publish.yml` | 90 min | `daily` alone is ~33 min and grows with the archive — the previous 40 min left no room. 90 is ~2.5x current cost and far below the 6 h job ceiling |
+| `health.yml` | 30 min | one `status` build over the completeness window |
+| `consistency.yml` | 180 min | ~7x the measured `derive --full` + `verify` + comparison; the right multiple for something that runs monthly on an archive that grows all year |
+| `deps.yml` | 45 min | a cold `uv sync` plus the full test suite |
+| `links.yml` | 20 min | ~30 URLs at concurrency 4 |
+| `_failure-issue.yml` | 10 min | two `gh` calls |
+
+Every third-party action is pinned to a **40-character commit SHA** with the human-readable tag in a
+trailing comment (`actions/checkout`, `astral-sh/setup-uv`, `cloudflare/wrangler-action`,
+`lycheeverse/lychee-action`). `actionlint` — with `shellcheck` enabled, which is where the inline
+`run:` scripts get checked — is clean across all ten workflow files.
+
 ## 8. Testing
 
 - Unit tests with synthetic grids for `grid.py`, fixed-date cases for `climo_day.py` (EST/CST/MST/PST/Phoenix, DST and non-DST dates), CLI parsing fixtures (final vs intermediate report, corrected report, missing `M`), `verify.py` on a toy dataset with known MAE/bias and a deterministic bootstrap seed.
@@ -408,7 +565,8 @@ External review (meteorologist/statistician, see `docs/06-external-review-v02.md
 *sampled* daily extremes against the *true* NWS extremes makes the headline metric depend on each model's
 own diurnal amplitude, and that the shared-resampling bootstrap gives unstable intervals for sparse groups.
 v0.3 fixes both. Contracts below are binding for the implementation round; `SCHEMA_VERSION` → `"0.3"`,
-`METHODOLOGY_VERSION` → `"0.3"`.
+`METHODOLOGY_VERSION` → `"0.3"`, since raised to `"0.3.1"` by the CLI plausibility check
+(METHODOLOGY §3.3), which changed published values but not this schema.
 
 ### 10.1 New truth table `truth_instant` (observed 2 m temperature at the common sample instants)
 Path `data/truth_instant/year=<YYYY>.parquet`, key `(station_id, valid_time)`.

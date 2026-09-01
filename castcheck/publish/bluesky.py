@@ -160,9 +160,13 @@ def post_text(sel: pd.DataFrame, window: str) -> str:
     """The post body: the result first, then the caveat, then the link. At most 300 characters."""
     models = sel[sel["model_id"] != PERSISTENCE_ID]  # the baseline is drawn, never announced as best
     usable = models[models["n"] >= MIN_N]
-    best = (usable if len(usable) else models if len(models) else sel).iloc[0]
+    ranked = len(usable) > 0
+    best = (usable if ranked else models if len(models) else sel).iloc[0]
     mae_f = c_to_f_delta(best["mae"])
-    text = (f"Best raw 2 m temperature forecast at lead day 1 over the "
+    # "Best" is over the *ranked* models only. A model with a lower MAE but fewer than MIN_N scored
+    # days is drawn on the chart and can sit above the leader there, so the qualifier is not optional.
+    qualifier = f"of the models with n≥{MIN_N}" if ranked else "on the data so far"
+    text = (f"Best raw 2 m temperature forecast {qualifier} at lead day 1 over the "
             f"{WINDOW_LABEL.get(window, window)}: "
             f"{display_name(best['model_id'])} ({mae_f:.1f} °F MAE, n={int(best['n'])})\n"
             f"Instantaneous values at 00/06/12/18 UTC vs the observation at the same instants. "

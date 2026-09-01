@@ -9,9 +9,13 @@
   <p class="hero__scope hero__scope--lede">Plain static files on a CDN — no server, no keys, no rate limit.
 <code>Access-Control-Allow-Origin: *</code> and
 <code>Cache-Control: public, max-age=3600, stale-while-revalidate=86400</code> on everything under
-<code>/api/</code>. Every response carries <code>schema_version</code>, <code>generated_at</code>,
-<code>data_through</code>, <code>window</code>, <code>units</code>, <code>method</code> and
-<code>truth</code>; every result row can be turned into a permanent link.</p>
+<code>/api/</code>. The per-station bundles are the one exception: they live at
+<code>/station/{ICAO}/cards.json</code>, outside <code>/api/</code>, and are CORS-open but
+revalidated on every request rather than cached for an hour. Every score response carries
+<code>schema_version</code>, <code>generated_at</code>, <code>data_through</code>,
+<code>window</code>, <code>units</code>, <code>method</code> and <code>truth</code>
+(<code>status.json</code> is a completeness report and carries its own fields); every result row
+can be turned into a permanent link.</p>
   <dl class="metastrip">
     <div><dt>Base</dt><dd>{{ site_url }}/api/v1/</dd></div>
     <div><dt>Schema</dt><dd>v{{ schema_version }}</dd></div>
@@ -52,6 +56,11 @@ series. The card's scores are the rows of <code>scores</code> whose <code>model_
 <tr><td><a href="/api/v1/stations.json"><code>stations.json</code></a></td><td>station metadata.</td></tr>
 <tr><td><a href="/api/v1/models.json"><code>models.json</code></a></td><td>model registry incl. the persistence baseline.</td></tr>
 <tr><td><a href="/api/v1/status.json"><code>status.json</code></a></td><td>pipeline completeness report.</td></tr>
+<tr><td><a href="/api/v1/diagnostics.json"><code>diagnostics.json</code></a></td>
+<td>the diurnal-structure diagnostic behind <a href="/diagnostics/">/diagnostics/</a>: per-model
+bias at each of the four synoptic instants, bias against lead day, and the sampling penalty
+<code>bias(*_cli) &minus; bias(*_s)</code>, over the 90-day <code>station_id=ALL</code> slice.
+Published without attribution to any cause.</td></tr>
 <tr><td><a href="/api/v1/openapi.json"><code>openapi.json</code></a></td><td>OpenAPI 3.1 description of the above.</td></tr>
 </tbody>
 </table>
@@ -64,8 +73,9 @@ series. The card's scores are the rows of <code>scores</code> whose <code>model_
 curl -s {{ site_url }}/api/v1/leaderboard/90d-00z-bilinear-t2.json \
   | jq -r '.results[] | [.rank, .model_id, .mae, .bias, .n] | @tsv'
 
-# one permanent-link card
-curl -s {{ site_url }}/api/v1/scores/ALL/gfs/1.json | jq '.scores.columns'
+# one permanent-link card: cards is a list, each entry carrying id = "{model}-{lead}"
+curl -s {{ site_url }}/station/KNYC/cards.json \
+  | jq '.cards[] | select(.id == "gfs-1") | .pairwise.columns'
 
 # is anything missing today?
 curl -s {{ site_url }}/api/v1/status.json | jq '.ok, .n_current_gaps'</pre>
@@ -73,13 +83,15 @@ curl -s {{ site_url }}/api/v1/status.json | jq '.ok, .n_current_gaps'</pre>
 
 <section>
 <h2 id="python">Python</h2>
-<pre class="code">import io, urllib.request, json
+<pre class="code">import urllib.request, json
 import pandas as pd
 
 BASE = "{{ site_url }}/api/v1"
+# The CDN in front of the site rejects the default Python user agent, so name your client.
+UA = {"User-Agent": "castcheck-example/1.0"}
 
 def read(url):
-    with urllib.request.urlopen(url) as r:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=UA)) as r:
         return json.load(r)
 
 def table(payload, block=None):
@@ -103,7 +115,7 @@ print(best[["model_id", "n", "mae", "mae_ci_low", "mae_ci_high", "bias"]])
 
 # the per-day record for one station (°C): one row per model/init/lead/method/variable/day,
 # and four rows a day for the pooled t2 (valid_hour_utc says which instant). One file per station.
-errors = pd.read_csv("{{ site_url }}/data/daily_errors/KNYC.csv.gz")</pre>
+errors = pd.read_csv("{{ site_url }}/data/daily_errors/KNYC.csv.gz", storage_options=UA)</pre>
 <p class="note">MAE, bias, RMSE and the interval bounds are in <strong>°C</strong> in the API and
 the CSVs; the site displays them in °F (multiply a difference by 1.8).</p>
 </section>
@@ -132,7 +144,8 @@ the CSVs; the site displays them in °F (multiply a difference by 1.8).</p>
 
 <section>
 <h2 id="stability">Stability</h2>
-<p>Paths under <code>/api/v1/</code> and the permanent links
+<p>Paths under <code>/api/v1/</code>, the per-station bundles
+<code>/station/{ICAO}/cards.json</code> and the permanent links
 <code>/station/{ICAO}/model/{model_id}/lead/{d}/</code> are fixed. Columns may be
 <em>added</em> within v1; a removal or a change of meaning bumps <code>schema_version</code> and
 appears in the <a href="/data/#changelog">changelog</a>. Numbers change every day as history

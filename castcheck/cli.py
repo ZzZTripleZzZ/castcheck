@@ -43,6 +43,32 @@ AIWP_DELAY_H_BY_INIT_FIELD = schedule.AIWP_DELAY_H_BY_INIT_FIELD
 #: four scheduled fetches a day do not re-download the same permanently-partial run four times.
 DEFAULT_MIN_RETRY_H = 3.0
 
+#: ``data/scores/history/`` retention (DESIGN §3.4): every daily snapshot from the last this-many
+#: days is kept, plus the 1st of every month forever.
+HISTORY_KEEP_DAYS = 90
+
+
+def _history_prune_plan(names, today: date, keep_days: int = HISTORY_KEEP_DAYS) -> list[str]:
+    """The ``data/scores/history`` file names that may be deleted, given today's date.
+
+    Pure, so the retention rule can be tested against a fixed clock without touching the archive:
+    a name is dropped only when it parses as ``YYYY-MM-DD.parquet``, is older than the window, and
+    is not the 1st of a month. Anything unparseable is kept — this function must never be the reason
+    a file nobody recognises disappears.
+    """
+    cutoff = today - timedelta(days=int(keep_days))
+    drop = []
+    for name in names:
+        stem = name[: -len(".parquet")] if name.endswith(".parquet") else name
+        try:
+            d = date.fromisoformat(stem)
+        except ValueError:
+            continue
+        if d >= cutoff or d.day == 1:
+            continue
+        drop.append(name)
+    return sorted(drop)
+
 
 # --------------------------------------------------------------------------- logging / journal
 
@@ -312,7 +338,7 @@ def fetch_latest(lookback_days: int = 3, workers: int = 3,
 
 @app.command()
 def backfill(model: str, start: str, end: str, workers: int = 2, skip_existing: bool = True):
-    """Fetch all inits of a model between two dates (inclusive), e.g. --start 2025-01-01 --end 2025-01-31."""
+    """Fetch all inits of a model between two dates (inclusive), e.g. `backfill gfs 2025-01-01 2025-01-31`."""
     with _journal("backfill") as summary:
         from .store import existing_inits
 
@@ -564,6 +590,42 @@ def status(fail_on_gaps: bool = True):
         summary.append(f"{len(gaps)} gap(s) today")
         if gaps and fail_on_gaps:
             raise typer.Exit(1)
+
+
+@app.command("prune-history")
+def prune_history(
+    keep_days: int = typer.Option(HISTORY_KEEP_DAYS, "--keep-days",
+                                  help="keep every daily snapshot from the last N days"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="list what would be deleted, delete nothing"),
+):
+    """Thin ``data/scores/history/`` (DESIGN §3.4): last ``--keep-days`` days in full, 1st of each
+    month forever, everything else deleted.
+
+    A daily snapshot is ~3 MB, so an unpruned history grows ~1 GB a decade inside a git repo that
+    also has to be cloned by every workflow run. The retention policy keeps the recent record dense
+    enough to debug a regression and the long record dense enough to plot a decade of monthly
+    milestones. Files whose name is not a plain ``YYYY-MM-DD.parquet`` (conflict copies, anything a
+    human dropped there) are never touched.
+    """
+    with _journal("prune-history") as summary:
+        from .config import DATA_DIR
+
+        hist = DATA_DIR / "scores" / "history"
+        names = sorted(p.name for p in hist.glob("*.parquet")) if hist.exists() else []
+        drop = _history_prune_plan(names, _now().date(), keep_days=keep_days)
+        freed = 0
+        for name in drop:
+            path = hist / name
+            freed += path.stat().st_size
+            if not dry_run:
+                path.unlink()
+        verb = "would delete" if dry_run else "deleted"
+        line = (f"{verb} {len(drop)} of {len(names)} snapshot(s), {freed / 1e6:.1f} MB; "
+                f"kept {len(names) - len(drop)} (last {keep_days} days + monthly)")
+        typer.echo(line)
+        for name in drop[:20]:
+            typer.echo(f"  {verb.split()[-1]}: {name}")
+        summary.append(line)
 
 
 @app.command()

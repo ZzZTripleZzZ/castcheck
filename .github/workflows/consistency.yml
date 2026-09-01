@@ -1,0 +1,120 @@
+name: consistency
+# Monthly incremental-vs-full self-check (DESIGN §7).
+#
+# The daily pipeline is incremental by necessity: `derive --since 14` reopens only the last two
+# weeks of initialisations and upserts them into `daily_forecasts`, and `verify` scores whatever
+# that table now holds. That is O(window) instead of O(archive), which is what makes a ten-year
+# pipeline affordable — and it also means a bug in the upsert path, a dtype that silently rounds, or
+# a shard left behind by an older code version would drift the published numbers a little at a time,
+# invisibly, forever. So once a month the whole archive is re-derived from `forecast_values` and
+# re-scored, and every published statistic has to match the incremental answer to 1e-6.
+#
+# The 2nd, at 13:00Z: after `publish.yml` (11:00Z on the 1st and the 2nd) has committed a fresh
+# `data/scores/latest.parquet`, and comfortably clear of the 05:00-09:30Z fetch block.
+on:
+  schedule:
+    - cron: "0 13 2 * *"
+  workflow_dispatch:
+concurrency: { group: consistency, cancel-in-progress: false }
+# Read-only: this workflow recomputes the whole archive in the runner's working tree and must never
+# commit it. It deliberately stays out of the `data-writes` group for the same reason.
+permissions: { contents: read, issues: write }
+jobs:
+  consistency:
+    runs-on: ubuntu-latest
+    # Measured 2026-09-01: derive --full 103 s, verify 586 s, and the comparison reads the full
+    # scores table twice. The naive recomputation in part 1 of crosscheck_verify is the slow half.
+    # 180 min is ~7x the measured cost, which is the right multiple for something that runs once a
+    # month on an archive that grows all year.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0 }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
+      - run: uv sync --frozen
+
+      # Pin data/ to the commit that produced the published scores. `verify` takes its `as_of` — and
+      # therefore the 30d/90d/365d window edges — from max(climo_date) in the data, so the two sides
+      # agree exactly as long as they see the same tables. Without this, forecasts that arrived
+      # between the 11:00Z publish and now would land in the full recompute only and every window
+      # would "disagree" for a reason that is not a bug. Code stays at HEAD; only data/ moves.
+      - name: restore data/ to the snapshot the published scores were computed from
+        run: |
+          set -euo pipefail
+          SHA=$(git log -1 --format=%H -- data/scores/latest.parquet)
+          echo "scores last written by $SHA ($(git log -1 --format=%cI "$SHA"))"
+          git checkout "$SHA" -- data/
+          cp data/scores/latest.parquet "$RUNNER_TEMP/incremental.parquet"
+
+      - name: full re-derive and re-score
+        run: |
+          set -euo pipefail
+          .venv/bin/castcheck derive --full
+          .venv/bin/castcheck verify
+
+      - name: compare with the incremental result
+        id: compare
+        run: |
+          set +e
+          PYTHONPATH=. .venv/bin/python scripts/crosscheck_verify.py \
+            --compare-incremental "$RUNNER_TEMP/incremental.parquet" > compare.txt
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          cat compare.txt
+          { echo '```'; cat compare.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: open or close the consistency issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RC: ${{ steps.compare.outputs.rc }}
+        run: |
+          set -euo pipefail
+          LABEL=consistency
+          TITLE="[$LABEL] incremental and full recompute disagree"
+          gh label create "$LABEL" --color 5319E7 \
+            --description "The monthly full recompute did not reproduce the published scores" || true
+          NUMBER=$(gh issue list --state open --label "$LABEL" --limit 100 --json number,title \
+                   | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | first | .number // empty')
+          if [ "${RC:-1}" = "0" ]; then
+            echo "incremental and full agree"
+            if [ -n "$NUMBER" ]; then
+              gh issue close "$NUMBER" --reason completed \
+                --comment "This month's full recompute reproduces the published scores exactly — closing automatically."
+            fi
+            exit 0
+          fi
+          {
+            echo "The monthly \`derive --full\` + \`verify\` did **not** reproduce the scores the daily"
+            echo "incremental pipeline published. Until this is understood, treat the published"
+            echo "numbers as provisional: this is exactly the class of silent error CastCheck exists"
+            echo "to rule out."
+            echo
+            echo '```'
+            cat compare.txt
+            echo '```'
+            echo
+            echo "Reproduce locally: check \`data/\` out at the commit that last wrote"
+            echo "\`data/scores/latest.parquet\`, copy it aside, then"
+            echo "\`castcheck derive --full && castcheck verify\` and"
+            echo "\`python scripts/crosscheck_verify.py --compare-incremental <copy>\`."
+          } > body.md
+          if [ -n "$NUMBER" ]; then
+            gh issue edit "$NUMBER" --body-file body.md
+            gh issue comment "$NUMBER" --body-file body.md
+          else
+            gh issue create --title "$TITLE" --label "$LABEL" --body-file body.md
+          fi
+
+  report-failure:
+    needs: [consistency]
+    if: failure()
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: consistency
+      note: >-
+        The monthly self-check could not run (a disagreement it *finds* files a `consistency` issue
+        instead). Most likely the full re-derive ran out of memory or time on a grown archive —
+        which is itself worth knowing, because it is the first sign that `derive --full` needs to
+        become chunked.

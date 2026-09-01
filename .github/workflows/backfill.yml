@@ -26,3 +26,17 @@ jobs:
           WORKERS: ${{ inputs.workers }}
       - name: commit data
         run: scripts/commit_data.sh "[data] backfill $MODEL $START..$END"
+
+  report-failure:
+    needs: [backfill]
+    if: failure()
+    # The caller's workflow-level `contents: write` would otherwise cap the reusable
+    # workflow at that one scope, and a reusable workflow may never ask for more than its caller.
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: backfill
+      note: >-
+        Manually dispatched, so someone is probably already watching — the issue exists so a
+        multi-hour backfill that dies at hour five is not discovered a week later. Backfill is
+        idempotent: re-dispatch the same range.

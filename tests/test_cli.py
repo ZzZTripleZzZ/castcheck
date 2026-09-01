@@ -8,7 +8,7 @@ parquet files.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
@@ -300,3 +300,82 @@ def test_a_failing_command_journals_the_exception_type_not_its_raw_text(_journal
     assert entry["status"] == "error"
     assert entry["summary"].startswith("RuntimeError")
     assert "SUPERSECRETVALUE" not in entry["summary"]
+
+
+# --------------------------------------------------------------- prune-history (DESIGN §3.4)
+
+
+def test_prune_plan_keeps_the_recent_window_and_every_first_of_month():
+    """Retention: last 90 days in full, the 1st of each month forever, nothing else."""
+    names = ["2025-01-01.parquet", "2025-01-02.parquet", "2025-06-01.parquet",
+             "2025-06-15.parquet", "2026-05-04.parquet", "2026-06-02.parquet",
+             "2026-08-31.parquet", "2026-09-01.parquet"]
+    today = date(2026, 9, 1)
+    drop = cli._history_prune_plan(names, today, keep_days=90)
+
+    # 2026-06-04 is the cutoff, so 06-02 is outside it and 05-04 well outside.
+    assert drop == ["2025-01-02.parquet", "2025-06-15.parquet",
+                    "2026-05-04.parquet", "2026-06-02.parquet"]
+    # Monthly milestones and everything inside the window survive.
+    for kept in ("2025-01-01.parquet", "2025-06-01.parquet",
+                 "2026-08-31.parquet", "2026-09-01.parquet"):
+        assert kept not in drop
+
+
+def test_prune_plan_boundary_day_is_inclusive():
+    """A snapshot exactly `keep_days` old is inside the window, not on the wrong side of it."""
+    today = date(2026, 9, 1)
+    assert cli._history_prune_plan(["2026-06-03.parquet"], today, keep_days=90) == []
+    assert cli._history_prune_plan(["2026-06-02.parquet"], today, keep_days=90) == \
+        ["2026-06-02.parquet"]
+
+
+def test_prune_plan_never_touches_a_name_it_cannot_parse():
+    """Conflict copies and anything a human dropped in the directory are left alone."""
+    names = ["2026-01-15 3.parquet", "latest.parquet", "notes.txt", "2026-13-99.parquet",
+             "2026-01-15.parquet"]
+    drop = cli._history_prune_plan(names, date(2026, 9, 1), keep_days=90)
+    assert drop == ["2026-01-15.parquet"]
+
+
+def test_prune_history_deletes_exactly_the_planned_files(tmp_path, monkeypatch):
+    from castcheck import config
+
+    hist = tmp_path / "scores" / "history"
+    hist.mkdir(parents=True)
+    for name in ("2025-03-01", "2025-03-02", "2026-08-30", "2026-09-01"):
+        (hist / f"{name}.parquet").write_bytes(b"x" * 1000)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 9, 1, 12, tzinfo=UTC))
+
+    res = runner.invoke(cli.app, ["prune-history"])
+    assert res.exit_code == 0, res.output
+    assert sorted(p.name for p in hist.glob("*.parquet")) == [
+        "2025-03-01.parquet", "2026-08-30.parquet", "2026-09-01.parquet"]
+    assert "deleted 1 of 4" in res.output
+
+
+def test_prune_history_dry_run_deletes_nothing(tmp_path, monkeypatch):
+    from castcheck import config
+
+    hist = tmp_path / "scores" / "history"
+    hist.mkdir(parents=True)
+    (hist / "2025-03-02.parquet").write_bytes(b"x")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 9, 1, 12, tzinfo=UTC))
+
+    res = runner.invoke(cli.app, ["prune-history", "--dry-run"])
+    assert res.exit_code == 0, res.output
+    assert "would delete 1 of 1" in res.output
+    assert (hist / "2025-03-02.parquet").exists()
+
+
+def test_prune_history_is_a_no_op_when_the_directory_is_missing(tmp_path, monkeypatch):
+    """A fresh clone that has never run `verify` must not make the daily workflow fail."""
+    from castcheck import config
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 9, 1, 12, tzinfo=UTC))
+    res = runner.invoke(cli.app, ["prune-history"])
+    assert res.exit_code == 0, res.output
+    assert "deleted 0 of 0" in res.output

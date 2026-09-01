@@ -1,0 +1,94 @@
+name: failure-issue
+
+# Shared failure handler (DESIGN §7). Every scheduled workflow ends with a job that calls this one
+# with `if: failure()`, so a stalled pipeline turns into something a human is notified about rather
+# than a red tick nobody is watching. Ten years of unattended operation is the requirement; an
+# alerting path that only exists in the Actions tab is not one.
+#
+# Deduplication is by (workflow, UTC day): the first failure of the day opens an issue, every later
+# failure of the same workflow on the same day is a comment on it. A day of flapping is then one
+# thread with N comments instead of N issues, and the issue list stays a list of *bad days*.
+#
+# Self-contained on purpose — no `actions/checkout`. The handler has to work on the run where the
+# checkout itself is what failed, and it has to be the cheapest job in the repo (a few seconds), so
+# the script is inline and the only tool it needs is the runner's preinstalled `gh`.
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: "Name of the workflow that failed, as it should read in the issue title"
+        required: true
+        type: string
+      label:
+        description: "Issue label; the workflow creates it on first use"
+        required: false
+        default: pipeline-failure
+        type: string
+      note:
+        description: "Extra context for the issue body (what the workflow is for, what to check)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: open or comment on today's failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ inputs.workflow }}
+          LABEL: ${{ inputs.label }}
+          NOTE: ${{ inputs.note }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          DAY="$(date -u +%F)"
+          TITLE="[$LABEL] $WORKFLOW failed on $DAY"
+
+          # `gh label create` is not idempotent and errors when the label exists, so the failure is
+          # swallowed: a missing label must never be the reason an outage goes unreported.
+          gh label create "$LABEL" --color B60205 \
+            --description "A scheduled CastCheck pipeline failed (opened automatically)" || true
+
+          BODY=$(cat <<EOF
+          **$WORKFLOW** failed.
+
+          | | |
+          |---|---|
+          | run | $RUN_URL |
+          | attempt | $ATTEMPT |
+          | trigger | \`$EVENT\` |
+          | commit | \`$SHA\` |
+          | detected | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
+
+          $NOTE
+
+          Further failures of \`$WORKFLOW\` **today** are added to this issue as comments. Close it
+          once the cause is fixed; the next failure opens a fresh one for that day.
+          EOF
+          )
+
+          NUMBER=$(gh issue list --state open --label "$LABEL" --limit 100 --json number,title \
+                   | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | first | .number // empty')
+
+          if [ -n "$NUMBER" ]; then
+            echo "appending to existing issue #$NUMBER"
+            gh issue comment "$NUMBER" --body "$BODY"
+          else
+            echo "opening a new issue: $TITLE"
+            gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi

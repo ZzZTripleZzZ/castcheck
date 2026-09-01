@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set nav_current = 'monthly' %}
+{% block title %}Monthly reviews — CastCheck{% endblock %}
+{% block description %}One automatically generated page per completed calendar month: the MAE ranking on that month's days, data completeness, QC events, the largest single-day error and any upstream model version change.{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Archive · one page per completed month</p>
+  <h1 class="hero__title">Monthly reviews</h1>
+  <p class="hero__scope hero__scope--lede">A month gets a page once it is over. Each page ranks the
+  models on that month's days alone, states how complete the month's observations were, counts the
+  quality-control flags raised, names the largest single-day error, and lists any upstream model
+  version that first appeared in it. Every sentence on those pages is generated from the tables;
+  none of them is a judgement.</p>
+  <dl class="metastrip">
+    <div><dt>Months published</dt><dd>{{ months|length }}</dd></div>
+    <div><dt>Variable</dt><dd>instantaneous 2 m temperature</dd></div>
+    <div><dt>Lead</dt><dd>day 1</dd></div>
+    <div><dt>Data through</dt><dd>{{ data_through }}</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+  </dl>
+  <ul class="downloads" style="margin-top:var(--sp-4)">
+    <li><a href="/feed.xml"><span class="fmt">ATOM</span> a feed entry per month</a></li>
+    <li><a href="/methodology/#4-scores"><span class="fmt">MD</span> how MAE and bias are defined</a></li>
+  </ul>
+</section>
+
+<section class="panel" id="months">
+  <div class="panel__head">
+    <h2 class="panel__title">Every completed month<span class="lead-tag">newest first</span></h2>
+    <p class="panel__sub">The month currently in progress has no page: a partial month would rank
+    models on a handful of days and then change its own numbers for four weeks. A month appears
+    here on the first build after its last day.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+{% if months %}
+    <div class="table-wrap"><table class="data">
+      <caption>MAE is at lead day 1, 00Z initialization, bilinear interpolation, all stations
+      pooled, computed on that month's days only.</caption>
+      <thead><tr><th scope="col">Month</th><th scope="col" class="is-num">Days</th>
+      <th scope="col">Lowest MAE, among the models scored that month</th>
+      <th scope="col" class="is-num">MAE °F</th>
+      <th scope="col" class="is-num">Systems</th>
+      <th scope="col" class="is-num">Observations</th>
+      <th scope="col" class="is-num">QC flags</th>
+      <th scope="col" class="is-num">Version changes</th></tr></thead>
+      <tbody>
+      {% for m in months %}
+        <tr><th scope="row"><a href="/monthly/{{ m.month }}/">{{ m.month_label }}</a>
+        <span class="sub mono">{{ m.month }}</span></th>
+        <td class="n"><span class="val">{{ m.days }}</span></td>
+        <td>{% if m.leader %}<a href="/model/{{ m.leader.id }}/">{{ m.leader.name }}</a>{% else %}—{% endif %}</td>
+        <td class="n"><span class="val">{% if m.leader %}{{ m.leader.mae }}{% else %}—{% endif %}</span></td>
+        <td class="n"><span class="val">{{ m.n_models }}</span></td>
+        <td class="n"><span class="val">{{ m.completeness }}</span></td>
+        <td class="n"><span class="val">{{ m.qc_total }}</span></td>
+        <td class="n"><span class="val">{{ m.n_versions }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+{% else %}
+    <div class="empty-state">
+      <p>No calendar month has finished with scored days in it yet. The first monthly page is
+      written on the first build after the end of the first complete month.</p>
+    </div>
+{% endif %}
+  </div>
+</section>
+{% endblock %}

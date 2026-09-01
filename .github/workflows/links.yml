@@ -1,0 +1,86 @@
+name: links
+# Weekly link check (DESIGN §7). A verification project's credibility rests on its citations
+# resolving; over ten years the NWS reorganises its product pages, ECMWF moves its open-data docs
+# and a paper's DOI landing page changes host. lychee walks the live site plus the outbound links in
+# README.md and METHODOLOGY.md and reports what has rotted.
+on:
+  schedule:
+    - cron: "0 9 * * 1"     # 09:00Z Monday
+  workflow_dispatch:
+concurrency: { group: links, cancel-in-progress: true }
+permissions: { contents: read, issues: write }
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 1 }
+      - name: check links
+        id: lychee
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          # The site's own key pages plus every outbound link in the two documents a reader is most
+          # likely to follow. The site is checked as deployed, not as built, so a broken Cloudflare
+          # route counts as a broken link.
+          # Everything else (timeouts, retries, accepted statuses and the exclusion list, which is
+          # where the Kalshi and login-walled hosts live) is in lychee.toml, so the rules are
+          # reviewable in a diff instead of buried in a YAML string.
+          args: >-
+            --no-progress
+            --config lychee.toml
+            https://castcheck.zifanzhang.com/
+            https://castcheck.zifanzhang.com/methodology/
+            https://castcheck.zifanzhang.com/status/
+            https://castcheck.zifanzhang.com/api/v1/status.json
+            README.md
+            METHODOLOGY.md
+          output: lychee.md
+          fail: false        # the issue below is the report; a red X adds nothing
+          jobSummary: true
+      - name: open or update the link-rot issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FAILED: ${{ steps.lychee.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          LABEL=link-rot
+          TITLE="[$LABEL] broken links on the site or in the docs"
+          gh label create "$LABEL" --color FBCA04 \
+            --description "A link in the site or docs stopped resolving (opened automatically)" || true
+          NUMBER=$(gh issue list --state open --label "$LABEL" --limit 100 --json number,title \
+                   | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | first | .number // empty')
+          if [ "${FAILED:-0}" = "0" ]; then
+            if [ -n "$NUMBER" ]; then
+              gh issue close "$NUMBER" --reason completed \
+                --comment "All checked links resolve again — closing automatically."
+            fi
+            echo "no broken links"
+            exit 0
+          fi
+          {
+            echo "lychee found unreachable links on $(date -u +%Y-%m-%d)."
+            echo
+            cat lychee.md
+            echo
+            echo "Domains that are *expected* to be unreachable from CI live in \`.lycheeignore.toml\`;"
+            echo "add there rather than suppressing the check if a host simply refuses robots."
+          } > body.md
+          if [ -n "$NUMBER" ]; then
+            gh issue edit "$NUMBER" --body-file body.md
+            gh issue comment "$NUMBER" --body-file body.md
+          else
+            gh issue create --title "$TITLE" --label "$LABEL" --body-file body.md
+          fi
+
+  report-failure:
+    needs: [links]
+    if: failure()
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: links
+      note: >-
+        The link checker itself failed (as opposed to finding broken links, which files a `link-rot`
+        issue instead). Usually the action version or the network, not the site.

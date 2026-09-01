@@ -46,13 +46,13 @@ extreme is a <em>definition</em> and someone checking a claim should not have to
 <li><code>forecast_values</code> — one row per model run, valid time, station, variable and
 interpolation method: the raw 2 m temperature at 00/06/12/18 UTC, before any extreme is taken.
 Parquet shards at <a href="{{ hf_files_url }}">{{ hf_files_url }}</a> under
-<code>forecast_values/year=YYYY/</code>; the signed daily errors derived from them are in
+<code>data/forecast_values/model_id=&lt;model&gt;/year_month=YYYY-MM.parquet</code>; the signed daily errors derived from them are in
 the <code>daily_errors/&lt;station&gt;.csv.gz</code> files above — one row per model,
 initialization, lead day, method, variable and day, and four rows a day for the pooled
 <code>t2</code>, with <code>valid_hour_utc</code> naming the instant.</li>
 <li><code>truth_instant</code> — the observed 2 m temperature at those same four instants: the
 routine METAR nearest the synoptic hour within &plusmn;35 minutes, from the IEM ASOS archive
-(<code>truth_instant/year=YYYY/</code> in the same dataset). This is the truth for the headline
+(<code>data/truth_instant/year=YYYY.parquet</code> in the same dataset). This is the truth for the headline
 <code>t2</code> variables and for <code>tmax_s</code>/<code>tmin_s</code>; the NWS Daily Climate
 Report in <code>truth_daily</code> is the truth for the secondary <code>*_cli</code> variables.</li>
 </ul>
@@ -93,7 +93,7 @@ worked <code>curl</code> and Python examples and <a href="/api/v1/openapi.json">
 <ul>
 <li><strong>CastCheck derived tables and this site</strong> — <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Please cite the permanent link of the page you used.</li>
 <li><strong>CastCheck code</strong> — MIT, <a href="{{ repo_url }}">{{ repo_url }}</a>.</li>
-<li><strong>ECMWF IFS HRES and AIFS Single open data</strong> — <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, © ECMWF. Source: <code>data.ecmwf.int</code> and the AWS Open Data mirror.</li>
+<li><strong>ECMWF IFS HRES and AIFS Single open data</strong> — <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, &copy; ECMWF. Source: <code>data.ecmwf.int</code> and the AWS Open Data mirror. <em>Changes made:</em> the published 0.25&deg; fields are interpolated to a station point and converted to &deg;C; nothing else is altered. ECMWF is not the source of, and does not endorse, the scores on this site.</li>
 <li><strong>NCEP GFS</strong> (AWS <code>noaa-gfs-bdp-pds</code>) — U.S. Government work, public domain.</li>
 <li><strong>NOAA/CIRA AIWP</strong> model output (AWS <code>noaa-oar-mlwp-data</code>) — U.S. Government work, public domain. Cite: Radford, J. T., et al. (2025). Domain-agnostic evaluation of AI weather prediction models. <em>Bulletin of the American Meteorological Society</em>. <a href="https://doi.org/10.1175/BAMS-D-24-0057.1">doi:10.1175/BAMS-D-24-0057.1</a>.</li>
 <li><strong>NWS Daily Climate Report (CLI), CF6 and station observations</strong> — U.S. Government work, public domain, via <code>api.weather.gov</code>.</li>
@@ -107,7 +107,12 @@ they are not the products that ECMWF, NOAA, the NWS or any app vendor issue to e
 <section>
 <h2 id="cite">Cite the dataset</h2>
 <div class="cite">
-  <div class="cite__row"><span class="cite__k">Dataset</span><p class="cite__v">{{ data_citation }}</p></div>
+  <div class="cite__row"><span class="cite__k">Dataset</span><p class="cite__v">{{ data_citation }}
+  &middot; <a href="https://doi.org/10.5281/zenodo.22212363">doi:10.5281/zenodo.22212363</a></p></div>
+  <div class="cite__row"><span class="cite__k">Software archive</span><p class="cite__v">Zenodo record
+  <a href="https://doi.org/10.5281/zenodo.22212363">10.5281/zenodo.22212363</a> — the concept DOI, which
+  always resolves to the latest release. To cite one release, use its version DOI instead
+  (v0.3.3: <a href="https://doi.org/10.5281/zenodo.22237426">10.5281/zenodo.22237426</a>).</p></div>
 </div>
 <p class="note">For a specific number, cite its permanent link instead — every score card carries a
 short and a long citation with the access date.</p>
@@ -115,7 +120,7 @@ short and a long citation with the access date.</p>
 <a href="{{ repo_url }}/blob/main/CITATION.cff"><code>CITATION.cff</code></a> at the repository
 root. Every build stamps the commit it came from — this one is
 <a href="{{ repo_url }}/commit/{{ commit }}"><code>{{ commit }}</code></a>, also in the footer of
-every page — so a citation can name the exact code that produced the number. There is no DOI yet.</p>
+every page — so a citation can name the exact code that produced the number.</p>
 </section>
 
 <section>

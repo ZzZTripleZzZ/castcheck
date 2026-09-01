@@ -100,7 +100,8 @@ def built(dataset, tmp_path_factory):
                          daily=daily, truth=truth, instant=instant, status=report)
     counts = build_site(as_of="2026-08-29", out=out, scores=scores, pairwise=pairwise,
                         daily=daily, truth=truth, instant=instant, stations=STATION_OBJS,
-                        models=MODEL_OBJS, status_report=report, api_written=written)
+                        models=MODEL_OBJS, status_report=report, api_written=written,
+                        truth_instant=make_truth_instant())
     return out, counts, written, report
 
 
@@ -334,8 +335,11 @@ def test_key_routes_exist(built):
     assert counts["leaderboards"] == len(VIEWS) == 48
     assert len(SUBVIEWS) == 8
     assert counts["permalinks"] > 0
+    # the always-present pages: /, methodology, 404, status, stations, models, api, data,
+    # diagnostics, monthly index — plus one page per completed month
     assert counts["pages"] == counts["leaderboards"] + counts["permalinks"] \
-        + len(SUBVIEWS) * counts["stations"] + len(SUBVIEWS) * counts["models"] + 6
+        + len(SUBVIEWS) * counts["stations"] + len(SUBVIEWS) * counts["models"] \
+        + counts["months"] + 9
     assert counts["files"] > counts["pages"]
     assert counts["bytes"] > 0
 
@@ -564,8 +568,11 @@ def test_build_site_without_data_produces_a_page_not_a_crash(tmp_path):
     counts = build_site(as_of="2026-08-30", out=tmp_path, scores=pd.DataFrame(),
                         pairwise=pd.DataFrame(), daily=pd.DataFrame(columns=DAILY_COLUMNS),
                         truth=pd.DataFrame(columns=TRUTH_COLUMNS), stations=STATION_OBJS,
-                        models=MODEL_OBJS)
-    assert counts["pages"] == 7
+                        models=MODEL_OBJS, truth_instant=pd.DataFrame())
+    # …/diagnostics/ and …/monthly/ are in the navigation from the first build, so they are
+    # written with an empty state rather than skipped into a 404
+    assert counts["pages"] == 10
+    assert counts["months"] == 0
     html = (tmp_path / "index.html").read_text()
     assert "no data" in html.lower() or "nothing to score" in html.lower()
     assert FAIRNESS_BANNER in html
@@ -1176,3 +1183,297 @@ def test_404_page_is_generated(tmp_path):
     build_site(as_of="2026-08-31", out=tmp_path, scores=None, permalinks=False)
     html = (tmp_path / "404.html").read_text(encoding="utf-8")
     assert "Page not found" in html and "/stations/" in html
+
+
+# ------------------------------------------------------- /diagnostics/ (METHODOLOGY §10.2)
+
+def test_diagnostics_page_publishes_the_three_cuts(built):
+    out, _, _, _ = built
+    html = (out / "diagnostics" / "index.html").read_text(encoding="utf-8")
+    body = text_of(html)
+    # the three figures the page exists for
+    assert 'id="by-hour"' in html and 'id="by-lead"' in html and 'id="sampling-penalty"' in html
+    # the four synoptic instants, named as variables and as local time
+    for var in ("t2_00z", "t2_18z"):
+        assert var in body, var
+    assert "Local standard time" in body
+    # the sampled/CLI pair and the difference between them
+    assert "tmax_s" in body and "tmax_cli" in body and "Penalty" in body
+
+
+def test_diagnostics_reports_the_phenomenon_without_attributing_it(built):
+    """A7/§10.2: three candidates, no cause, and a link to the document that says so in full."""
+    out, _, _, _ = built
+    html = (out / "diagnostics" / "index.html").read_text(encoding="utf-8")
+    body = text_of(html)
+    assert "not yet attributed" in body
+    for candidate in ("Model diurnal amplitude", "The extreme-sampling penalty",
+                      "The initial conditions"):
+        assert candidate in body, candidate
+    assert "#102-an-unattributed-empirical-observation" in html
+    # nothing on the page claims a mechanism
+    for phrase in ("because", "caused by", "explains", "due to the"):
+        assert f" {phrase} the AI models" not in body.lower(), phrase
+    # and it says the numbers move, so a reader does not quote them as settled
+    assert "rebuilt from scratch on each publication" in body
+    assert "Next rebuild" in body
+
+
+def test_diagnostics_figures_are_accessible_and_have_an_equivalent_table(built):
+    out, _, _, _ = built
+    html = (out / "diagnostics" / "index.html").read_text(encoding="utf-8")
+    charts = [c for c in html.split("<svg")[1:] if 'class="chart"' in c[:60]]
+    assert len(charts) >= 2, "the hour figure and the lead figure are both server-rendered"
+    for chunk in charts:
+        assert 'role="img"' in chunk[:400]
+        assert 'aria-label="' in chunk[:400]
+        assert "<title>" in chunk[:600]
+    # every figure has a table beside it, and the colour is never the only encoding
+    assert html.count("<details") >= 2
+    assert body_has_table(html, "The same figure as a table")
+    assert "labelled at its right-hand end" in text_of(html)
+
+
+def body_has_table(html: str, summary: str) -> bool:
+    return summary in text_of(html) and "<table" in html
+
+
+def test_diagnostics_json_is_the_same_numbers_as_the_page(built):
+    out, _, written, _ = built
+    payload = json.loads((out / "api" / "v1" / "diagnostics.json").read_text())
+    assert written["diagnostics.json"] == 1
+    for key in ("schema_version", "generated_at", "window", "units", "method", "truth"):
+        assert key in payload, key
+    assert payload["hourly_bias"]["hours_utc"] == [0, 6, 12, 18]
+    assert payload["hourly_bias"]["variables"] == ["t2_00z", "t2_06z", "t2_12z", "t2_18z"]
+    assert payload["bias_by_lead"]["variable"] == HEADLINE_VARIABLE
+    ids = {r["model_id"] for r in payload["hourly_bias"]["rows"]}
+    assert {m.model_id for m in MODEL_OBJS} <= ids
+    # the fixture's `cold18` model is 3 °C cold at 18Z and exact elsewhere: the cut has to show it
+    row = next(r for r in payload["hourly_bias"]["rows"] if r["model_id"] == "cold18")
+    at = dict(zip(payload["hourly_bias"]["hours_utc"], row["bias"], strict=True))
+    assert at[18] < -2.5 and abs(at[6]) < 0.5
+    # the penalty is published with the sample size of both sides, never as a bare number
+    pen = payload["sampling_penalty"]["rows"][0]
+    assert "tmax_s_penalty" in pen and "tmax_s_n" in pen and "tmax_cli_n" in pen
+    assert "attribution" in payload
+    assert "is attributed to a cause" in payload["attribution"]
+
+
+def test_diagnostics_openapi_describes_the_endpoint():
+    doc = openapi_document()
+    assert "/diagnostics.json" in doc["paths"]
+    assert "Diagnostics" in doc["components"]["schemas"]
+
+
+# ------------------------------------------------------------------- /monthly/
+
+MONTHS_IN_FIXTURE = ("2026-06", "2026-07")
+
+
+def test_monthly_pages_exist_only_for_completed_months(built):
+    """The month in progress has no page: it would rank models and then change its own numbers."""
+    out, counts, _, _ = built
+    assert (out / "monthly" / "index.html").exists()
+    for month in MONTHS_IN_FIXTURE:
+        assert (out / "monthly" / month / "index.html").exists(), month
+    # data runs to 2026-08-29, so August is not over and gets no page
+    assert not (out / "monthly" / "2026-08").exists()
+    assert counts["months"] == len(MONTHS_IN_FIXTURE)
+    index = (out / "monthly" / "index.html").read_text()
+    for month in MONTHS_IN_FIXTURE:
+        assert f'href="/monthly/{month}/"' in index, month
+    assert 'href="/monthly/2026-08/"' not in index
+
+
+def test_a_monthly_page_ranks_that_months_days_only(built):
+    out, _, _, _ = built
+    html = (out / "monthly" / "2026-07" / "index.html").read_text(encoding="utf-8")
+    body = text_of(html)
+    assert "July 2026" in body
+    # the ranking is over the month's own days, with the coverage of each model beside it
+    assert "Ranked on this month" in body
+    assert "Days" in body and "Coverage" in body
+    # July has 31 days and the fixture scores every one of them
+    assert "31" in body
+    # no interval is quoted for a window that is not one of the published ones
+    assert "no confidence interval is quoted here" in body
+    # every model row links to its permanent page, which is where the intervals do live
+    assert f'href="/station/{ALL_STATIONS}/model/exact/lead/1/"' in html
+
+
+def test_a_monthly_page_states_completeness_qc_and_the_worst_day(built):
+    out, _, _, _ = built
+    html = (out / "monthly" / "2026-07" / "index.html").read_text(encoding="utf-8")
+    body = text_of(html)
+    assert "How complete the month was" in body
+    assert "Instantaneous observations" in body and "Daily-extreme reports" in body
+    # 2 stations x 31 days x 4 instants, all present in the fixture
+    assert "248" in body and "100.0%" in body
+    assert "Quality-control events" in body
+    assert "Largest single-day error" in body
+    assert re.search(r'href="/station/K[AB]{3}/model/\w+/lead/1/"', html)
+    assert "Upstream changes" in body
+
+
+def test_monthly_pages_are_announced_in_the_feed(built):
+    out, _, _, _ = built
+    root = ElementTree.fromstring((out / "feed.xml").read_text())
+    ids = {c.text for e in root if e.tag.endswith("entry")
+           for c in e if c.tag.endswith("id")}
+    for month in MONTHS_IN_FIXTURE:
+        assert f"tag:castcheck,{month}:monthly" in ids, month
+    links = {c.get("href") for e in root if e.tag.endswith("entry")
+             for c in e if c.tag.endswith("link")}
+    assert f"{SITE_URL}/monthly/2026-07/" in links
+
+
+def test_the_two_new_routes_are_in_the_navigation(built):
+    out, _, _, _ = built
+    for rel in ("index.html", "stations/index.html", "monthly/index.html",
+                "diagnostics/index.html"):
+        html = (out / rel).read_text(encoding="utf-8")
+        assert 'href="/diagnostics/"' in html, rel
+        assert 'href="/monthly/"' in html, rel
+    assert 'aria-current="page"' in (out / "monthly" / "index.html").read_text()
+    assert 'aria-current="page"' in (out / "diagnostics" / "index.html").read_text()
+
+
+def test_the_new_pages_survive_a_build_with_no_data(tmp_path):
+    """Neither route may 404 while the record is short, and neither may crash on an empty frame."""
+    build_site(as_of="2026-08-30", out=tmp_path, scores=pd.DataFrame(),
+               pairwise=pd.DataFrame(), daily=pd.DataFrame(columns=DAILY_COLUMNS),
+               truth=pd.DataFrame(columns=TRUTH_COLUMNS), stations=STATION_OBJS,
+               models=MODEL_OBJS, truth_instant=pd.DataFrame())
+    diag = text_of((tmp_path / "diagnostics" / "index.html").read_text())
+    assert "not yet attributed" in diag
+    assert "No instant has enough scored days yet" in diag
+    monthly = text_of((tmp_path / "monthly" / "index.html").read_text())
+    assert "No calendar month has finished" in monthly
+    assert not list((tmp_path / "monthly").glob("2*"))
+
+
+def test_complete_months_never_include_the_month_in_progress():
+    from datetime import date as _date
+
+    from castcheck.site.build import _complete_months
+
+    days = pd.Series(pd.date_range("2026-05-20", "2026-08-15", freq="D"))
+    assert _complete_months(days, _date(2026, 8, 15)) == ["2026-05", "2026-06", "2026-07"]
+    # the last day of a month is enough, one short is not
+    assert _complete_months(days, _date(2026, 7, 31))[-1] == "2026-07"
+    assert _complete_months(days, _date(2026, 7, 30))[-1] == "2026-06"
+    assert _complete_months(pd.Series(dtype="datetime64[ns]"), _date(2026, 8, 15)) == []
+
+
+# ------------------------------------------------------------------- citation
+
+def test_the_long_citation_carries_the_concept_doi(built):
+    """The concept DOI resolves to the newest version, so it is what a citation should name."""
+    from castcheck.site.build import CONCEPT_DOI
+
+    long = citation_long("KAAA", "Alpha Regional", "warm1", 1, "2026-08-29", "2026-08-29")
+    assert f"doi:{CONCEPT_DOI}" in long
+    # the short form stays one line: the permanent URL is the identifier there
+    assert CONCEPT_DOI not in citation("KAAA", "warm1", 1, "2026-08-29")
+    out, _, _, _ = built
+    data = (out / "data" / "index.html").read_text(encoding="utf-8")
+    assert f"doi:{CONCEPT_DOI}" in text_of(data)
+
+
+# ------------------------------------------------------- final-review corrections (G3)
+
+def test_the_star_says_which_family_it_is_the_lowest_of(built):
+    """★ marks the leader among *ranked* models; below MIN_N a group is never in the family."""
+    from castcheck.site.build import _MARK_TITLE
+
+    assert "among ranked models" in _MARK_TITLE["★"]
+    out, _, _, _ = built
+    home = text_of((out / "index.html").read_text())
+    assert f"lowest MAE among ranked models (n >= {MIN_N})" in home.replace("≥", ">=")
+    feed = (out / "feed.xml").read_text()
+    assert "lowest MAE among ranked models" in feed
+
+
+def test_the_schema_table_documents_every_column_of_every_table(built):
+    """A column with no entry printed an em dash where its meaning should be."""
+    from castcheck.site.build import COLUMN_DOCS, COLUMN_DOCS_BY_TABLE
+    from castcheck.store import DAILY_COLUMNS as DC
+
+    for column in ("tmax_obs_s_c", "tmin_obs_s_c", "n_obs_samples", "native_overhang_h"):
+        assert column in DC and COLUMN_DOCS[column][2], column
+    # the same name means different things in different tables, so the docs are per table
+    assert "mx2t3" in COLUMN_DOCS_BY_TABLE["forecast_values"]["variable"][2]
+    assert "ALL" not in COLUMN_DOCS["station_id"][2]
+    assert "ALL" in COLUMN_DOCS_BY_TABLE["scores"]["station_id"][2]
+    assert "not a forecast valid time" in COLUMN_DOCS_BY_TABLE["truth_instant"]["valid_time"][2]
+    assert "ASOS_IEM" in COLUMN_DOCS_BY_TABLE["truth_instant"]["source"][2]
+    out, _, _, _ = built
+    data = text_of((out / "data" / "index.html").read_text())
+    assert "native extreme accumulation window reaches" in data
+    assert f"one pre-built file per leaderboard view ({len(LEADERBOARD_VIEWS)} of them)" in data
+
+
+def test_openapi_paths_resolve_against_a_server_that_serves_them():
+    """cards.json is not under /api/v1; composed against the default server it 404s."""
+    doc = openapi_document()
+    cards = doc["paths"]["/station/{station}/cards.json"]["get"]
+    assert cards["servers"] == [{"url": SITE_URL}]
+    assert doc["servers"] == [{"url": f"{SITE_URL}/api/v1"}]
+    view = doc["paths"]["/leaderboard/{view}.json"]["get"]["parameters"][0]["example"]
+    assert view in {f"{w}-{i:02d}z-{m}-{v}" for w, i, m, v in LEADERBOARD_VIEWS}, \
+        "the example must name a view that is still built"
+    # status.json is a completeness report, not a score envelope
+    status = doc["paths"]["/status.json"]["get"]
+    ref = status["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/Status")
+    props = doc["components"]["schemas"]["Status"]["properties"]
+    for absent in ("window", "units", "method"):
+        assert absent not in props, absent
+    assert "n_current_gaps" in props and "gaps_today" in props
+
+
+def test_pages_state_scope_without_overclaiming(built):
+    out, _, _, _ = built
+    stations = (out / "stations" / "index.html").read_text()
+    assert "#11-how-the-23-stations-were-chosen" in stations
+    body = text_of(stations)
+    assert "New York Central Park" in body and "22 of the" in body
+    assert "all 23 are major city airports" not in body
+    # the persistence baseline is lagged, so "yesterday" is only true at lead day 1
+    home = text_of((out / "index.html").read_text())
+    assert "lead_day days earlier" in home
+    assert "yesterday's observation" not in home
+    # a green status bar next to a bare "Gaps 253" read as 253 open faults
+    status = text_of((out / "status" / "index.html").read_text())
+    assert "Historical gaps" in status and "open today" in status
+    # every numeric column on the permanent link names its unit
+    card = text_of((out / "station" / "KAAA" / "model" / "warm1" / "lead" / "1"
+                    / "index.html").read_text())
+    assert "MAE debiased °F" in card
+
+
+def test_the_lead_day_limitation_matches_the_six_hour_spread():
+    from castcheck.site.build import LIMITATIONS
+
+    lead = next(x for x in LIMITATIONS if "same lead day covers different forecast hours" in x)
+    assert "six hours" in lead and "three hours" not in lead
+
+
+def test_only_a_dated_snapshot_becomes_a_feed_entry(tmp_path, monkeypatch):
+    """A sync conflict copy once put an unparseable timestamp into every reader's feed."""
+    import castcheck.site.build as build_mod
+
+    hist = tmp_path / "data" / "scores" / "history"
+    hist.mkdir(parents=True)
+    for name in ("2026-08-29.parquet", "2026-08-30.parquet", "2026-08-30 2.parquet",
+                 "latest.parquet"):
+        (hist / name).write_bytes(b"")
+    monkeypatch.setattr(build_mod, "REPO_ROOT", tmp_path)
+    entries = build_mod._feed_entries(pd.DataFrame(columns=["station_id", "window", "init_hour",
+                                                           "method", "variable", "lead_day",
+                                                           "model_id", "n", "mae"]),
+                                      {}, "2026-08-30", "2026-08-30T11:00:00+00:00")
+    assert [e["date"] for e in entries] == ["2026-08-30", "2026-08-29"]
+    for e in entries:
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", e["date"])

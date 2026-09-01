@@ -34,21 +34,28 @@ size_categories:
 Independent, automated verification of **raw** 2 m temperature forecasts from operational NWP
 (ECMWF IFS HRES, NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational runs of GraphCast,
 Pangu-Weather, FourCastNet v2 and Aurora from both GFS and IFS initial conditions) at {n_stations}
-U.S. airport stations, scored against the NWS Daily Climate Report (CLI).
+U.S. first-order stations — 22 major airports plus New York Central Park. The headline metric is the instantaneous 2 m temperature at 00/06/12/18 UTC
+against the ASOS observation at the same instants; daily extremes are published as secondary
+variables, both like-for-like and against the NWS Daily Climate Report (CLI).
 
 - Site and permanent links: https://castcheck.zifanzhang.com
 - Methodology v{mv}: https://castcheck.zifanzhang.com/methodology/
 - Code: https://github.com/ZzZTripleZzZ/castcheck
+- Archived: https://doi.org/10.5281/zenodo.22212363
 - Updated daily by an automated pipeline. Last push: {ts}
 
 ## Fairness statement
 These are raw model outputs at 0.25°, without MOS, bias correction, or downscaling. They are not
 equivalent to the post-processed products end users receive, and scores here understate operational
-forecast quality. Daily extremes are computed identically for every model from the common 6-hourly
-instantaneous samples (see methodology §2.3).
+forecast quality. Every model is sampled at the same four instants, and the headline metric compares
+those samples with observations at the same instants, so no part of it depends on a model's own
+diurnal amplitude. The extremes verified against the CLI report (`tmax_cli`, `tmin_cli`) carry a
+sampling penalty whose size does differ between models, so they are secondary and are never used to
+rank (see methodology §2.3).
 
 ## Files (schema v{sv})
 - `data/forecast_values/model_id=*/year_month=*.parquet` — extracted station values (long format)
+- `data/truth_instant/year=*.parquet` — observed 2 m temperature at 00/06/12/18 UTC, with QC flags
 - `data/truth_daily/year=*.parquet` — NWS CLI/CF6/observation truth with first-final policy and QC flags
 - `data/daily_forecasts/model_id=*/year=*.parquet` — derived sampled/native daily extremes per lead day
 - `data/scores/latest.parquet`, `data/scores/pairwise_latest.parquet` — published aggregates with bootstrap CIs
@@ -61,8 +68,10 @@ ds = load_dataset("{repo}", data_files="data/scores/latest.parquet")
 ## Sources and licences
 ECMWF Open Data (CC-BY-4.0) · NOAA/NCEP GFS (public domain) · NOAA/CIRA AIWP (open data; cite
 the AIWP BAMS paper) · NWS climate reports (public domain) · Iowa Environmental Mesonet AFOS archive.
-This dataset is released under CC-BY-4.0; please cite as
-*CastCheck, methodology v{mv}, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD)*.
+ECMWF data is © ECMWF, licensed under CC-BY-4.0 and used unmodified apart from interpolation to the
+station; ECMWF does not endorse this work. This dataset is released under CC-BY-4.0; please cite as
+*CastCheck, methodology v{mv}, doi:10.5281/zenodo.22212363,
+https://castcheck.zifanzhang.com (accessed YYYY-MM-DD)*.
 
 ## Models
 {models}
@@ -106,6 +115,67 @@ def files_to_push() -> list[Path]:
     return keep
 
 
+def squash_is_due(now: datetime, force: str | None = None) -> bool:
+    """Whether :func:`maybe_squash` should consider squashing at ``now``.
+
+    The window is 1 January (UTC) only. ``CASTCHECK_HF_SQUASH`` overrides it: ``1`` forces the
+    attempt on any date (used to run the annual squash by hand after a botched year), ``0`` disables
+    it entirely (used by anyone mirroring to a repo whose history they want kept).
+    """
+    flag = force if force is not None else os.environ.get("CASTCHECK_HF_SQUASH", "")
+    if flag == "1":
+        return True
+    if flag == "0":
+        return False
+    return now.month == 1 and now.day == 1
+
+
+def maybe_squash(api, repo: str, now: datetime | None = None) -> str:
+    """Once a year, collapse the dataset repo's git history into a single commit.
+
+    **Why.** One data commit a day is ~365 commits and — because every push rewrites the same
+    parquet shards — roughly a year of *superseded* shard blobs a year. The Hub keeps every blob
+    forever, so an un-squashed decade would make ``git clone`` of the dataset download ten years of
+    dead revisions to reconstruct one day's table. ``super_squash_history`` throws the dead blobs
+    away and leaves the working tree byte-for-byte identical.
+
+    **Risks — read before changing the schedule.**
+
+    * It is **irreversible and non-fast-forward**: every past commit SHA disappears. Anyone who
+      pinned ``revision="<sha>"`` or ``revision="refs/convert/parquet"`` against an old commit gets
+      a 404 afterwards. That is the deliberate trade: CastCheck's citable snapshots are the dated
+      files inside ``data/scores/history/`` and the tagged releases in the *code* repo, never Hub
+      commit SHAs — see DESIGN §7 and the dataset card.
+    * It cannot be undone by us, only by the Hub's support.
+    * It needs a write token with enough scope; on failure this returns a note and the caller
+      continues to the normal upload, so a squash that is refused never blocks the day's data.
+    * It is run **before** the day's upload, so the first commit of the new year is the one that
+      re-establishes history. Running it after would leave a squash commit as the tip and make the
+      day's data a second commit — same result, one more round trip.
+
+    Idempotent by construction: after a successful squash the repo has exactly one commit, so the
+    ``> 1`` test below is false for every later push on the same day.
+    """
+    now = now or datetime.now(UTC)
+    if not squash_is_due(now):
+        return ""
+    try:
+        commits = api.list_repo_commits(repo_id=repo, repo_type="dataset")
+        n = len(list(commits))
+    except Exception as exc:  # noqa: BLE001 - never let housekeeping break the daily push
+        return f"squash skipped: could not list commits ({exc})"
+    if n <= 1:
+        return f"squash not needed: {repo} already has {n} commit(s)"
+    try:
+        api.super_squash_history(
+            repo_id=repo, repo_type="dataset",
+            commit_message=f"annual history squash {now:%Y-%m-%d} (CastCheck; see DESIGN §7)",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"squash FAILED (continuing with the upload): {exc}"
+    return f"squashed {n} commit(s) of {repo} into one (annual, {now:%Y-%m-%d}); history is gone"
+
+
 def push_dataset(repo: str, private: bool = False, dry_run: bool = False) -> str:
     """Upload the dataset card, METHODOLOGY.md and every committed parquet shard.
 
@@ -128,6 +198,9 @@ def push_dataset(repo: str, private: bool = False, dry_run: bool = False) -> str
 
     api = HfApi(token=tok)
     api.create_repo(repo, repo_type="dataset", private=private, exist_ok=True)
+    squash = maybe_squash(api, repo)
+    if squash:
+        print(squash)  # noqa: T201 - the confirmation line the workflow log must carry
     card_path = REPO_ROOT / ".hf_README.md"
     card_path.write_text(dataset_card(repo), encoding="utf-8")
     api.upload_file(path_or_fileobj=str(card_path), path_in_repo="README.md", repo_id=repo, repo_type="dataset",
@@ -140,4 +213,5 @@ def push_dataset(repo: str, private: bool = False, dry_run: bool = False) -> str
         commit_message=f"data update {datetime.now(UTC):%Y-%m-%d}",
     )
     card_path.unlink(missing_ok=True)
-    return f"pushed to https://huggingface.co/datasets/{repo} ({getattr(info, 'commit_url', info)})"
+    out = f"pushed to https://huggingface.co/datasets/{repo} ({getattr(info, 'commit_url', info)})"
+    return f"{out}\n{squash}" if squash else out

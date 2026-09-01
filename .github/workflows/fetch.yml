@@ -8,13 +8,23 @@ on:
     - cron: "0 18 * * *"    # 18:00Z GFS 12Z
     - cron: "0 21 * * *"    # 21:00Z ECMWF + AIWP GFS-init 12Z
     - cron: "0 23 * * *"    # 23:00Z AIWP IFS-init 12Z
+    - cron: "0 3 * * 0"     # 03:00Z Sunday — weekly deep sweep, see the `sweep` job
   workflow_dispatch:
+    inputs:
+      sweep:
+        description: "Run the 10-day deep sweep instead of the normal 3-day pass"
+        type: boolean
+        required: false
+        default: false
 # One writer at a time across every workflow that commits to data/ (see truth.yml, publish.yml,
 # backfill.yml): they all share this group, so no two runs race on `git pull --rebase && git push`.
 concurrency: { group: data-writes, cancel-in-progress: false }
 permissions: { contents: write }
 jobs:
   fetch:
+    # The seven daily passes. `github.event.schedule` is empty for workflow_dispatch, so a manual run
+    # takes this branch unless it explicitly asks for the sweep.
+    if: github.event.schedule != '0 3 * * 0' && inputs.sweep != true
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -26,3 +36,41 @@ jobs:
       - run: .venv/bin/castcheck fetch-latest --workers 3
       - name: commit data
         run: scripts/commit_data.sh "[data] fetch $(date -u +%Y-%m-%dT%H:%MZ)"
+
+  sweep:
+    # Weekly catch-up for runs that arrived *after* every daily pass had already given up on them:
+    # a NOMADS outage that lasts a day, a CIRA re-post, an ECMWF run republished with a fixed field.
+    # The daily pass looks back 3 days and, to avoid re-downloading the same permanently-partial run
+    # seven times a day, will not retry a stored-but-incomplete run more often than every 3 h
+    # (`DEFAULT_MIN_RETRY_H`). Both of those are exactly what a late arrival needs relaxed, so the
+    # sweep sets `--lookback-days 10 --min-retry-h 0`: one pass a week that re-asks upstream for
+    # everything still incomplete in the last ten days.
+    if: github.event.schedule == '0 3 * * 0' || inputs.sweep == true
+    runs-on: ubuntu-latest
+    # Budget: a daily pass re-checks ~22 runs in ~5 min. The sweep re-asks for up to ~10 days x 24
+    # model/init slots and, unlike the daily pass, cannot skip the ones it already tried this
+    # morning, so ~5x the work plus whatever full downloads the late arrivals turn out to need.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
+      - run: uv sync --frozen
+      - run: .venv/bin/castcheck fetch-latest --lookback-days 10 --min-retry-h 0 --workers 3
+      - name: commit data
+        run: scripts/commit_data.sh "[data] fetch sweep $(date -u +%Y-%m-%d)"
+
+  report-failure:
+    needs: [fetch, sweep]
+    if: failure()
+    # The caller's workflow-level `contents: write` would otherwise cap the reusable
+    # workflow at that one scope, and a reusable workflow may never ask for more than its caller.
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: fetch-forecasts
+      note: >-
+        A single missed pass is normally harmless — the next one looks back three days and the
+        Sunday sweep looks back ten. Investigate if it repeats: check upstream availability
+        (NOMADS / ECMWF open data / CIRA AIWP) before suspecting the fetcher.

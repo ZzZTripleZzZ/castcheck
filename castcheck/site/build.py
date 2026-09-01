@@ -45,7 +45,15 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from .. import METHODOLOGY_VERSION, SCHEMA_VERSION, __version__
-from ..api import SKILL_MIN_COMMON
+from ..api import (
+    DIAGNOSTICS_INIT,
+    DIAGNOSTICS_LEAD,
+    DIAGNOSTICS_METHOD,
+    DIAGNOSTICS_PENALTY_PAIRS,
+    DIAGNOSTICS_WINDOW,
+    SKILL_MIN_COMMON,
+    diagnostics_payload,
+)
 from ..config import (
     PUBLIC_DIR,
     REPO_ROOT,
@@ -80,6 +88,8 @@ except ImportError:  # pragma: no cover - transitional, until truth_instant land
 __all__ = [
     "CLI_VARIABLES",
     "COLUMN_DOCS",
+    "COLUMN_DOCS_BY_TABLE",
+    "CONCEPT_DOI",
     "FAIRNESS",
     "FAIRNESS_BANNER",
     "HEADLINE_VARIABLE",
@@ -105,6 +115,11 @@ ASSETS = HERE / "assets"
 
 SITE_URL = "https://castcheck.zifanzhang.com"
 REPO_URL = "https://github.com/ZzZTripleZzZ/castcheck"
+#: Zenodo *concept* DOI: it always resolves to the newest deposited version, which is what a
+#: citation of the project as a whole should point at.  Each release also has its own version DOI;
+#: the long citation and the dataset citation carry the concept DOI, the one-line short citation
+#: stays one line and carries the permanent URL only.
+CONCEPT_DOI = "10.5281/zenodo.22212363"
 HF_URL = "https://huggingface.co/datasets/castcheck/temperature-verification"
 HF_FILES_URL = f"{HF_URL}/tree/main"
 
@@ -211,9 +226,37 @@ CLI_CAVEAT = (
     "operational relevance and are never used for ranking."
 )
 
+#: Columns whose name is shared across tables but whose *meaning* is not.  ``station_id`` carries
+#: the ``ALL`` pseudo-station only where an aggregate exists; ``variable``, ``valid_time`` and
+#: ``source`` mean different things in the 6-hourly extraction, in the observed instants and in the
+#: daily truth.  Looked up before :data:`COLUMN_DOCS`, which holds the shared default.
+COLUMN_DOCS_BY_TABLE: dict[str, dict[str, tuple[str, str, str]]] = {
+    "forecast_values": {
+        "variable": ("string", "—", "the field this value was extracted from: t2 (instantaneous "
+                     "2 m temperature, the only one that is scored), or one of the models' native "
+                     "extreme fields — mx2t3/mn2t3 and mx2t6/mn2t6 (ECMWF, 3 h and 6 h "
+                     "accumulations) and tmax6/tmin6 (GFS, 6 h). The native fields are diagnostic "
+                     "only (METHODOLOGY §2.4)"),
+    },
+    "truth_instant": {
+        "valid_time": ("timestamp", "UTC", "the synoptic instant the observation belongs to — one "
+                       "of 00/06/12/18 UTC, not a forecast valid time. The timestamp of the report "
+                       "actually used is obs_time, within ±35 min of this"),
+        "source": ("string", "—", "where the observation came from: ASOS_IEM (the Iowa "
+                   "Environmental Mesonet METAR archive) or NWS_API (api.weather.gov, used for "
+                   "the last week, before the archive catches up)"),
+    },
+    "scores": {
+        "station_id": ("string", "—", "ICAO identifier, or ALL for the cross-station aggregate"),
+    },
+    "pairwise": {
+        "station_id": ("string", "—", "ICAO identifier, or ALL for the cross-station aggregate"),
+    },
+}
+
 #: /data/ schema table.  column → (type, unit, meaning)
 COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
-    "station_id": ("string", "—", "ICAO identifier, or ALL for the cross-station aggregate"),
+    "station_id": ("string", "—", "ICAO identifier of the station the row belongs to"),
     "model_id": ("string", "—", "stable model identifier from config/models.yaml"),
     "model_version": ("string", "—", "upstream cycle/version string as advertised by the producer"),
     "init_hour": ("int8", "UTC hour", "model initialization hour, 0 or 12"),
@@ -313,6 +356,16 @@ COLUMN_DOCS: dict[str, tuple[str, str, str]] = {
     "tmin_sampled_c": ("float32", "°C", "min of the four common samples in the climatological day"),
     "tmax_native_c": ("float32", "°C", "daily max from the model's native extreme field (diagnostic)"),
     "tmin_native_c": ("float32", "°C", "daily min from the model's native extreme field (diagnostic)"),
+    "tmax_obs_s_c": ("float32", "°C", "max of the four *observed* instants of the same "
+                     "climatological day — the truth tmax_s is scored against, so that forecast "
+                     "and observation are sampled identically (METHODOLOGY §2.3)"),
+    "tmin_obs_s_c": ("float32", "°C", "min of the four observed instants of the same "
+                     "climatological day — the truth tmin_s is scored against"),
+    "n_obs_samples": ("int8", "count", "how many of the four observed instants were present (0–4); "
+                      "tmax_s/tmin_s are only scored on a day with all four"),
+    "native_overhang_h": ("int8", "hours", "how far past the end of the climatological day the "
+                          "native extreme accumulation window reaches, 0–6; it is why the native "
+                          "comparison is diagnostic only (METHODOLOGY §2.4)"),
     "temp_c": ("float32", "°C", "observed 2 m air temperature at the synoptic instant; empty when "
                "no usable report was found"),
     "obs_time": ("timestamp", "UTC", "timestamp of the report actually used"),
@@ -357,13 +410,18 @@ LIMITATIONS = [
     "Groups with fewer than 30 scored days are published but greyed out and excluded from every "
     "ranking, and no confidence interval is computed below 28 days or 4 bootstrap blocks; early "
     "in a model's record most windows are in that state.",
-    "The same lead day covers different forecast hours at different longitudes: at a UTC−5 station "
-    "lead day 0 spans F06–F24, at a UTC−8 station F12–F30, so western stations are given about "
-    "three hours more lead time in every pooled row.",
+    "The same lead day covers different forecast hours at different longitudes: a climatological "
+    "day begins at local midnight, so at the easternmost station (UTC−5) a lead day starts six "
+    "hours earlier in forecast time than at the westernmost (UTC−8). Every pooled ALL row mixes "
+    "forecast ranges that differ by up to six hours across the station set (§2.5).",
     "The 0.25° AIWP archive is a research product whose GFS-initialized models are produced on "
     "alternating cycles; an initialization the archive never produced is marked as such on "
     "/status/ and is not counted as downtime.",
 ]
+
+#: A publication snapshot is named for its date and nothing else; anything else in the history
+#: directory (a sync conflict copy, an editor backup) is not a publication date.
+_HISTORY_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _CHANGELOG_HEAD = re.compile(r"^-\s+\*\*(?P<v>[0-9][^ ]*)\s*\((?P<d>[^)]*)\)\*\*\s*[—-]?\s*(?P<s>.*)$")
 
@@ -493,7 +551,8 @@ def citation_long(station_id: str, station_name: str, model_id: str, lead: int,
         f"forecasts: {station_id} ({station_name}), model {model_id}, lead day {int(lead)}. "
         f"Methodology version {METHODOLOGY_VERSION}, schema version {SCHEMA_VERSION}, "
         f"data through {data_through}. Accessed {accessed}. "
-        f"{SITE_URL}{permalink_url(station_id, model_id, lead)}"
+        f"{SITE_URL}{permalink_url(station_id, model_id, lead)} "
+        f"doi:{CONCEPT_DOI}"
     )
 
 
@@ -883,6 +942,7 @@ def build_site(
     status_report: dict | None = None,
     api_written: dict[str, int] | None = None,
     permalinks: bool = True,
+    truth_instant: pd.DataFrame | None = None,
 ) -> dict[str, int]:
     """Render the whole site into ``out`` (default ``public/``).  Returns page counts."""
     out = Path(out) if out is not None else PUBLIC_DIR
@@ -910,6 +970,13 @@ def build_site(
             truth = store.read_truth()
         except Exception:  # noqa: BLE001 - an unreadable shard must not break the build
             truth = pd.DataFrame(columns=TRUTH_COLUMNS)
+    if truth_instant is None:
+        from .. import store
+
+        try:
+            truth_instant = store.read_truth_instant()
+        except Exception:  # noqa: BLE001 - the monthly QC block degrades, the build does not
+            truth_instant = pd.DataFrame(columns=_TRUTH_INSTANT_COLUMNS)
 
     scores = scores if scores is not None else pd.DataFrame(columns=SCORE_COLUMNS)
     pairwise = pairwise if pairwise is not None else pd.DataFrame(columns=PAIRWISE_COLUMNS)
@@ -979,7 +1046,8 @@ def build_site(
     base_ctx.update(asset_urls)
     _write_headers(out)
 
-    counts = {"pages": 0, "stations": 0, "models": 0, "permalinks": 0, "leaderboards": 0}
+    counts = {"pages": 0, "stations": 0, "models": 0, "permalinks": 0, "leaderboards": 0,
+              "months": 0}
 
     # ---- always-present pages -------------------------------------------------------------
     _write_methodology(env, w, base_ctx)
@@ -1001,6 +1069,14 @@ def build_site(
     downloads = _write_downloads(out, scores, pairwise, errors, stations, models)
     _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads, truth)
 
+    # Both of these render an explicit empty state rather than being skipped, so the routes in the
+    # navigation exist from the first build and never 404 while the record is still short.
+    _write_diagnostics(env, w, base_ctx, scores, models, _model_index(models), stations)
+    month_pages = _monthly_pages(_normalise_variables(errors), truth, truth_instant, daily,
+                                 stations, _model_index(models), as_of)
+    counts["months"] = _write_monthly(env, w, base_ctx, month_pages)
+    monthly_entries = _monthly_feed_entries(month_pages)
+
     if empty:
         w.write("index.html", env.get_template("empty.html").render(
             **base_ctx,
@@ -1009,7 +1085,7 @@ def build_site(
                     "rank. This page will fill in automatically once the first climatological day "
                     "has both a model forecast and its NWS Daily Climate Report.",
         ))
-        _write_feed(env, w, base_ctx, None)
+        _write_feed(env, w, base_ctx, monthly_entries or None)
         counts["pages"] = w.n
         return _finish(out, counts)
 
@@ -1118,7 +1194,8 @@ def build_site(
             env, w, out, base_ctx, sc, pw, model_idx, station_idx, series_idx, month_idx,
             allday_idx, as_of_s, data_through)
 
-    _write_feed(env, w, base_ctx, _feed_entries(sc, model_idx, as_of_s, built_at))
+    _write_feed(env, w, base_ctx,
+                _feed_entries(sc, model_idx, as_of_s, built_at) + monthly_entries)
     counts["pages"] = w.n
     return _finish(out, counts)
 
@@ -1413,7 +1490,7 @@ def _board(part: pd.DataFrame, pw_sub: pd.DataFrame, model_idx: dict, lead: int)
 
 
 _MARK_TITLE = {
-    "★": "lowest MAE in this view",
+    "★": "lowest MAE among ranked models (n >= 30) in this view",
     "=": "not distinguishable from the leader after the Holm correction within this table",
     "▼": "worse than the leader; distinguishable after the Holm correction within this table",
     "▲": "better than the leader on their common days; distinguishable after the Holm correction",
@@ -2214,7 +2291,7 @@ def _write_downloads(out: Path, scores, pairwise, errors, stations, models) -> l
     (d / "pairwise_latest.csv.gz").unlink(missing_ok=True)
     (d / "pairwise_latest.csv").unlink(missing_ok=True)
     items.append({
-        "name": "pairwise_latest.csv.gz", "href": f"{HF_FILES_URL}/pairwise", "external": True,
+        "name": "pairwise_latest.csv.gz", "href": f"{HF_FILES_URL}/data/scores", "external": True,
         "what": "paired model-vs-model MAE differences on common days, with the bootstrap "
                 "interval, the bootstrap p-value and the Holm verdict (°C). Published on Hugging "
                 "Face: it grows as the square of the model count and nothing on this site reads "
@@ -2336,7 +2413,7 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
         ("scores/leaderboard.json", "the station_id=ALL slice used by the front page",
          api_written.get("scores/leaderboard.json", "—")),
         ("leaderboard/{window}-{init}z-{method}-{variable}.json",
-         "one pre-built file per leaderboard view (32 of them)",
+         f"one pre-built file per leaderboard view ({len(VIEWS)} of them)",
          api_written.get("leaderboard/{view}.json", "—")),
         ("/station/{station}/cards.json#{model}-{lead}",
          "one permanent-link card inside that bundle: its pairwise table and the last 90 days of "
@@ -2347,6 +2424,9 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
         ("stations.json", "station metadata", api_written.get("stations.json", "—")),
         ("models.json", "model metadata", api_written.get("models.json", "—")),
         ("status.json", "pipeline completeness report", api_written.get("status.json", "—")),
+        ("diagnostics.json", "the diurnal-structure diagnostic behind /diagnostics/: bias at each "
+         "of the four synoptic instants, bias against lead day, and the sampling penalty",
+         api_written.get("diagnostics.json", "—")),
         ("openapi.json", "OpenAPI 3.1 description of the endpoints above",
          api_written.get("openapi.json", "—")),
     ]
@@ -2374,11 +2454,13 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
          "columns": PAIRWISE_COLUMNS},
     ]
     for t in schemas:
+        per_table = COLUMN_DOCS_BY_TABLE.get(t["name"], {})
         t["fields"] = [
-            {"name": c, "type": COLUMN_DOCS.get(c, ("—", "—", ""))[0],
-             "unit": COLUMN_DOCS.get(c, ("—", "—", ""))[1],
-             "what": COLUMN_DOCS.get(c, ("—", "—", ""))[2]}
-            for c in t["columns"]
+            {"name": c, "type": doc[0], "unit": doc[1], "what": doc[2]}
+            for c, doc in (
+                (c, per_table.get(c) or COLUMN_DOCS.get(c, ("—", "—", "")))
+                for c in t["columns"]
+            )
         ]
     w.write("data/index.html", env.get_template("data.html").render(
         **base_ctx,
@@ -2392,8 +2474,471 @@ def _write_data(env, w, base_ctx, api_written, scores, pairwise, downloads,
         data_citation=(
             f"CastCheck (2026). Station-level verification of raw weather-model 2 m temperature "
             f"forecasts [data set]. Methodology version {METHODOLOGY_VERSION}, schema version "
-            f"{SCHEMA_VERSION}, data through {base_ctx['data_through']}. {SITE_URL}"),
+            f"{SCHEMA_VERSION}, data through {base_ctx['data_through']}. {SITE_URL} "
+            f"doi:{CONCEPT_DOI}"),
     ))
+
+
+# ------------------------------------------------------------------------------------------
+# /diagnostics/ — the diurnal-structure diagnostic (METHODOLOGY §10.2)
+# ------------------------------------------------------------------------------------------
+
+#: Read as: at these UTC instants, this is the local standard time across the station set.  The
+#: page prints the realised range from the registry rather than these words alone.
+HOUR_WHEN = {
+    0: "evening", 6: "night", 12: "early morning", 18: "midday to afternoon",
+}
+
+DIAGNOSTICS_LEDE = (
+    "Under the four common synoptic instants the models do not carry the same bias at every hour "
+    "of the day. This page publishes that structure and nothing else: it is an observation about "
+    "these measurements, not yet attributed to a cause."
+)
+
+#: The three candidates METHODOLOGY §10.2 lists, in the same order and with the same wording, so
+#: the page and the document cannot drift apart.  None is excluded by the data on this page.
+DIAGNOSTICS_CANDIDATES = [
+    ("Model diurnal amplitude",
+     "the models may genuinely produce a flatter or sharper daily temperature cycle, in which "
+     "case the hour-by-hour bias is a property of the forecast system"),
+    ("The extreme-sampling penalty",
+     "four samples a day cannot see the true daily maximum or minimum, and the size of that "
+     "penalty depends on the shape of the curve being sampled — the third table below measures "
+     "it directly (METHODOLOGY §2.3)"),
+    ("The initial conditions",
+     "the same architecture run from GFS and from IFS analyses differs by a large fraction of "
+     "the effect, which points at near-surface temperature in the analysis rather than at the "
+     "forecast model"),
+]
+
+
+def _series_styles(models: list[ModelSpec], model_idx: dict) -> dict[str, dict]:
+    """``model_id -> {cls, alt, baseline}``: one hue per family, dashed for the second variant.
+
+    Two initial-condition variants of one architecture are the same model, so they get the same
+    colour and are separated by the dash pattern; every figure also prints the name beside the
+    mark, so neither encoding is load-bearing on its own.
+    """
+    order: list[str] = []
+    for m in models:
+        if m.family not in order:
+            order.append(m.family)
+    seen: dict[str, int] = {}
+    styles: dict[str, dict] = {}
+    for m in models:
+        rank = seen.get(m.family, 0)
+        seen[m.family] = rank + 1
+        styles[m.model_id] = {
+            "cls": svg.SERIES_CLASSES[order.index(m.family) % len(svg.SERIES_CLASSES)],
+            "alt": rank > 0,
+            "baseline": False,
+        }
+    for mid, info in model_idx.items():
+        if info.get("baseline"):
+            styles[mid] = {"cls": svg.BASELINE_CLASS, "alt": False, "baseline": True}
+    return styles
+
+
+def _local_hour_span(stations: list[Station], hour_utc: int) -> str:
+    """``"10:00-13:00"``: the local standard time of a UTC instant across the station set."""
+    offs = sorted({int(s.std_offset_h) for s in stations if s.std_offset_h is not None})
+    if not offs:
+        return "—"
+    lo, hi = (hour_utc + offs[0]) % 24, (hour_utc + offs[-1]) % 24
+    return f"{lo:02d}:00" if lo == hi else f"{lo:02d}:00\u2013{hi:02d}:00"
+
+
+def _diagnostics_view(payload: dict, models: list[ModelSpec], model_idx: dict,
+                      stations: list[Station]) -> dict:
+    """Everything ``diagnostics.html`` renders, in °F, from the same payload the API publishes."""
+    names = _display_map(model_idx)
+    styles = _series_styles(models, model_idx)
+    hours = payload["hourly_bias"]["hours_utc"]
+    cats = [f"{h:02d}Z" for h in hours]
+    leads = payload["bias_by_lead"]["lead_days"]
+
+    def style(mid: str) -> dict:
+        return styles.get(mid, {"cls": svg.SERIES_CLASSES[0], "alt": False, "baseline": False})
+
+    hour_groups, hour_rows = [], []
+    for r in payload["hourly_bias"]["rows"]:
+        mid = r["model_id"]
+        st = style(mid)
+        vals = [None if b is None else float(b) * C_TO_F_DELTA for b in r["bias"]]
+        finite = [v for v in vals if v is not None]
+        hour_groups.append({
+            "name": names.get(mid, mid), "values": vals, "cls": st["cls"],
+            "baseline": st["baseline"],
+            "titles": [None if v is None else
+                       f"{names.get(mid, mid)} {cats[i]}: {v:+.2f} °F, n = {f_int(r['n'][i])}"
+                       for i, v in enumerate(vals)],
+        })
+        hour_rows.append({
+            "id": mid, "name": names.get(mid, mid), "baseline": st["baseline"],
+            "cls": st["cls"], "alt": st["alt"],
+            "cells": [{"bias": f_signed(b), "n": f_int(n)}
+                      for b, n in zip(r["bias"], r["n"], strict=True)],
+            "range": "—" if len(finite) < 2 else _minus(f"{max(finite) - min(finite):.2f}"),
+        })
+
+    lead_series, lead_rows = [], []
+    for r in payload["bias_by_lead"]["rows"]:
+        mid = r["model_id"]
+        st = style(mid)
+        vals = [None if b is None else float(b) * C_TO_F_DELTA for b in r["bias"]]
+        lead_series.append({"name": names.get(mid, mid), "values": vals, **st})
+        lead_rows.append({
+            "id": mid, "name": names.get(mid, mid), "baseline": st["baseline"],
+            "cls": st["cls"], "alt": st["alt"],
+            "cells": [{"bias": f_signed(b), "n": f_int(n)}
+                      for b, n in zip(r["bias"], r["n"], strict=True)],
+        })
+
+    penalty_rows = []
+    for r in payload["sampling_penalty"]["rows"]:
+        mid = r["model_id"]
+        st = style(mid)
+        cells = []
+        for sampled, cli in DIAGNOSTICS_PENALTY_PAIRS:
+            pen = r.get(f"{sampled}_penalty")
+            cells.append({
+                "sampled": f_signed(r.get(f"{sampled}_bias")),
+                "cli": f_signed(r.get(f"{cli}_bias")),
+                "penalty": f_signed(pen),
+                "penalty_f": None if pen is None else float(pen) * C_TO_F_DELTA,
+                "n_sampled": f_int(r.get(f"{sampled}_n")),
+                "n_cli": f_int(r.get(f"{cli}_n")),
+            })
+        penalty_rows.append({"id": mid, "name": names.get(mid, mid),
+                             "baseline": st["baseline"], "cells": cells})
+    ranked = [r for r in penalty_rows
+              if not r["baseline"] and r["cells"][0]["penalty_f"] is not None]
+    ranked.sort(key=lambda r: r["cells"][0]["penalty_f"])
+    penalty_rows = ranked + [r for r in penalty_rows if r not in ranked]
+
+    spread = []
+    for i, cat in enumerate(cats):
+        vals = [g["values"][i] for g in hour_groups
+                if not g["baseline"] and g["values"][i] is not None]
+        if len(vals) > 1:
+            spread.append({"cat": cat, "range": max(vals) - min(vals)})
+    widest = max(spread, key=lambda r: r["range"]) if spread else None
+    narrowest = min(spread, key=lambda r: r["range"]) if spread else None
+
+    hour_label = ("Bias at each of the four synoptic instants, by model — 90-day window, "
+                  "00Z initialization, bilinear interpolation, lead day 1, all stations pooled")
+    lead_label = ("Bias of the instantaneous 2 m temperature against lead day, one line per "
+                  "model — 90-day window, 00Z initialization, bilinear interpolation")
+    return {
+        "hours": hours,
+        "hour_cats": cats,
+        "hour_when": [{"utc": f"{h:02d}Z", "local": _local_hour_span(stations, h),
+                       "when": HOUR_WHEN.get(h, "")} for h in hours],
+        "hour_rows": hour_rows,
+        "hour_fig": Markup(svg.grouped_bias_bars(hour_groups, categories=cats, label=hour_label)),
+        "hour_label": hour_label,
+        "leads": leads,
+        "lead_rows": lead_rows,
+        "lead_fig": Markup(svg.multi_line(
+            [f"d{d}" for d in leads], lead_series, label=lead_label, x_title="lead day")),
+        "lead_label": lead_label,
+        "penalty_rows": penalty_rows,
+        "penalty_pairs": [{"sampled": a, "cli": b} for a, b in DIAGNOSTICS_PENALTY_PAIRS],
+        "penalty_identity": payload["sampling_penalty"]["identity"],
+        "candidates": DIAGNOSTICS_CANDIDATES,
+        "lede": DIAGNOSTICS_LEDE,
+        "spread": None if widest is None or narrowest is None else {
+            "widest": widest["cat"], "widest_f": f"{widest['range']:.2f}",
+            "narrowest": narrowest["cat"], "narrowest_f": f"{narrowest['range']:.2f}",
+        },
+        "window": DIAGNOSTICS_WINDOW,
+        "init_hour": DIAGNOSTICS_INIT,
+        "method": DIAGNOSTICS_METHOD,
+        "lead": DIAGNOSTICS_LEAD,
+        "n_stations": len(stations),
+        "has_data": bool(hour_groups or lead_series),
+    }
+
+
+def _write_diagnostics(env, w, base_ctx, scores, models, model_idx, stations) -> None:
+    payload = diagnostics_payload(scores, models)
+    w.write("diagnostics/index.html", env.get_template("diagnostics.html").render(
+        **base_ctx, **_diagnostics_view(payload, models, model_idx, stations)))
+
+
+# ------------------------------------------------------------------------------------------
+# /monthly/ — one automatically generated page per completed calendar month
+# ------------------------------------------------------------------------------------------
+
+#: A month is published only once it is over.  A partial month would rank models on a handful of
+#: days and then silently change its numbers for four weeks, which is exactly what a dated
+#: archive page must not do.
+MONTHLY_VARIABLE = HEADLINE_VARIABLE
+MONTHLY_LEAD = 1
+#: The four common synoptic instants, so a fully observed station-day is four observations.
+INSTANTS_PER_DAY = 4
+
+
+def _month_days(month: str) -> int:
+    start = pd.Timestamp(f"{month}-01")
+    return int((start + pd.offsets.MonthEnd(1)).day)
+
+
+def _complete_months(dates: pd.Series, as_of: date) -> list[str]:
+    """Every ``YYYY-MM`` in ``dates`` whose last calendar day is at or before ``as_of``."""
+    if dates is None or len(dates) == 0:
+        return []
+    d = pd.to_datetime(dates, errors="coerce").dropna()
+    if not len(d):
+        return []
+    months = sorted({str(m) for m in d.dt.strftime("%Y-%m")})
+    cutoff = pd.Timestamp(as_of)
+    return [m for m in months
+            if pd.Timestamp(f"{m}-01") + pd.offsets.MonthEnd(1) <= cutoff]
+
+
+def _monthly_units(errors: pd.DataFrame) -> pd.DataFrame:
+    """The cross-station daily unit ``verify.score`` averages, restricted to the monthly slice.
+
+    One row per ``(model_id, climo_date)`` with the day's mean absolute and signed error over the
+    four instants and then over the stations present — the same two collapses, in the same order,
+    that produce the published ``station_id="ALL"`` point estimate (METHODOLOGY §4).  It is
+    recomputed here rather than read from ``scores`` because no published window is a calendar
+    month; the formula is deliberately identical, and no interval is derived from it.
+    """
+    cols = {"station_id", "model_id", "init_hour", "lead_day", "variable", "method",
+            "climo_date", "err"}
+    if errors is None or len(errors) == 0 or not cols <= set(errors.columns):
+        return pd.DataFrame(columns=["model_id", "climo_date", "a", "s"])
+    e = errors[
+        (errors["variable"] == MONTHLY_VARIABLE)
+        & (errors["init_hour"].astype(int) == DEFAULT_INIT)
+        & (errors["method"] == DEFAULT_METHOD)
+        & (errors["lead_day"].astype(int) == MONTHLY_LEAD)
+    ][["station_id", "model_id", "climo_date", "err"]].copy()
+    if e.empty:
+        return pd.DataFrame(columns=["model_id", "climo_date", "a", "s"])
+    e["climo_date"] = pd.to_datetime(e["climo_date"]).dt.normalize()
+    e["err"] = e["err"].astype(float)
+    e["a"] = e["err"].abs()
+    per_station = (e.groupby(["station_id", "model_id", "climo_date"], observed=True,
+                             as_index=False)
+                   .agg(a=("a", "mean"), s=("err", "mean")))
+    per_station["month"] = per_station["climo_date"].dt.strftime("%Y-%m")
+    return per_station
+
+
+def _monthly_scores(units: pd.DataFrame, month: str) -> tuple[list[dict], dict | None]:
+    """``(ranking rows, worst station-day)`` for one month, from the daily units."""
+    if units is None or len(units) == 0:
+        return [], None
+    part = units[units["month"] == month]
+    if part.empty:
+        return [], None
+    allrows = (part.groupby(["model_id", "climo_date"], observed=True, as_index=False)
+               .agg(a=("a", "mean"), s=("s", "mean"), ns=("station_id", "nunique")))
+    agg = (allrows.groupby("model_id", observed=True, as_index=False)
+           .agg(mae=("a", "mean"), bias=("s", "mean"), n=("climo_date", "nunique"),
+                n_stations=("ns", "mean")))
+    rows = agg.sort_values(["mae", "model_id"]).to_dict("records")
+    worst_i = part["a"].astype(float).idxmax()
+    worst = part.loc[worst_i]
+    return rows, {
+        "station_id": str(worst["station_id"]),
+        "model_id": str(worst["model_id"]),
+        "date": worst["climo_date"].date().isoformat(),
+        "abs_err": float(worst["a"]),
+        "bias": float(worst["s"]),
+    }
+
+
+def _monthly_completeness(month: str, stations: list[Station], truth: pd.DataFrame | None,
+                          truth_instant: pd.DataFrame | None) -> list[dict]:
+    """Observed coverage of the month, as counts and a rate — never as a bare percentage."""
+    days = _month_days(month)
+    n_st = max(len(stations), 1)
+    out = []
+
+    def rate(name: str, got: int, expected: int, what: str) -> dict:
+        return {"name": name, "got": got, "expected": expected, "what": what,
+                "pct": None if expected <= 0 else 100.0 * got / expected,
+                "pct_s": "—" if expected <= 0 else f"{100.0 * got / expected:.1f}%"}
+
+    got = 0
+    if truth_instant is not None and len(truth_instant) and "valid_time" in truth_instant:
+        vt = pd.to_datetime(truth_instant["valid_time"], utc=True, errors="coerce")
+        sel = truth_instant[vt.dt.strftime("%Y-%m") == month]
+        got = int(sel[["station_id", "valid_time"]].drop_duplicates().shape[0]) if len(sel) else 0
+    out.append(rate("Instantaneous observations", got, days * n_st * INSTANTS_PER_DAY,
+                    "one routine METAR per station at each of 00/06/12/18 UTC"))
+
+    got = 0
+    if truth is not None and len(truth) and "climo_date" in truth:
+        cd = pd.to_datetime(truth["climo_date"], errors="coerce")
+        sel = truth[cd.dt.strftime("%Y-%m") == month]
+        got = int(sel[["station_id", "climo_date"]].drop_duplicates().shape[0]) if len(sel) else 0
+    out.append(rate("Daily-extreme reports", got, days * n_st,
+                    "one NWS Daily Climate Report (or CF6 fallback) per station-day"))
+    return out
+
+
+def _monthly_qc(month: str, truth: pd.DataFrame | None,
+                truth_instant: pd.DataFrame | None) -> tuple[list[dict], int]:
+    """Every QC flag raised on an observation in the month, counted by flag."""
+    counts: dict[str, int] = {}
+    for frame, col, kind in ((truth, "climo_date", "daily extreme"),
+                            (truth_instant, "valid_time", "instant")):
+        if frame is None or len(frame) == 0 or col not in frame or "qc_flag" not in frame:
+            continue
+        when = pd.to_datetime(frame[col], utc=(col == "valid_time"), errors="coerce")
+        sel = frame[when.dt.strftime("%Y-%m") == month]
+        if not len(sel):
+            continue
+        flags = sel["qc_flag"].fillna("").astype(str)
+        for value in flags[flags != ""]:
+            for one in str(value).split(";"):
+                one = one.strip()
+                if one:
+                    counts[f"{one} ({kind})"] = counts.get(f"{one} ({kind})", 0) + 1
+    rows = [{"flag": k, "n": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return rows, sum(counts.values())
+
+
+def _version_events(daily: pd.DataFrame | None) -> dict[str, list[dict]]:
+    """``YYYY-MM -> [{model_id, model_version, first_day}]``: where a version segment begins.
+
+    A model version that first appears mid-month is an upstream change, and scores either side of
+    it are not pooled (METHODOLOGY §9).  The first appearance of every model is itself an event —
+    the month a system entered the record.
+    """
+    out: dict[str, list[dict]] = {}
+    if daily is None or len(daily) == 0 or "model_version" not in daily:
+        return out
+    d = daily[["model_id", "model_version", "climo_date"]].copy()
+    d["model_version"] = d["model_version"].fillna("unknown").astype(str)
+    d["climo_date"] = pd.to_datetime(d["climo_date"], errors="coerce")
+    d = d[d["climo_date"].notna()]
+    if d.empty:
+        return out
+    first = (d.groupby(["model_id", "model_version"], observed=True, as_index=False)
+             .agg(first_day=("climo_date", "min")))
+    for r in first.to_dict("records"):
+        month = r["first_day"].strftime("%Y-%m")
+        out.setdefault(month, []).append({
+            "model_id": r["model_id"], "model_version": r["model_version"],
+            "first_day": r["first_day"].date().isoformat(),
+        })
+    for rows in out.values():
+        rows.sort(key=lambda r: (r["first_day"], r["model_id"]))
+    return out
+
+
+def _monthly_pages(errors, truth, truth_instant, daily, stations, model_idx,
+                   as_of: date) -> list[dict]:
+    """One rendering context per completed month, newest first."""
+    units = _monthly_units(errors)
+    months = _complete_months(units["climo_date"] if len(units) else pd.Series(dtype="datetime64[ns]"),
+                              as_of)
+    if not months:
+        return []
+    names = _display_map(model_idx)
+    versions = _version_events(daily)
+    pages = []
+    for month in sorted(months, reverse=True):
+        rows, worst = _monthly_scores(units, month)
+        if not rows:
+            continue
+        days = _month_days(month)
+        ranked = [r for r in rows if r["model_id"] != PERSISTENCE_ID]
+        table = []
+        for r in rows:
+            baseline = r["model_id"] == PERSISTENCE_ID
+            table.append({
+                "rank": "—" if baseline else str(
+                    [x["model_id"] for x in ranked].index(r["model_id"]) + 1),
+                "id": r["model_id"], "name": names.get(r["model_id"], r["model_id"]),
+                "baseline": baseline,
+                "mae": f_delta(r["mae"]), "mae_f": float(r["mae"]) * C_TO_F_DELTA,
+                "bias": f_signed(r["bias"]), "bias_short": _BIAS_SHORT.get(
+                    svg.bias_class(float(r["bias"]) * C_TO_F_DELTA), "fl"),
+                "n": int(r["n"]), "days": days,
+                # A month is at most 31 days, so no row here clears the site's MIN_N bar by much;
+                # a row scored on fewer than all of the month's days is greyed the same way a
+                # short window is greyed elsewhere, and its coverage is printed beside it.
+                "low_n": int(r["n"]) < days,
+                "coverage": f"{100.0 * int(r['n']) / days:.0f}%",
+                "n_stations": f"{float(r['n_stations']):.1f}",
+                "permalink": permalink_url(ALL_STATIONS, r["model_id"], MONTHLY_LEAD),
+            })
+        qc_rows, qc_total = _monthly_qc(month, truth, truth_instant)
+        if worst is not None:
+            worst = {**worst,
+                     "name": names.get(worst["model_id"], worst["model_id"]),
+                     "abs_err_f": _minus(f"{worst['abs_err'] * C_TO_F_DELTA:.2f}"),
+                     "bias_f": _minus(f"{worst['bias'] * C_TO_F_DELTA:+.2f}"),
+                     "permalink": permalink_url(worst["station_id"], worst["model_id"],
+                                                MONTHLY_LEAD)}
+        pages.append({
+            "month": month,
+            "month_label": _MONTH_LABEL(f"{month}-01"),
+            "days": days,
+            "rows": table,
+            "n_models": len(ranked),
+            "leader": table[0] if table and not table[0]["baseline"] else None,
+            "completeness": _monthly_completeness(month, stations, truth, truth_instant),
+            "qc_rows": qc_rows,
+            "qc_total": qc_total,
+            "worst": worst,
+            "versions": versions.get(month, []),
+            "variable": MONTHLY_VARIABLE,
+            "variable_label": VAR_LABEL.get(MONTHLY_VARIABLE, MONTHLY_VARIABLE),
+            "lead": MONTHLY_LEAD,
+            "n_stations": len(stations),
+        })
+    return pages
+
+
+def _write_monthly(env, w, base_ctx, pages: list[dict]) -> int:
+    """The index and one page per completed month.  Returns the number of month pages."""
+    index = [{"month": p["month"], "month_label": p["month_label"], "days": p["days"],
+              "n_models": p["n_models"], "leader": p["leader"], "qc_total": p["qc_total"],
+              "n_versions": len(p["versions"]),
+              "completeness": p["completeness"][0]["pct_s"] if p["completeness"] else "—"}
+             for p in pages]
+    w.write("monthly/index.html", env.get_template("monthly_index.html").render(
+        **base_ctx, months=index))
+    for i, page in enumerate(pages):
+        w.write(f"monthly/{page['month']}/index.html",
+                env.get_template("monthly.html").render(
+                    **base_ctx, **page,
+                    newer=index[i - 1] if i > 0 else None,
+                    older=index[i + 1] if i + 1 < len(index) else None))
+    return len(pages)
+
+
+def _monthly_feed_entries(pages: list[dict]) -> list[dict]:
+    """One Atom entry per month page, published at the first publish slot after the month ended."""
+    out = []
+    for p in pages:
+        leader = p["leader"]
+        head = (f"{leader['name']} had the lowest MAE among the models scored that month at lead "
+                f"day {p['lead']} ({leader['mae']} °F over {leader['n']} of {p['days']} days)."
+                if leader else "No model reached a full month of scored days.")
+        stamp = (pd.Timestamp(f"{p['month']}-01") + pd.offsets.MonthEnd(1)
+                 + pd.Timedelta(days=1)).strftime(f"%Y-%m-%dT{PUBLISH_HOUR_UTC:02d}:00:00+00:00")
+        out.append({
+            "date": p["month"],
+            "title": f"CastCheck monthly review {p['month_label']}",
+            "href": f"{SITE_URL}/monthly/{p['month']}/",
+            "id": f"tag:castcheck,{p['month']}:monthly",
+            "updated": stamp,
+            "summary": (f"{p['month_label']}: {head} {p['n_models']} systems scored across "
+                        f"{p['n_stations']} stations; {p['qc_total']} QC flag"
+                        f"{'' if p['qc_total'] == 1 else 's'} on the month's observations; "
+                        f"{len(p['versions'])} upstream version change"
+                        f"{'' if len(p['versions']) == 1 else 's'}."),
+        })
+    return out
 
 
 def _write_indexes(env, w, base_ctx, scores, stations, model_idx) -> None:
@@ -2515,7 +3060,10 @@ def _feed_entries(sc: pd.DataFrame, model_idx: dict, as_of_s: str, built_at: str
     dates = []
     hist = REPO_ROOT / "data" / "scores" / "history"
     if hist.exists():
-        dates = sorted((p.stem for p in hist.glob("*.parquet")), reverse=True)[:30]
+        # A conflict copy ("2026-08-30 2.parquet") once put an unparseable <updated> in the feed
+        # and broke every reader.  Only a bare ISO date is a publication date.
+        dates = sorted((p.stem for p in hist.glob("*.parquet") if _HISTORY_DATE.fullmatch(p.stem)),
+                       reverse=True)[:30]
     if as_of_s not in dates:
         dates = [as_of_s, *dates]
     variable = _pick_series_variable(sc)
@@ -2527,13 +3075,18 @@ def _feed_entries(sc: pd.DataFrame, model_idx: dict, as_of_s: str, built_at: str
     if len(board):
         top = board.sort_values("mae").iloc[0]
         summary = (f"Lead day 1, {VAR_LABEL.get(variable, variable)}, {DEFAULT_WINDOW} window, "
-                   f"{DEFAULT_INIT:02d}Z, {DEFAULT_METHOD}: lowest MAE is "
+                   f"{DEFAULT_INIT:02d}Z, {DEFAULT_METHOD}: lowest MAE among ranked models "
+                   f"(n >= {MIN_N}) is "
                    f"{f_delta(top['mae'])} °F ({_mname(model_idx, top['model_id'])}, "
                    f"n = {int(top['n'])}).")
     else:
         summary = (f"No group in the default view has reached {MIN_N} scored days yet, so nothing "
                    f"is ranked; every number is published with its sample size.")
-    return [{"date": d, "summary": summary if i == 0 else
+    return [{"date": d,
+             "title": f"CastCheck update {d}",
+             "href": f"{SITE_URL}/",
+             "id": f"tag:castcheck,{d}:update",
+             "summary": summary if i == 0 else
              "Scores recomputed from scratch for this publication date.",
              # the newest entry is stamped with the actual build, older ones with their slot
              "updated": built_at if i == 0 else f"{d}T{PUBLISH_HOUR_UTC:02d}:00:00+00:00"}

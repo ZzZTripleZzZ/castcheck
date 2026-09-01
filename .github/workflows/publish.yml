@@ -8,7 +8,11 @@ permissions: { contents: write }
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Measured on the 2026-09-01 archive (data/raw/last_run.json): derive 103 s, verify 586 s,
+    # build-site 1312 s — `daily` alone is ~33 min and grows with the archive, which the old 40 min
+    # did not leave room for. 90 min is roughly 2.5x the current cost, i.e. a couple of years of
+    # headroom, and still far below the 6 h job ceiling.
+    timeout-minutes: 90
     # Job-level env, so that the optional steps below can test `env.X != ''` in their `if:` —
     # the `secrets` context is not available in a step `if:`, but `env` is.
     env:
@@ -26,6 +30,11 @@ jobs:
       - run: .venv/bin/castcheck daily
       - name: status (non-blocking)
         run: .venv/bin/castcheck status --no-fail-on-gaps
+      # Retention for data/scores/history/ (DESIGN §3.4). Runs after `daily` has written today's
+      # snapshot and before the commit step, so the deletion and the day's new file land in one
+      # commit and the repo never carries a decade of superseded dailies.
+      - name: prune score history
+        run: .venv/bin/castcheck prune-history
       - name: deploy site to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
@@ -45,3 +54,16 @@ jobs:
       - name: commit derived data
         if: always()
         run: scripts/commit_data.sh "[data] scores $(date -u +%Y-%m-%d)"
+
+  report-failure:
+    needs: [publish]
+    if: failure()
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: verify-and-publish
+      note: >-
+        The site keeps serving the previous build, so a single failure is not an outage for readers —
+        but the published numbers stop moving, which is worse than an obvious outage because nothing
+        on the page says so. Check `castcheck status` and the run journal (`data/raw/last_run.json`)
+        for which stage stopped: derive, verify, build-site, or one of the token-gated publishers.

@@ -28,6 +28,8 @@ if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)
       <a class="nav__link{{ ' is-current' if nav_current == 'overview' }}" href="/"{% if nav_current == 'overview' %} aria-current="page"{% endif %}>Overview</a>
       <a class="nav__link{{ ' is-current' if nav_current == 'stations' }}" href="/stations/"{% if nav_current == 'stations' %} aria-current="page"{% endif %}>Stations</a>
       <a class="nav__link{{ ' is-current' if nav_current == 'models' }}" href="/models/"{% if nav_current == 'models' %} aria-current="page"{% endif %}>Models</a>
+      <a class="nav__link{{ ' is-current' if nav_current == 'diagnostics' }}" href="/diagnostics/"{% if nav_current == 'diagnostics' %} aria-current="page"{% endif %}>Diagnostics</a>
+      <a class="nav__link{{ ' is-current' if nav_current == 'monthly' }}" href="/monthly/"{% if nav_current == 'monthly' %} aria-current="page"{% endif %}>Monthly</a>
       <a class="nav__link{{ ' is-current' if nav_current == 'methodology' }}" href="/methodology/"{% if nav_current == 'methodology' %} aria-current="page"{% endif %}>Methodology</a>
       <a class="nav__link{{ ' is-current' if nav_current == 'status' }}" href="/status/"{% if nav_current == 'status' %} aria-current="page"{% endif %}>Status</a>
       <a class="nav__link{{ ' is-current' if nav_current == 'data' }}" href="/data/"{% if nav_current == 'data' %} aria-current="page"{% endif %}>Data</a>
@@ -69,6 +71,8 @@ if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)
         <h4>Method</h4>
         <ul>
           <li><a href="/methodology/">Methodology v{{ methodology_version }}</a></li>
+          <li><a href="/diagnostics/">Diurnal diagnostics</a></li>
+          <li><a href="/monthly/">Monthly reviews</a></li>
           <li><a href="/methodology/#7-fairness-statement">Fairness statement</a></li>
           <li><a href="/status/">Pipeline status</a></li>
           <li><a href="/data/#cite">Cite this</a></li>

@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% set nav_current = 'monthly' %}
+{% block title %}{{ month_label }} — CastCheck monthly review{% endblock %}
+{% block description %}CastCheck {{ month_label }}: MAE ranking on that month's days, observation completeness, QC events, the largest single-day error and upstream model version changes.{% endblock %}
+{% block head %}<link rel="canonical" href="{{ site_url }}/monthly/{{ month }}/">{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow"><a href="/monthly/">Monthly reviews</a> · {{ month }}</p>
+  <h1 class="hero__title">{{ month_label }}</h1>
+  <p class="hero__scope hero__scope--lede">{{ days }} calendar days.
+{% if leader %}Over this month's days alone, the lowest mean absolute error at lead day {{ lead }}
+  was {{ leader.mae }} °F — {{ leader.name }}, on {{ leader.n }} of the {{ days }} days. That is
+  the lowest among the models scored in this month, each over its own days; it is not a claim that
+  one model is better than another.
+{% else %}No model was scored on this month's days.{% endif %}
+  {{ n_models }} forecast system{{ '' if n_models == 1 else 's' }} were scored, over
+  {{ n_stations }} stations. This page is generated from the tables below; it contains no
+  assessment of why any number is what it is.</p>
+  <dl class="metastrip">
+    <div><dt>Window</dt><dd>{{ month }} only</dd></div>
+    <div><dt>Variable</dt><dd>{{ variable_label }}</dd></div>
+    <div><dt>Lead</dt><dd>day {{ lead }}</dd></div>
+    <div><dt>Init</dt><dd>00Z</dd></div>
+    <div><dt>Interpolation</dt><dd>bilinear</dd></div>
+    <div><dt>Updated</dt><dd><time datetime="{{ built_at }}">{{ built_at_human }}</time></dd></div>
+  </dl>
+  <ul class="downloads" style="margin-top:var(--sp-4)">
+{% if newer %}<li><a href="/monthly/{{ newer.month }}/"><span class="fmt">NEXT</span> {{ newer.month_label }}</a></li>{% endif %}
+{% if older %}<li><a href="/monthly/{{ older.month }}/"><span class="fmt">PREV</span> {{ older.month_label }}</a></li>{% endif %}
+    <li><a href="/monthly/"><span class="fmt">INDEX</span> all months</a></li>
+    <li><a href="/data/#download"><span class="fmt">CSV</span> the daily errors underneath</a></li>
+  </ul>
+</section>
+
+<section class="panel" id="ranking">
+  <div class="panel__head">
+    <h2 class="panel__title">Ranked on this month's days<span class="lead-tag">lead day {{ lead }}</span></h2>
+    <p class="panel__sub">MAE and bias are recomputed over {{ month }} alone, with the same two
+    collapses as every published number — the mean over the four synoptic instants of a
+    station-day, then the mean over the stations present that day
+    (<a href="/methodology/#4-scores">methodology §4</a>). A calendar month is not one of the
+    published rolling windows, so <strong>no confidence interval is quoted here</strong>: a month
+    is 28–31 days, close to the minimum a bootstrap needs, and an interval printed at that length
+    would suggest more precision than the sample carries. Every row links to the permanent page
+    where the intervals over the published windows do live.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+{% if rows %}
+    <div class="table-wrap"><table class="data">
+      <caption>{{ variable_label }} at lead day {{ lead }}, 00Z initialization, bilinear
+      interpolation, all stations pooled, {{ month }} only. <em>Days</em> is how many of the
+      month's {{ days }} days that model was scored on; <em>Stations</em> is the mean number of
+      stations behind each of those days. A model scored on part of the month is greyed: it is
+      published, but it is not being compared like for like with one scored on every day, and the
+      order below is by MAE over each model's own days. The persistence baseline is listed and
+      never ranked.</caption>
+      <thead><tr><th scope="col" class="is-num">#</th><th scope="col">Model</th>
+      <th scope="col" class="is-num">MAE °F</th><th scope="col" class="is-num">Bias °F</th>
+      <th scope="col" class="is-num">Days</th><th scope="col" class="is-num">Coverage</th>
+      <th scope="col" class="is-num">Stations</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr class="{{ 'is-baseline ' if r.baseline }}{{ 'is-lown' if r.low_n }}">
+        <td class="rank{{ ' rank--1' if r.rank == '1' }}">{{ r.rank }}</td>
+        <th scope="row" class="model-cell"><a href="{{ r.permalink }}">{{ r.name }}</a><span class="sub mono">{{ r.id }}</span></th>
+        <td class="n"><span class="val">{{ r.mae }}</span></td>
+        <td class="n bias">{{ r.bias }}<i class="bb {{ r.bias_short }}"></i></td>
+        <td class="n"><span class="val">{{ r.n }}</span></td>
+        <td class="n"><span class="val">{{ r.coverage }}</span></td>
+        <td class="n"><span class="val">{{ r.n_stations }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+{% else %}
+    <p class="dimtext" style="padding:var(--sp-4)">No model was scored in this month.</p>
+{% endif %}
+  </div>
+</section>
+
+<section class="panel" id="completeness">
+  <div class="panel__head">
+    <h2 class="panel__title">How complete the month was</h2>
+    <p class="panel__sub">Counted against what a fully observed month would hold:
+    {{ n_stations }} stations × {{ days }} days. A rate below 100 % is missing observation, not
+    missing forecast; which forecast runs arrived is on the
+    <a href="/status/">status page</a>, and how many days each model was scored on is the
+    <em>Days</em> column above.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Observation</th><th scope="col" class="is-num">Present</th>
+      <th scope="col" class="is-num">Expected</th><th scope="col" class="is-num">Rate</th>
+      <th scope="col">What one is</th></tr></thead>
+      <tbody>
+      {% for c in completeness %}
+        <tr><th scope="row">{{ c.name }}</th>
+        <td class="n"><span class="val">{{ c.got }}</span></td>
+        <td class="n"><span class="val">{{ c.expected }}</span></td>
+        <td class="n"><span class="val">{{ c.pct_s }}</span></td>
+        <td>{{ c.what }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="panel" id="qc">
+  <div class="panel__head">
+    <h2 class="panel__title">Quality-control events<span class="lead-tag">{{ qc_total }} in the month</span></h2>
+    <p class="panel__sub">Every flag raised on an observation whose timestamp falls in this month.
+    A flagged observation is kept and scored — the flag travels with it into the published tables
+    rather than removing the day (<a href="/methodology/#6-missing-data-and-quality-control">methodology
+    §6</a>). One observation can carry more than one flag, and each is counted separately.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+{% if qc_rows %}
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Flag</th><th scope="col" class="is-num">Count</th></tr></thead>
+      <tbody>
+      {% for q in qc_rows %}
+        <tr><th scope="row" class="k">{{ q.flag }}</th>
+        <td class="n"><span class="val">{{ q.n }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+{% else %}
+    <p class="dimtext" style="padding:var(--sp-4)">No observation in this month carries a QC
+    flag.</p>
+{% endif %}
+  </div>
+</section>
+
+<section class="panel" id="worst">
+  <div class="panel__head">
+    <h2 class="panel__title">Largest single-day error</h2>
+    <p class="panel__sub">The biggest absolute error any one model made at any one station on any
+    one day of the month, at lead day {{ lead }}. It is a single station-day, not evidence about a
+    model: a station-day is the smallest unit the site scores and the tails of a month of them are
+    wide.</p>
+  </div>
+  <div class="panel__body">
+{% if worst %}
+    <dl class="metastrip">
+      <div><dt>Model</dt><dd>{{ worst.name }}</dd></div>
+      <div><dt>Station</dt><dd><a href="/station/{{ worst.station_id }}/">{{ worst.station_id }}</a></dd></div>
+      <div><dt>Day</dt><dd>{{ worst.date }}</dd></div>
+      <div><dt>Absolute error</dt><dd>{{ worst.abs_err_f }} °F</dd></div>
+      <div><dt>Signed</dt><dd>{{ worst.bias_f }} °F</dd></div>
+    </dl>
+    <p class="notes" style="margin-top:var(--sp-4)"><a href="{{ worst.permalink }}">Open the
+    permanent page for {{ worst.station_id }} · {{ worst.model_id }} · lead {{ lead }}</a>
+    — the daily-error chart there plots this day among the rest, and the address does not change.</p>
+{% else %}
+    <p class="dimtext">No scored day in this month.</p>
+{% endif %}
+  </div>
+</section>
+
+<section class="panel" id="upstream">
+  <div class="panel__head">
+    <h2 class="panel__title">Upstream changes<span class="lead-tag">{{ versions|length }} in the month</span></h2>
+    <p class="panel__sub">A model version that appears for the first time in this month. Days
+    either side of a version change are not pooled: scores are computed on the latest version
+    segment only (<a href="/methodology/#9-versioning">methodology §9</a>), so a change here
+    resets the record that the leaderboard shows for that model.</p>
+  </div>
+  <div class="panel__body panel__body--flush">
+{% if versions %}
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th scope="col">Model</th><th scope="col">Version</th>
+      <th scope="col">First day in the record</th></tr></thead>
+      <tbody>
+      {% for v in versions %}
+        <tr><th scope="row" class="model-cell"><a href="/model/{{ v.model_id }}/">{{ v.model_id }}</a></th>
+        <td class="mono">{{ v.model_version }}</td><td class="mono">{{ v.first_day }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+{% else %}
+    <p class="dimtext" style="padding:var(--sp-4)">No model version appeared for the first time in
+    this month.</p>
+{% endif %}
+  </div>
+</section>
+{% endblock %}

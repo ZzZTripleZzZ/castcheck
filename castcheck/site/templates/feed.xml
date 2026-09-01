@@ -10,9 +10,9 @@
   <rights>CC BY 4.0</rights>
 {% for e in entries %}
   <entry>
-    <title>CastCheck update {{ e.date }}</title>
-    <link href="{{ site_url }}/"/>
-    <id>tag:castcheck,{{ e.date }}:update</id>
+    <title>{{ e.title or ("CastCheck update " ~ e.date) }}</title>
+    <link href="{{ e.href or (site_url ~ "/") }}"/>
+    <id>{{ e.id or ("tag:castcheck," ~ e.date ~ ":update") }}</id>
     <updated>{{ e.updated }}</updated>
     <summary>{{ e.summary }} Scores recomputed from scratch; methodology v{{ methodology_version }}, schema v{{ schema_version }}, data through {{ data_through }}.</summary>
   </entry>

@@ -9,7 +9,8 @@ abstract: >-
   CastCheck scores the raw 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES,
   NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational GraphCast, Pangu-Weather,
   FourCastNet v2 and Aurora from both GFS and IFS initial conditions) at 23 U.S. first-order
-  airport stations. The headline metric is the instantaneous 2 m temperature at 00/06/12/18 UTC
+  stations — 22 major airports plus New York Central Park. The headline metric is the
+  instantaneous 2 m temperature at 00/06/12/18 UTC
   verified against the observation at the same instants; daily extremes are published both
   like-for-like (forecast samples against observed samples) and, as a secondary comparison,
   against the NWS Daily Climate Report. No MOS, bias correction, downscaling or other
@@ -20,8 +21,16 @@ type: software
 authors:
   - family-names: Zhang
     given-names: Zifan
-version: "0.3"
-date-released: "2026-08-30"
+version: "v0.3.3"
+date-released: "2026-09-01"
+doi: "10.5281/zenodo.22212363"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.22212363"
+    description: "Concept DOI (all versions)"
+  - type: doi
+    value: "10.5281/zenodo.22237426"
+    description: "Version DOI (v0.3.3)"
 license: MIT
 repository-code: "https://github.com/ZzZTripleZzZ/castcheck"
 url: "https://castcheck.zifanzhang.com"

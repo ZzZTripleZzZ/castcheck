@@ -1,0 +1,91 @@
+name: health
+# Daily data-completeness alarm (DESIGN §7). `publish.yml` already runs `castcheck status`, but it
+# runs it with `--no-fail-on-gaps` and nothing reads the result: a fetch that quietly stops working
+# would show as a stale line on the status page and nowhere else. This workflow asks the sharper
+# question — *has anything been overdue for more than a day* — and turns a yes into an issue.
+#
+# 12:30Z is chosen to be after publish.yml (11:00Z) has committed the day's data, so the recomputed
+# status reflects everything today's pipeline managed to collect.
+on:
+  schedule:
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+# Read-only on data/: this workflow recomputes status.json into the runner's public/ and never
+# commits, so it deliberately does *not* join the `data-writes` group — it must be able to run while
+# a fetch is holding that group, which is exactly the situation worth reporting on.
+concurrency: { group: health, cancel-in-progress: true }
+permissions: { contents: read, issues: write }
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LABEL: data-gap
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 1 }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
+      - run: uv sync --frozen
+      # Recomputed from the committed data/ rather than fetched from the deployed site: this must
+      # keep working on a day when the Cloudflare deploy is what broke.
+      - name: recompute status
+        run: .venv/bin/castcheck status --no-fail-on-gaps
+      - name: find slots overdue by more than 24 h
+        id: gaps
+        run: |
+          set +e
+          PYTHONPATH=. .venv/bin/python scripts/health_gaps.py --github-output > body.md
+          rc=$?
+          cat body.md
+          # 0 = all clear, 2 = something is overdue. Anything else is the checker itself failing,
+          # and must fail the job: falling through would leave `overdue` unset, which the next step
+          # would read as an all-clear and use to close a real outage's issue.
+          if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
+            echo "health_gaps.py exited $rc — treating as a failure, not an all-clear" >&2
+            exit "$rc"
+          fi
+      - name: open, update or close the data-gap issue
+        env:
+          OVERDUE: ${{ steps.gaps.outputs.overdue }}
+        run: |
+          set -euo pipefail
+          TITLE="[$LABEL] data has been overdue for more than 24 h"
+          gh label create "$LABEL" --color D93F0B \
+            --description "Expected data is missing well past its deadline (opened automatically)" || true
+          NUMBER=$(gh issue list --state open --label "$LABEL" --limit 100 --json number,title \
+                   | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | first | .number // empty')
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          printf '\n---\n\n[health run](%s)\n' "$RUN_URL" >> body.md
+
+          if [ "${OVERDUE:-0}" -gt 0 ]; then
+            if [ -n "$NUMBER" ]; then
+              # One issue for the whole outage, updated in place: the body is always the current
+              # picture and the comments are the day-by-day history of it.
+              gh issue edit "$NUMBER" --body-file body.md
+              gh issue comment "$NUMBER" --body-file body.md
+              echo "updated #$NUMBER"
+            else
+              gh issue create --title "$TITLE" --label "$LABEL" --body-file body.md
+            fi
+          elif [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --body-file body.md
+            gh issue close "$NUMBER" --reason completed \
+              --comment "Nothing has been overdue by more than 24 h in this run — closing automatically."
+            echo "closed #$NUMBER"
+          else
+            echo "no overdue slots and no open $LABEL issue; nothing to do"
+          fi
+
+  report-failure:
+    needs: [health]
+    if: failure()
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: health
+      note: >-
+        The alarm itself failed, which means the data-gap alarm was not armed today. This is the one
+        failure that cannot be caught by the thing it monitors.

@@ -53,7 +53,8 @@
           <p class="kpi__label">Persistence baseline</p>
           <p class="kpi__value">{{ pers.mae if pers else '—' }}{% if pers %}<span class="unit">°F</span>{% endif %}</p>
           <p class="kpi__ci">{{ pers.mae_ci if pers else 'no baseline in this view' }}</p>
-          <p class="kpi__foot">yesterday's observation — the bar every model has to clear</p>
+          <p class="kpi__foot">the observation <code>lead_day</code> days earlier — the bar every
+          model has to clear at its own lead</p>
         </div>
         <div class="kpi">
           <p class="kpi__label">Scored days</p>

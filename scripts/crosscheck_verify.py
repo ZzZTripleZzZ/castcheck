@@ -22,14 +22,27 @@ a *magnitude* check on the extraction chain: Open-Meteo interpolates the same IF
 same point but at 9 km native resolution with its own downscaling, so agreement is expected within
 about ±1 °C, not to the last decimal.
 
-Run with ``PYTHONPATH=. .venv/bin/python scripts/crosscheck_verify.py [--no-network]``.
+Part 3 (``--compare-incremental OLD.parquet``) — the *incremental vs full* self-check run monthly by
+``consistency.yml``.  The daily pipeline derives only the last 14 days of initialisations
+(``derive --since 14``) and re-scores on top of whatever ``daily_forecasts`` already held; a bug in
+the upsert path, a dtype that rounds, or a shard written by an older code version would show up as a
+slow drift that no single day's run can see.  So once a month the whole archive is re-derived from
+``forecast_values`` and re-scored, and every published statistic is required to match the incremental
+answer to 1e-6.  ``as_of`` — and therefore the 30d/90d/365d window edges — is taken from the data
+(``max(climo_date)``), not the clock, so the comparison is deterministic as long as both sides see
+the same ``data/``; the workflow guarantees that by restoring ``data/`` to the commit that published
+the incremental scores.
+
+Run with ``PYTHONPATH=. .venv/bin/python scripts/crosscheck_verify.py [--no-network]`` or
+``... scripts/crosscheck_verify.py --compare-incremental /tmp/incremental_scores.parquet``.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 import urllib.request
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -321,8 +334,85 @@ def part2() -> int:
     return 0
 
 
+#: The statistics `consistency.yml` requires to be reproducible. `computed_at`, `period_end` and the
+#: bootstrap CI columns are deliberately absent: the first two are timestamps and the CIs come from a
+#: seeded resample of the *same* days, so they follow from `n` and the errors — if a CI moved without
+#: one of these moving, the seed derivation changed, which `test_verify.py` is the right place for.
+COMPARE_STATS = ["n", "n_debiased", "n_common", "mae", "bias", "rmse", "hit1f", "hit2f", "hit3f",
+                 "mae_debiased", "mae_persistence_common", "skill_persistence"]
+
+
+def _close(a: float, b: float, tol: float = TOL) -> bool:
+    """Equal within `tol`, scaled by magnitude; two NaNs count as equal, NaN vs a number does not."""
+    na, nb = pd.isna(a), pd.isna(b)
+    if na or nb:
+        return bool(na and nb)
+    return abs(float(a) - float(b)) <= tol * max(1.0, abs(float(a)))
+
+
+def part3(incremental: Path, tol: float = TOL) -> int:
+    """Compare the just-recomputed full ``data/scores/latest.parquet`` against a saved incremental one."""
+    full, _ = store.read_scores()
+    if full.empty:
+        print("no scores in data/ — run `castcheck derive --full && castcheck verify` first")
+        return 1
+    inc = pd.read_parquet(incremental)
+    print(f"incremental: {len(inc):>8} rows  ({incremental})")
+    print(f"full:        {len(full):>8} rows  (data/scores/latest.parquet)\n")
+
+    stats = [c for c in COMPARE_STATS if c in full.columns and c in inc.columns]
+    a = inc.set_index(KEY)[stats].sort_index()
+    b = full.set_index(KEY)[stats].sort_index()
+    only_inc, only_full = a.index.difference(b.index), b.index.difference(a.index)
+    both = a.index.intersection(b.index)
+    bad = 0
+
+    # A row that exists on one side only is a real inconsistency: with the same data/ in front of
+    # them, the two derivation paths must produce the same table, not merely agree where they overlap.
+    for label, idx in (("only in the incremental scores", only_inc), ("only in the full recompute", only_full)):
+        if len(idx):
+            bad += len(idx)
+            print(f"{len(idx)} row(s) {label}:")
+            for k in list(idx)[:10]:
+                print(f"  {'/'.join(str(x) for x in k)}")
+            if len(idx) > 10:
+                print(f"  …and {len(idx) - 10} more")
+            print()
+
+    worst: dict[str, tuple[float, str]] = {}
+    for stat in stats:
+        sa, sb = a.loc[both, stat], b.loc[both, stat]
+        for k, va, vb in zip(both, sa.to_numpy(), sb.to_numpy()):
+            if _close(va, vb, tol):
+                continue
+            bad += 1
+            d = float("inf") if (pd.isna(va) or pd.isna(vb)) else abs(float(va) - float(vb))
+            if stat not in worst or d > worst[stat][0]:
+                worst[stat] = (d, f"{'/'.join(str(x) for x in k)}  incremental={va!r} full={vb!r}")
+
+    print(f"{'stat':<24} {'compared':>10} {'mismatches':>11}   worst")
+    print("-" * 110)
+    for stat in stats:
+        n_bad = sum(1 for k, va, vb in zip(both, a.loc[both, stat].to_numpy(), b.loc[both, stat].to_numpy())
+                    if not _close(va, vb, tol))
+        note = f"Δ={worst[stat][0]:.3e}  {worst[stat][1]}" if stat in worst else ""
+        print(f"{stat:<24} {len(both):>10} {n_bad:>11}   {note}")
+    print(f"\n{'FAILED' if bad else 'OK'}: {bad} difference(s) beyond {tol:g} between the incremental "
+          f"and the full recompute")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--no-network", action="store_true", help="skip the Open-Meteo magnitude check")
+    ap.add_argument("--compare-incremental", metavar="OLD.parquet", default="",
+                    help="incremental-vs-full mode: compare data/scores/latest.parquet with this file "
+                         "instead of running the naive recomputation")
+    ap.add_argument("--tol", type=float, default=TOL, help=f"absolute tolerance (default {TOL:g})")
+    args = ap.parse_args()
+    if args.compare_incremental:
+        raise SystemExit(part3(Path(args.compare_incremental), args.tol))
     rc = part1()
-    if "--no-network" not in sys.argv:
+    if not args.no_network:
         part2()
     raise SystemExit(rc)

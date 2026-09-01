@@ -85,7 +85,10 @@ def test_post_text_leads_with_the_result_and_fits_bluesky():
     text = bluesky.post_text(sel, window)
     assert len(text) <= bluesky.MAX_POST_CHARS
     first = text.splitlines()[0]
-    assert first.startswith("Best raw 2 m temperature forecast at lead day 1 over the last 90 days:")
+    # The claim is qualified: a model with a lower MAE but n < MIN_N is drawn on the chart and can
+    # sit above the announced leader, so "best" must say which set it is best of.
+    assert first.startswith("Best raw 2 m temperature forecast of the models with n≥30 "
+                            "at lead day 1 over the last 90 days:")
     assert "ECMWF IFS HRES" in first        # display name, not the model_id
     assert "2.7 °F MAE" in first            # 1.5 °C -> 2.7 °F
     assert "n=88" in first
@@ -181,3 +184,106 @@ def test_kaggle_status_output_decides_create_vs_version(monkeypatch):
     for result, expected in cases:
         monkeypatch.setattr(subprocess, "run", lambda *a, _r=result, **k: _r)
         assert kaggle.dataset_exists("slug", {}) is expected
+
+
+# --------------------------------------------------- Hugging Face annual squash (DESIGN §7)
+
+
+class _FakeApi:
+    """Just enough HfApi to exercise maybe_squash without a token or a network."""
+
+    def __init__(self, n_commits: int = 5, raises: Exception | None = None):
+        self._n = n_commits
+        self._raises = raises
+        self.squashed: list[str] = []
+
+    def list_repo_commits(self, repo_id, repo_type):  # noqa: ARG002 - signature mirrors HfApi
+        return [f"c{i}" for i in range(self._n)]
+
+    def super_squash_history(self, repo_id, repo_type, commit_message):  # noqa: ARG002
+        if self._raises:
+            raise self._raises
+        self.squashed.append(commit_message)
+        self._n = 1
+
+
+def test_squash_is_due_only_on_new_years_day():
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    assert hf.squash_is_due(datetime(2027, 1, 1, 11, tzinfo=UTC))
+    assert not hf.squash_is_due(datetime(2027, 1, 2, 11, tzinfo=UTC))
+    assert not hf.squash_is_due(datetime(2027, 6, 1, 11, tzinfo=UTC))
+    assert not hf.squash_is_due(datetime(2026, 12, 31, 23, tzinfo=UTC))
+
+
+def test_squash_env_override_forces_and_disables():
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    ordinary, newyear = datetime(2027, 6, 1, tzinfo=UTC), datetime(2027, 1, 1, tzinfo=UTC)
+    assert hf.squash_is_due(ordinary, force="1")
+    assert not hf.squash_is_due(newyear, force="0")
+
+
+def test_maybe_squash_collapses_history_on_january_first():
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    api = _FakeApi(n_commits=365)
+    out = hf.maybe_squash(api, "castcheck/x", now=datetime(2027, 1, 1, 11, tzinfo=UTC))
+    assert len(api.squashed) == 1
+    assert "2027-01-01" in api.squashed[0]
+    assert "365" in out and "history is gone" in out
+
+
+def test_maybe_squash_does_nothing_on_any_other_day():
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    api = _FakeApi(n_commits=365)
+    assert hf.maybe_squash(api, "castcheck/x", now=datetime(2027, 3, 4, tzinfo=UTC)) == ""
+    assert api.squashed == []
+
+
+def test_maybe_squash_is_idempotent_within_the_day():
+    """The already-squashed repo has one commit, so a second push on 1 Jan is a no-op."""
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    api, jan1 = _FakeApi(n_commits=12), datetime(2027, 1, 1, tzinfo=UTC)
+    hf.maybe_squash(api, "castcheck/x", now=jan1)
+    second = hf.maybe_squash(api, "castcheck/x", now=jan1)
+    assert len(api.squashed) == 1
+    assert "not needed" in second
+
+
+def test_a_failed_squash_never_blocks_the_days_upload():
+    """Housekeeping must degrade to a log line: the data push is the thing that matters."""
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    api = _FakeApi(n_commits=99, raises=RuntimeError("403 forbidden"))
+    out = hf.maybe_squash(api, "castcheck/x", now=datetime(2027, 1, 1, tzinfo=UTC))
+    assert out.startswith("squash FAILED")
+    assert "403 forbidden" in out
+
+
+def test_maybe_squash_survives_an_unlistable_repo():
+    from datetime import UTC, datetime
+
+    from castcheck.publish import hf
+
+    class Broken(_FakeApi):
+        def list_repo_commits(self, repo_id, repo_type):
+            raise ConnectionError("hub down")
+
+    out = hf.maybe_squash(Broken(), "castcheck/x", now=datetime(2027, 1, 1, tzinfo=UTC))
+    assert out.startswith("squash skipped")
+    assert "hub down" in out

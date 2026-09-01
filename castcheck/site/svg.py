@@ -22,14 +22,25 @@ from html import escape
 from .assets.us_outline import US_OUTLINE
 
 __all__ = [
+    "SERIES_CLASSES",
     "availability_row",
     "bias_class",
+    "grouped_bias_bars",
     "histogram",
     "line_chart",
     "mae_bars",
+    "multi_line",
     "sparkline",
     "us_map",
 ]
+
+#: Categorical colours for the diagnostic figures, defined in ``site.css`` as ``--f1 … --f8`` and
+#: applied through ``color`` so that one class works for both a fill and a stroke.  They are keyed
+#: on the *family*, not the model id, so the two initial-condition variants of one architecture
+#: share a hue and are told apart by the dash pattern — and, in every figure, by a label printed
+#: next to the mark, because colour is never the only encoding here either.
+SERIES_CLASSES = tuple(f"c-f{i}" for i in range(1, 9))
+BASELINE_CLASS = "c-fx"
 
 # Diverging fill for a bias value, warm = too warm (positive), cool = too cold (negative).
 # The classes are defined in site.css and are always paired with a text sign (+/−) so that the
@@ -509,5 +520,199 @@ def mae_bars(
                 out.append(f'<line class="c-ci" x1="{_fmt(xx, 1)}" y1="{_fmt(cy - 4, 1)}" '
                            f'x2="{_fmt(xx, 1)}" y2="{_fmt(cy + 4, 1)}"/>')
         out.append(_text(width - 6, cy + 4, _fmt(float(r["mae"]), 2), anchor="end", cls="c-val"))
+    out.append("</svg>")
+    return "".join(out)
+
+
+# ------------------------------------------------------------------------------------------
+# diagnostics: diurnal structure and the error against lead day
+# ------------------------------------------------------------------------------------------
+
+def _zero_ticks(lo: float, hi: float, want: int = 4) -> tuple[list[float], float, float]:
+    """Round tick values spanning ``[lo, hi]`` and always including zero.
+
+    A bias axis has to show zero — a bar chart of signed values is meaningless without it — so the
+    domain is extended to contain it and then snapped outwards to a round step.
+    """
+    lo, hi = min(lo, 0.0), max(hi, 0.0)
+    step = _nice((hi - lo) / max(want, 1) or 1.0)
+    start = math.floor(lo / step + 1e-9) * step
+    stop = math.ceil(hi / step - 1e-9) * step
+    n = int(round((stop - start) / step))
+    if n == 0:  # every value is zero: keep an axis rather than a degenerate point
+        start, stop, n = -step, step, 2
+    ticks = [start + i * step for i in range(n + 1)]
+    # floating point leaves 1e-17 where zero should be; the label would read "-0"
+    ticks = [0.0 if abs(t) < step * 1e-6 else t for t in ticks]
+    return ticks, ticks[0], ticks[-1]
+
+
+def grouped_bias_bars(
+    groups: list[dict],
+    *,
+    categories: list[str],
+    label: str,
+    unit: str = "°F",
+    width: float = 760.0,
+    name_w: float = 196.0,
+    bar_h: float = 9.0,
+    bar_gap: float = 2.0,
+    band_gap: float = 12.0,
+) -> str:
+    """One band per model, one bar per category, diverging from a shared zero.
+
+    ``groups`` carry ``name``, ``values`` (one per category, ``None`` allowed), ``cls`` (a
+    :data:`SERIES_CLASSES` entry) and optionally ``baseline`` and ``titles``.  Each bar's identity
+    is the model name at the left of its band and the category tick beside it, so the colour only
+    ties a model to the same model in the other figure — it carries no value of its own.
+    """
+    bands = [g for g in groups if any(v is not None for v in g.get("values") or ())]
+    if not bands or not categories:
+        return f'<p class="dimtext">{escape(label)}: no scored days yet.</p>'
+
+    top, bottom = 16.0, 30.0
+    band_h = bar_h * len(categories) + bar_gap * (len(categories) - 1)
+    height = top + (band_h + band_gap) * len(bands) - band_gap + bottom
+    val_w = 46.0
+    left, right = name_w, width - val_w - 6.0
+    finite = [float(v) for g in bands for v in g["values"] if v is not None]
+    ticks, lo, hi = _zero_ticks(min(finite), max(finite))
+
+    def px(v: float) -> float:
+        return left + (v - lo) / (hi - lo) * (right - left)
+
+    out = _open(width, height, label)
+    for t in ticks:
+        x = px(t)
+        cls = "c-zero" if t == 0 else "c-grid"
+        out.append(f'<line class="{cls}" x1="{_fmt(x, 1)}" y1="{_fmt(top - 6)}" '
+                   f'x2="{_fmt(x, 1)}" y2="{_fmt(height - bottom + 2)}"/>')
+        out.append(_text(x, height - bottom + 16, ("+" if t > 0 else "") + _fmt(t, 2),
+                         anchor="middle"))
+    out.append(_text((left + right) / 2, height - 3, f"bias, {unit} (forecast − observed)",
+                     anchor="middle", cls="c-axis-title"))
+
+    x0 = px(0.0)
+    for bi, g in enumerate(bands):
+        band_top = top + (band_h + band_gap) * bi
+        cls = BASELINE_CLASS if g.get("baseline") else g.get("cls", SERIES_CLASSES[0])
+        lbl_cls = "c-lbl is-baseline" if g.get("baseline") else "c-lbl"
+        out.append(_text(left - 44, band_top + band_h / 2 + 4, g["name"], anchor="end",
+                         cls=lbl_cls))
+        out.append(f'<g class="{cls}">')
+        for ci, cat in enumerate(categories):
+            v = g["values"][ci] if ci < len(g["values"]) else None
+            y = band_top + (bar_h + bar_gap) * ci
+            out.append(_text(left - 8, y + bar_h - 1, cat, anchor="end", cls="c-tick"))
+            if v is None:
+                out.append(_text(width - 6, y + bar_h - 1, "—", anchor="end", cls="c-val"))
+                continue
+            x1 = px(float(v))
+            title = (g.get("titles") or [None] * len(categories))[ci] or (
+                f"{g['name']} {cat}: {'+' if v > 0 else ''}{_fmt(float(v), 2)} {unit}")
+            out.append(
+                f'<rect class="c-band" x="{_fmt(min(x0, x1), 1)}" y="{_fmt(y, 1)}" '
+                f'width="{_fmt(max(abs(x1 - x0), 0.6), 1)}" height="{_fmt(bar_h)}" rx="1">'
+                f"<title>{escape(title)}</title></rect>")
+            out.append(_text(width - 6, y + bar_h - 1,
+                             ("+" if v > 0 else "") + _fmt(float(v), 2), anchor="end",
+                             cls="c-val"))
+        out.append("</g>")
+    out.append("</svg>")
+    return "".join(out)
+
+
+def multi_line(
+    x_labels: list[str],
+    series: list[dict],
+    *,
+    label: str,
+    unit: str = "°F",
+    x_title: str = "",
+    width: float = 760.0,
+    height: float = 320.0,
+    right: float = 176.0,
+) -> str:
+    """One line per model against a shared categorical x axis, labelled at its right-hand end.
+
+    ``series`` carry ``name``, ``values`` (``None`` allowed), ``cls`` and optionally ``alt`` (dash
+    the stroke) and ``baseline``.  Every line is named where it ends — a legend that cannot be
+    mismatched to the wrong colour, and the only encoding a reader without colour vision needs.
+    """
+    lines = [s for s in series if any(v is not None for v in s.get("values") or ())]
+    n = len(x_labels)
+    if not lines or n == 0:
+        return f'<p class="dimtext">{escape(label)}: no scored days yet.</p>'
+
+    left, top, bottom = 46.0, 14.0, 34.0
+    iw, ih = width - left - right, height - top - bottom
+    finite = [float(v) for s in lines for v in s["values"] if v is not None]
+    ticks, lo, hi = _zero_ticks(min(finite), max(finite), want=5)
+
+    def px(i: int) -> float:
+        return left + (iw / 2 if n < 2 else i * iw / (n - 1))
+
+    def py(v: float) -> float:
+        return top + ih - (v - lo) / (hi - lo) * ih
+
+    out = _open(width, height, label)
+    for t in ticks:
+        y = py(t)
+        cls = "c-zero" if t == 0 else "c-grid"
+        out.append(f'<line class="{cls}" x1="{_fmt(left)}" x2="{_fmt(left + iw)}" '
+                   f'y1="{_fmt(y, 1)}" y2="{_fmt(y, 1)}"/>')
+        out.append(_text(left - 6, y + 3.5, ("+" if t > 0 else "") + _fmt(t, 2), anchor="end"))
+    for i, xl in enumerate(x_labels):
+        out.append(_text(px(i), height - bottom + 16, xl, anchor="middle"))
+    if x_title:
+        out.append(_text(left + iw / 2, height - 6, x_title, anchor="middle", cls="c-axis-title"))
+    out.append(_text(left - 6, top - 4, f"{unit}", anchor="end", cls="c-tick dim"))
+
+    ends: list[tuple[float, dict]] = []
+    for s in lines:
+        cls = BASELINE_CLASS if s.get("baseline") else s.get("cls", SERIES_CLASSES[0])
+        stroke = "c-line is-baseline" if s.get("baseline") else (
+            "c-line is-alt" if s.get("alt") else "c-line")
+        seg: list[str] = []
+        started = False
+        last: tuple[float, float] | None = None
+        out.append(f'<g class="{cls}">')
+        for i, v in enumerate(s["values"][:n]):
+            if v is None:
+                started = False
+                continue
+            x, y = px(i), py(float(v))
+            seg.append(("L" if started else "M") + f"{_fmt(x, 1)} {_fmt(y, 1)}")
+            started = True
+            last = (x, y)
+        if seg:
+            out.append(f'<path class="{stroke}" d="{" ".join(seg)}"/>')
+        for i, v in enumerate(s["values"][:n]):
+            if v is None:
+                continue
+            out.append(
+                f'<circle class="c-dot" cx="{_fmt(px(i), 1)}" cy="{_fmt(py(float(v)), 1)}" '
+                f'r="2"><title>{escape(s["name"])} {escape(x_labels[i])}: '
+                f"{'+' if v > 0 else ''}{_fmt(float(v), 2)} {unit}</title></circle>")
+        out.append("</g>")
+        if last is not None:
+            ends.append((last[1], {**s, "cls": cls, "x": last[0], "y": last[1]}))
+
+    # Direct labels, pushed apart so that two lines finishing at the same value stay readable.
+    gap = 12.0
+    ends.sort(key=lambda t: t[0])
+    placed: list[float] = []
+    for y, _s in ends:
+        y = max(y, (placed[-1] + gap) if placed else top + 4)
+        placed.append(y)
+    overflow = placed[-1] - (height - bottom) if placed else 0.0
+    if overflow > 0:
+        placed = [y - overflow for y in placed]
+    for (y0, s), y1 in zip(ends, placed, strict=True):
+        out.append(f'<g class="{s["cls"]}">')
+        out.append(f'<path class="c-leader" d="M{_fmt(s["x"], 1)} {_fmt(y0, 1)} '
+                   f'L{_fmt(width - right + 10)} {_fmt(y1, 1)}"/>')
+        out.append(_text(width - right + 14, y1 + 3.5, s["name"], cls="c-endlbl"))
+        out.append("</g>")
     out.append("</svg>")
     return "".join(out)

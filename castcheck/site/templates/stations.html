@@ -8,9 +8,10 @@
   <h1 class="hero__title">Stations</h1>
   <p class="hero__scope hero__scope--lede">Every station is a first-order NWS site that issues a
   Daily Climate Report (CLI) and reports routine hourly METARs. The stations are not a random
-  sample: all {{ rows|length }} are major city airports chosen because a daily temperature contract
-  settles on them, which biases the set towards the dry south-west and the north-east corridor
-  (<a href="/methodology/#1-scope">methodology §1</a>). The climatological day is local
+  sample: 22 of the {{ rows|length }} are major city airports and one is New York Central Park,
+  chosen because a daily temperature contract settles on them, which biases the set towards the dry
+  south-west and the north-east corridor
+  (<a href="/methodology/#11-how-the-23-stations-were-chosen">methodology §1.1</a>). The climatological day is local
   <em>standard</em> time all year, so each station carries a fixed UTC offset and daylight saving is
   never applied (<a href="/methodology/#21-climatological-day">methodology §2.1</a>).</p>
   <dl class="metastrip">

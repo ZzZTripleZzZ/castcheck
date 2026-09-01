@@ -1,10 +1,15 @@
 # CastCheck
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22212363.svg)](https://doi.org/10.5281/zenodo.22212363)
+[![tests](https://github.com/ZzZTripleZzZ/castcheck/actions/workflows/test.yml/badge.svg)](https://github.com/ZzZTripleZzZ/castcheck/actions/workflows/test.yml)
+[![Licence: MIT](https://img.shields.io/badge/code-MIT-blue.svg)](LICENSE)
+[![Data: CC BY 4.0](https://img.shields.io/badge/data-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+
 **Independent, daily, station-level verification of public weather forecasts.**
 
-Every day CastCheck takes the *raw* 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES, NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational runs of GraphCast, Pangu-Weather, FourCastNet v2 and Aurora from both GFS and IFS initial conditions), extracts them at 23 U.S. airport stations, and scores them against observations. Every *station × model × lead day* gets a permanent URL with confidence intervals; the full history is an open dataset.
+Every day CastCheck takes the *raw* 2 m temperature forecasts of operational NWP models (ECMWF IFS HRES, NCEP GFS) and AI models (ECMWF AIFS Single; NOAA/CIRA operational runs of GraphCast, Pangu-Weather, FourCastNet v2 and Aurora from both GFS and IFS initial conditions), extracts them at 23 U.S. first-order stations (22 major airports plus New York Central Park), and scores them against observations. Every *station × model × lead day* gets a permanent URL with confidence intervals; the full history is an open dataset.
 
-The headline metric (methodology v0.3) is **`t2`**: the instantaneous 2 m temperature at 00/06/12/18 UTC, verified against the observation at the *same* instants, pooled over the four. Daily extremes are published two ways — `tmax_s`/`tmin_s`, the max/min of the four forecast samples against the max/min of the four *observed* samples (like for like), and `tmax_cli`/`tmin_cli`, the same forecast samples against the true NWS Daily Climate Report extremes. The second carries a sampling penalty whose size depends on each model's own diurnal amplitude, so it is published for operational relevance and never used for ranking.
+The headline metric (methodology v0.3.1) is **`t2`**: the instantaneous 2 m temperature at 00/06/12/18 UTC, verified against the observation at the *same* instants, pooled over the four. Daily extremes are published two ways — `tmax_s`/`tmin_s`, the max/min of the four forecast samples against the max/min of the four *observed* samples (like for like), and `tmax_cli`/`tmin_cli`, the same forecast samples against the true NWS Daily Climate Report extremes. The second carries a sampling penalty whose size depends on each model's own diurnal amplitude, so it is published for operational relevance and never used for ranking.
 
 - Site: https://castcheck.zifanzhang.com
 - Methodology: [METHODOLOGY.md](METHODOLOGY.md) (versioned with the data)
@@ -18,10 +23,10 @@ The headline metric (methodology v0.3) is **`t2`**: the instantaneous 2 m temper
 
 ```
 ECMWF Open Data (.index byte-range)  ┐
-AWS AIWP (remote lazy NetCDF)        ├─▶ station values ─▶ daily extremes per lead day ─┐
-AWS GFS (.idx byte-range)            ┘                                                   ├─▶ scores + bootstrap CIs ─▶ site / API / datasets
-IEM ASOS (routine METAR at 00/06/12/18 UTC) ─▶ truth_instant ─────────────────────────────┤
-NWS CLI (first final report), CF6, hourly obs, IEM archive ─▶ truth_daily with QC flags ──┘
+AWS AIWP (remote lazy NetCDF)        ├─▶ station t2 at 00/06/12/18 UTC ─▶ + daily extremes per lead day ─┐
+AWS GFS (.idx byte-range)            ┘                                                                    ├─▶ scores + bootstrap CIs ─▶ site / API / datasets
+IEM ASOS (routine METAR at 00/06/12/18 UTC) ─▶ truth_instant ──────────────────────────────────────────────┤
+NWS CLI (first final report), CF6, hourly obs, IEM archive ─▶ truth_daily with QC flags ───────────────────┘
 ```
 
 ## Published tables
@@ -64,9 +69,17 @@ token-gated and all support `--dry-run`:
 
 ## Data licences
 
-ECMWF Open Data (CC-BY-4.0) · NOAA/NCEP GFS and NWS products (public domain) · NOAA/CIRA AIWP (open data) · Iowa Environmental Mesonet AFOS archive. CastCheck's published tables are CC-BY-4.0; code is MIT.
+ECMWF Open Data — © ECMWF, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the values
+here are interpolated to a station from the published 0.25° fields and are not endorsed by ECMWF.
+NOAA/NCEP GFS and NWS products (CLI, CF6, ASOS observations) are U.S. Government works in the public
+domain; NOAA/CIRA AIWP is NOAA open data — cite the AIWP paper
+([doi:10.1175/BAMS-D-24-0057.1](https://doi.org/10.1175/BAMS-D-24-0057.1)). Historic NWS text
+products come from the Iowa Environmental Mesonet AFOS archive (Iowa State University). CastCheck's
+published tables are CC-BY-4.0; code is MIT.
 
-Please cite as: *CastCheck, methodology v0.3, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+Please cite as: *CastCheck, methodology v0.3.1, doi:10.5281/zenodo.22212363, https://castcheck.zifanzhang.com (accessed YYYY-MM-DD).*
+`10.5281/zenodo.22212363` is the concept DOI and always resolves to the latest release; to cite one
+release use its version DOI (v0.3.3: `10.5281/zenodo.22237426`).
 Machine-readable metadata is in [CITATION.cff](CITATION.cff).
 The methodology version that produced a given table is in its own `methodology_version` column, and in
 `castcheck.METHODOLOGY_VERSION`; cite the version you actually used.

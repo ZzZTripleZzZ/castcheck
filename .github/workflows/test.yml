@@ -21,3 +21,16 @@ jobs:
       # eccodes >= 2.43 pulls the `eccodeslib` manylinux wheel, so cfgrib works with no apt install.
       - run: .venv/bin/python -c "import eccodes, cfgrib; print('eccodes', eccodes.codes_get_api_version())"
       - run: .venv/bin/python -m pytest -q -m "not network"
+
+  report-failure:
+    # Only for pushes to main. A failing PR check is already in front of the person who caused it;
+    # an issue per red PR would be noise, and noise is how an alerting label stops being read.
+    needs: [test]
+    if: failure() && github.event_name == 'push'
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: tests (main)
+      note: >-
+        `main` is red. Every scheduled workflow installs from this same lockfile, so treat a red
+        main as an outage in waiting rather than a chore.

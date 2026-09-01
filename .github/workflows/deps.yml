@@ -1,0 +1,140 @@
+name: deps
+# Monthly dependency refresh (DESIGN §7). Left alone, a pinned lockfile is a slow-motion outage: in
+# a few years the wheels stop building on the current runner image, a CVE lands in `requests`, or
+# `eccodeslib` drops the manylinux tag the whole GRIB path depends on. Once a month the lock is
+# upgraded, the full test suite runs against it, and the result arrives as a **pull request** —
+# never an automatic merge. A dependency bump that silently changes a published number is precisely
+# the failure this project exists to make visible, so a human reads the diff.
+on:
+  schedule:
+    - cron: "0 4 1 * *"     # 04:00Z on the 1st
+  workflow_dispatch:
+concurrency: { group: deps, cancel-in-progress: false }
+permissions: { contents: write, pull-requests: write }
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0 }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { enable-cache: true, cache-dependency-glob: "pyproject.toml" }
+
+      - name: upgrade the lockfile
+        run: |
+          set -euo pipefail
+          cp uv.lock uv.lock.before
+          uv lock --upgrade
+
+      - name: summarise the version changes
+        id: diff
+        run: |
+          set -euo pipefail
+          if cmp -s uv.lock.before uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "nothing to upgrade"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          # uv.lock is TOML with one [[package]] block per dependency, so name/version pairs can be
+          # read off it without installing anything. The table below is the PR description.
+          summarise() {
+            python3 - "$1" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          out = {}
+          for block in text.split("[[package]]")[1:]:
+              n = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
+              v = re.search(r'^version\s*=\s*"([^"]+)"', block, re.M)
+              if n and v:
+                  out[n.group(1)] = v.group(1)
+          for k in sorted(out):
+              print(f"{k}\t{out[k]}")
+          PY
+          }
+          summarise uv.lock.before > before.tsv
+          summarise uv.lock > after.tsv
+          python3 - <<'PY' > changes.md
+          def read(p):
+              return dict(line.rstrip("\n").split("\t") for line in open(p, encoding="utf-8"))
+          b, a = read("before.tsv"), read("after.tsv")
+          rows = []
+          for name in sorted(set(b) | set(a)):
+              ov, nv = b.get(name), a.get(name)
+              if ov == nv:
+                  continue
+              rows.append(f"| `{name}` | {ov or '—'} | {nv or '—'} | "
+                          f"{'added' if ov is None else 'removed' if nv is None else 'upgraded'} |")
+          print(f"**{len(rows)} package(s) changed.**\n")
+          print("| package | before | after | |")
+          print("|---|---|---|---|")
+          print("\n".join(rows) if rows else "| _(metadata only)_ | | | |")
+          PY
+          cat changes.md
+          rm -f uv.lock.before before.tsv after.tsv
+
+      - name: install and test against the new lock
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --extra publish
+          uvx ruff@0.16.5 check --no-cache .
+          .venv/bin/python -c "import eccodes, cfgrib; print('eccodes', eccodes.codes_get_api_version())"
+          .venv/bin/python -m pytest -q -m "not network"
+
+      # Needs "Allow GitHub Actions to create and approve pull requests" in Settings > Actions >
+      # General. Without it `gh pr create` fails with 403 and this workflow's own failure handler
+      # files the issue that says so.
+      - name: open a pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BRANCH="deps/uv-lock-$(date -u +%Y-%m)"
+          git config user.name  "castcheck-bot"
+          git config user.email "castcheck-bot@users.noreply.github.com"
+          # -B and --force: the branch is bot-owned and named after the month, so re-running the
+          # workflow in the same month replaces its own previous attempt rather than conflicting
+          # with it. Nothing but this workflow ever writes to `deps/*`.
+          git checkout -B "$BRANCH"
+          git add uv.lock
+          git commit -m "[deps] uv lock --upgrade ($(date -u +%Y-%m))"
+          git push --force origin "$BRANCH"
+
+          {
+            echo "\`uv lock --upgrade\`, run by \`deps.yml\` on $(date -u +%Y-%m-%d)."
+            echo
+            cat changes.md
+            echo
+            echo "Ruff, the eccodes/cfgrib import check and \`pytest -m 'not network'\` all passed"
+            echo "against this lockfile before the PR was opened."
+            echo
+            echo "**Not auto-merged on purpose.** Skim for anything that could move a published"
+            echo "number — numpy, pandas, pyarrow, eccodes/eccodeslib, xarray — and, if one of those"
+            echo "moved, dispatch \`consistency.yml\` on the branch before merging."
+          } > pr.md
+
+          # A month where nothing was merged should update the standing PR, not stack a second one.
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq 'first | .number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --body-file pr.md
+            echo "updated PR #$EXISTING"
+          else
+            gh pr create --base main --head "$BRANCH" --title "[deps] monthly uv lock upgrade ($(date -u +%Y-%m))" \
+              --body-file pr.md
+          fi
+
+  report-failure:
+    needs: [update]
+    if: failure()
+    permissions: { contents: read, issues: write }
+    uses: ./.github/workflows/_failure-issue.yml
+    with:
+      workflow: deps
+      note: >-
+        The monthly dependency upgrade did not produce a mergeable PR. If the *tests* failed, an
+        upstream release has broken something — that is the news, and it is better to hear it here
+        than at the next scheduled fetch. The existing lockfile is untouched either way.

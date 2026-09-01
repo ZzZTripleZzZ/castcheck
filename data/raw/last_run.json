@@ -11,12 +11,12 @@
       "summary": "aurora_gfs 2026-01-01..2026-07-31: 347/424 runs with data"
     },
     "build-site": {
-      "castcheck_version": "0.1.0",
-      "duration_s": 1311.926,
+      "castcheck_version": "0.3.3",
+      "duration_s": 275.201,
       "exit_code": 0,
-      "finished_at": "2026-09-01T15:24:42+00:00",
-      "last_success_at": "2026-09-01T15:24:42+00:00",
-      "started_at": "2026-09-01T15:02:50+00:00",
+      "finished_at": "2026-09-01T20:49:03+00:00",
+      "last_success_at": "2026-09-01T20:49:03+00:00",
+      "started_at": "2026-09-01T20:44:28+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
@@ -42,33 +42,43 @@
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
-      "duration_s": 47.621,
+      "duration_s": 300.613,
       "exit_code": 0,
-      "finished_at": "2026-09-01T20:30:03+00:00",
-      "last_success_at": "2026-09-01T20:30:03+00:00",
-      "started_at": "2026-09-01T20:29:16+00:00",
+      "finished_at": "2026-09-01T14:50:16+00:00",
+      "last_success_at": "2026-09-01T14:50:16+00:00",
+      "started_at": "2026-09-01T14:45:16+00:00",
       "status": "ok",
-      "summary": "3/7 run(s) with data"
+      "summary": "22/22 run(s) with data"
+    },
+    "prune-history": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "finished_at": "2026-09-01T19:57:22+00:00",
+      "last_success_at": "2026-09-01T19:57:22+00:00",
+      "started_at": "2026-09-01T19:57:22+00:00",
+      "status": "ok",
+      "summary": "would delete 0 of 5 snapshot(s), 0.0 MB; kept 5 (last 90 days + monthly)"
     },
     "publish-bluesky": {
       "castcheck_version": "0.1.0",
-      "duration_s": 25.108,
+      "duration_s": 0.341,
       "exit_code": 0,
-      "finished_at": "2026-08-31T00:00:48+00:00",
-      "last_success_at": "2026-08-31T00:00:48+00:00",
-      "started_at": "2026-08-31T00:00:23+00:00",
+      "finished_at": "2026-09-01T20:07:33+00:00",
+      "last_success_at": "2026-09-01T20:07:33+00:00",
+      "started_at": "2026-09-01T20:07:33+00:00",
       "status": "ok",
-      "summary": "dry-run: wrote /Users/zifanzhang/Documents/GitHub/castcheck/data/raw/bluesky_preview.png (49356 bytes)\n--- text ---\nBest raw Tmax forecast at lead day 1 over the last 90 days: Persistence (baseline) (3.9 \u00b0F MAE, n=59)\nRaw 0.25\u00b0 model output, no post-processing, scored against NWS climate reports.\nhttps://castcheck.zifanzhang.com\n--- alt ---\nHorizontal bar chart, 3 models, of the mean absolute error in \u00b0F of the daily maximum temperature forecast at lead day 1 from the 00Z cycle over the last 90 days, averaged over 23 U.S. airport stations, with bootstrap 95% confidence intervals; data through 2026-08-29. Values: NCEP GFS 3.3 (n=16), ECMWF IFS HRES 3.4 (n=1), Persistence (baseline) 3.9 (n=59)."
+      "summary": "dry-run: wrote data/raw/bluesky_preview.png (108220 bytes)"
     },
     "publish-hf": {
       "castcheck_version": "0.1.0",
-      "duration_s": 5.105,
+      "duration_s": 0.013,
       "exit_code": 0,
-      "finished_at": "2026-08-31T07:27:52+00:00",
-      "last_success_at": "2026-08-31T07:27:52+00:00",
-      "started_at": "2026-08-31T07:27:47+00:00",
+      "finished_at": "2026-09-01T20:06:53+00:00",
+      "last_success_at": "2026-09-01T20:06:53+00:00",
+      "started_at": "2026-09-01T20:06:53+00:00",
       "status": "ok",
-      "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
+      "summary": "dry-run: would push 102 parquet file(s), 115.3 MB, plus README.md (4826 chars) and METHODOLOGY.md to castcheck/temperature-verification (private=False, token=\u2026"
     },
     "publish-kaggle": {
       "castcheck_version": "0.1.0",
@@ -80,15 +90,25 @@
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
+    "status": {
+      "castcheck_version": "0.1.0",
+      "duration_s": 3.692,
+      "exit_code": 0,
+      "finished_at": "2026-09-01T20:06:58+00:00",
+      "last_success_at": "2026-09-01T20:06:58+00:00",
+      "started_at": "2026-09-01T20:06:55+00:00",
+      "status": "ok",
+      "summary": "26 gap(s) today"
+    },
     "truth": {
       "castcheck_version": "0.1.0",
-      "duration_s": 5.849,
+      "duration_s": 8.727,
       "exit_code": 0,
-      "finished_at": "2026-09-01T19:17:37+00:00",
-      "last_success_at": "2026-09-01T19:17:37+00:00",
-      "started_at": "2026-09-01T19:17:31+00:00",
+      "finished_at": "2026-09-01T14:50:31+00:00",
+      "last_success_at": "2026-09-01T14:50:31+00:00",
+      "started_at": "2026-09-01T14:50:23+00:00",
       "status": "ok",
-      "summary": "2026-08-30: 46 rows, 23 final CLI"
+      "summary": "2026-08-31: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -102,31 +122,31 @@
     },
     "truth-instant": {
       "castcheck_version": "0.1.0",
-      "duration_s": 4.245,
+      "duration_s": 4.956,
       "exit_code": 0,
-      "finished_at": "2026-09-01T19:17:42+00:00",
-      "last_success_at": "2026-09-01T19:17:42+00:00",
-      "started_at": "2026-09-01T19:17:38+00:00",
+      "finished_at": "2026-09-01T14:50:38+00:00",
+      "last_success_at": "2026-09-01T14:50:38+00:00",
+      "started_at": "2026-09-01T14:50:33+00:00",
       "status": "ok",
       "summary": "2026-08-31: 92 instants, 92 with a value (100.0%)"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.1.0",
-      "duration_s": 48.848,
+      "duration_s": 37.297,
       "exit_code": 0,
-      "finished_at": "2026-09-01T19:18:31+00:00",
-      "last_success_at": "2026-09-01T19:18:31+00:00",
-      "started_at": "2026-09-01T19:17:42+00:00",
+      "finished_at": "2026-09-01T14:51:16+00:00",
+      "last_success_at": "2026-09-01T14:51:16+00:00",
+      "started_at": "2026-09-01T14:50:39+00:00",
       "status": "ok",
       "summary": "2026-08-22..2026-08-30: 828 instants, 826 with a value (99.8%), gap_gt35min=2 suspect=1, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.1.0",
-      "duration_s": 0.265,
+      "duration_s": 0.912,
       "exit_code": 0,
-      "finished_at": "2026-09-01T19:18:32+00:00",
-      "last_success_at": "2026-09-01T19:18:32+00:00",
-      "started_at": "2026-09-01T19:18:32+00:00",
+      "finished_at": "2026-09-01T14:51:19+00:00",
+      "last_success_at": "2026-09-01T14:51:19+00:00",
+      "started_at": "2026-09-01T14:51:18+00:00",
       "status": "ok",
       "summary": "414 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
@@ -141,5 +161,5 @@
       "summary": "scores=407424 pairwise=1653220 as_of=2026-09-01"
     }
   },
-  "updated_at": "2026-09-01T20:30:03+00:00"
+  "updated_at": "2026-09-01T20:49:03+00:00"
 }
