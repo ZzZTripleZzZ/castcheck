@@ -12,11 +12,11 @@
     },
     "build-site": {
       "castcheck_version": "0.3.3",
-      "duration_s": 275.201,
+      "duration_s": 239.673,
       "exit_code": 0,
-      "finished_at": "2026-09-01T20:49:03+00:00",
-      "last_success_at": "2026-09-01T20:49:03+00:00",
-      "started_at": "2026-09-01T20:44:28+00:00",
+      "finished_at": "2026-09-01T21:07:09+00:00",
+      "last_success_at": "2026-09-01T21:07:09+00:00",
+      "started_at": "2026-09-01T21:03:10+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
@@ -71,22 +71,22 @@
       "summary": "dry-run: wrote data/raw/bluesky_preview.png (108220 bytes)"
     },
     "publish-hf": {
-      "castcheck_version": "0.1.0",
-      "duration_s": 0.013,
+      "castcheck_version": "0.3.3",
+      "duration_s": 17.532,
       "exit_code": 0,
-      "finished_at": "2026-09-01T20:06:53+00:00",
-      "last_success_at": "2026-09-01T20:06:53+00:00",
-      "started_at": "2026-09-01T20:06:53+00:00",
+      "finished_at": "2026-09-01T21:09:35+00:00",
+      "last_success_at": "2026-09-01T21:09:35+00:00",
+      "started_at": "2026-09-01T21:09:17+00:00",
       "status": "ok",
-      "summary": "dry-run: would push 102 parquet file(s), 115.3 MB, plus README.md (4826 chars) and METHODOLOGY.md to castcheck/temperature-verification (private=False, token=\u2026"
+      "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
-      "castcheck_version": "0.1.0",
-      "duration_s": 31.357,
+      "castcheck_version": "0.3.3",
+      "duration_s": 46.327,
       "exit_code": 0,
-      "finished_at": "2026-08-31T07:28:24+00:00",
-      "last_success_at": "2026-08-31T07:28:24+00:00",
-      "started_at": "2026-08-31T07:27:53+00:00",
+      "finished_at": "2026-09-01T21:10:22+00:00",
+      "last_success_at": "2026-09-01T21:10:22+00:00",
+      "started_at": "2026-09-01T21:09:35+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
@@ -161,5 +161,5 @@
       "summary": "scores=407424 pairwise=1653220 as_of=2026-09-01"
     }
   },
-  "updated_at": "2026-09-01T20:49:03+00:00"
+  "updated_at": "2026-09-01T21:10:22+00:00"
 }
