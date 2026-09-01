@@ -42,13 +42,13 @@
     },
     "fetch-latest": {
       "castcheck_version": "0.1.0",
-      "duration_s": 300.613,
+      "duration_s": 47.621,
       "exit_code": 0,
-      "finished_at": "2026-09-01T14:50:16+00:00",
-      "last_success_at": "2026-09-01T14:50:16+00:00",
-      "started_at": "2026-09-01T14:45:16+00:00",
+      "finished_at": "2026-09-01T20:30:03+00:00",
+      "last_success_at": "2026-09-01T20:30:03+00:00",
+      "started_at": "2026-09-01T20:29:16+00:00",
       "status": "ok",
-      "summary": "22/22 run(s) with data"
+      "summary": "3/7 run(s) with data"
     },
     "publish-bluesky": {
       "castcheck_version": "0.1.0",
@@ -141,5 +141,5 @@
       "summary": "scores=407424 pairwise=1653220 as_of=2026-09-01"
     }
   },
-  "updated_at": "2026-09-01T19:18:32+00:00"
+  "updated_at": "2026-09-01T20:30:03+00:00"
 }
