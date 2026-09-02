@@ -83,6 +83,11 @@ curl -s {{ site_url }}/api/v1/status.json | jq '.ok, .n_current_gaps'</pre>
 
 <section>
 <h2 id="python">Python</h2>
+<p class="note">No key, no rate limit on our side. One platform caveat: Cloudflare's edge rejects the
+default <code>Python-urllib</code> User-Agent everywhere on the internet it fronts (error 1010) — that is
+not a CastCheck setting and applies to any Cloudflare-served site. <code>requests</code>, browsers,
+<code>curl</code> and an empty User-Agent all pass; for <code>urllib</code>/<code>pandas</code>, set any
+User-Agent string, as the examples below do.</p>
 <pre class="code">import urllib.request, json
 import pandas as pd
 
