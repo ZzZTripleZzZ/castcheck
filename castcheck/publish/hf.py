@@ -102,6 +102,11 @@ def dataset_card(repo: str) -> str:
 #: Uploaded to the dataset repo; `raw/` (logs, the run journal) and half-written shards stay local.
 ALLOW_PATTERNS = ["**/*.parquet"]
 IGNORE_PATTERNS = ["raw/**", "**/*.tmp.parquet", "**/.*"]
+# `upload_folder` never removes remote files, so a macOS/iCloud conflict copy ("name 2.parquet") that
+# was pushed once stays on the Hub forever and silently duplicates a shard for anyone globbing the
+# tree. Prune exactly those names — and nothing else, so a partial local data/ can never delete a
+# legitimate shard from the published dataset.
+DELETE_PATTERNS = ["**/* [0-9].parquet", "**/* [0-9][0-9].parquet"]
 
 
 def files_to_push() -> list[Path]:
@@ -209,7 +214,7 @@ def push_dataset(repo: str, private: bool = False, dry_run: bool = False) -> str
                     repo_type="dataset", commit_message="methodology")
     info = api.upload_folder(
         folder_path=str(DATA_DIR), path_in_repo="data", repo_id=repo, repo_type="dataset",
-        allow_patterns=ALLOW_PATTERNS, ignore_patterns=IGNORE_PATTERNS,
+        allow_patterns=ALLOW_PATTERNS, ignore_patterns=IGNORE_PATTERNS, delete_patterns=DELETE_PATTERNS,
         commit_message=f"data update {datetime.now(UTC):%Y-%m-%d}",
     )
     card_path.unlink(missing_ok=True)

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -157,17 +158,38 @@ def _set_where(target: pd.DataFrame, take: np.ndarray, updates: pd.DataFrame, co
         target[col] = merged.astype(dtype)
 
 
+#: One lock per shard path. ``backfill --workers N`` fans its fetches out as *threads* in a single
+#: process, so two of them routinely land on the same monthly shard. Serialising the whole
+#: read-merge-write cycle is what makes the upsert correct: without it the second writer merges into
+#: a snapshot taken before the first one landed and silently drops the first writer's rows.
+_SHARD_LOCKS: dict[Path, threading.Lock] = {}
+_SHARD_LOCKS_GUARD = threading.Lock()
+
+
+def _shard_lock(path: Path) -> threading.Lock:
+    with _SHARD_LOCKS_GUARD:
+        return _SHARD_LOCKS.setdefault(path, threading.Lock())
+
+
 def _write(df: pd.DataFrame, path: Path) -> None:
     """Write `df` to `path` atomically.
 
     The staging name is a dotfile that does **not** end in ``.parquet``, so no shard glob can match
-    it while it is being written; :func:`_is_shard` skips it even if a crash leaves it behind. The
-    pid keeps two writers of the same shard from staging into the same file.
+    it while it is being written; :func:`_is_shard` skips it even if a crash leaves it behind. It is
+    also unique per writer: the pid alone is not, because the backfill's workers are threads in one
+    process, and two of them staging into the same name means one renames a half-written file into
+    place (observed as ``Invalid data`` / ``FileNotFoundError`` on the next read).
     """
     table = pa.Table.from_pandas(df, preserve_index=False)
-    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
-    pq.write_table(table, _ensure(tmp), compression="zstd")
-    tmp.replace(path)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=_ensure(path).parent)
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        pq.write_table(table, tmp, compression="zstd")
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _upsert(existing: pd.DataFrame, new: pd.DataFrame, key: list[str], prefer_present_col: str | None) -> pd.DataFrame:
@@ -203,8 +225,9 @@ def upsert_forecast_values(df: pd.DataFrame) -> dict[str, int]:
     ym = df["init_time"].dt.strftime("%Y-%m")
     for (model_id, year_month), part in df.groupby([df["model_id"], ym]):
         path = forecast_values_path(model_id, year_month)
-        merged = _upsert(_read(path, FORECAST_VALUE_COLUMNS), part, FORECAST_VALUE_KEY, "missing_reason")
-        _write(_cast(merged, _FV_DTYPES), path)
+        with _shard_lock(path):
+            merged = _upsert(_read(path, FORECAST_VALUE_COLUMNS), part, FORECAST_VALUE_KEY, "missing_reason")
+            _write(_cast(merged, _FV_DTYPES), path)
         out[str(path.relative_to(DATA_DIR))] = len(merged)
     return out
 
