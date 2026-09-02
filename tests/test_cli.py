@@ -379,3 +379,23 @@ def test_prune_history_is_a_no_op_when_the_directory_is_missing(tmp_path, monkey
     res = runner.invoke(cli.app, ["prune-history"])
     assert res.exit_code == 0, res.output
     assert "deleted 0 of 0" in res.output
+
+
+def test_plan_runs_skips_inits_the_upstream_never_produced():
+    from datetime import UTC, datetime
+
+    from castcheck.cli import plan_runs
+    from castcheck.config import model_by_id
+
+    m = model_by_id("graphcast_gfs")
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    produced = {datetime(2026, 9, 1, 0, tzinfo=UTC)}  # upstream made 00Z but skipped 12Z
+    jobs = plan_runs([m], now, 1, have=lambda *_: set(), last_attempt=lambda *_: {},
+                     upstream=lambda *_: produced)
+    inits = [j[1] for j in jobs]
+    assert datetime(2026, 9, 1, 0, tzinfo=UTC) in inits
+    assert datetime(2026, 9, 1, 12, tzinfo=UTC) not in inits
+    # a failed listing (None) falls back to planning every candidate
+    jobs = plan_runs([m], now, 1, have=lambda *_: set(), last_attempt=lambda *_: {},
+                     upstream=lambda *_: None)
+    assert datetime(2026, 9, 1, 12, tzinfo=UTC) in [j[1] for j in jobs]

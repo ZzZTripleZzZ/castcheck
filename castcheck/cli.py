@@ -230,7 +230,8 @@ def _fetch_one(model: ModelSpec, init: datetime, station_ids: list[str] | None) 
 
 def plan_runs(models: list[ModelSpec], now: datetime, lookback_days: int,
               have: Callable[[ModelSpec, str, str], set], last_attempt: Callable[[ModelSpec, str, str], dict],
-              min_retry_h: float = DEFAULT_MIN_RETRY_H) -> list[tuple[ModelSpec, datetime]]:
+              min_retry_h: float = DEFAULT_MIN_RETRY_H,
+              upstream: Callable[[ModelSpec, str, str], set | None] | None = None) -> list[tuple[ModelSpec, datetime]]:
     """The (model, init) runs `fetch-latest` should fetch now. Pure, so it is testable without I/O.
 
     A run is planned when (a) enough time has passed since its initialisation that upstream should
@@ -245,11 +246,18 @@ def plan_runs(models: list[ModelSpec], now: datetime, lookback_days: int,
         complete = have(m, start, end)
         attempts = last_attempt(m, start, end)
         delay = timedelta(hours=availability_delay_h(m))
+        # AIWP publishes the GFS-initialised models only on alternating cycles, so a candidate init
+        # may simply not exist upstream. When a listing is available, plan only what upstream has;
+        # when the listing itself fails (None), fall back to planning every candidate.
+        produced = upstream(m, start, end) if upstream is not None else None
         for d in range(lookback_days + 1):
             day = (now - timedelta(days=d)).date()
             for hh in m.inits:
                 init = datetime(day.year, day.month, day.day, hh, tzinfo=UTC)
                 if init + delay > now:
+                    continue
+                if produced is not None and init not in produced:
+                    log.debug("%s %s: not produced upstream — skipped", m.model_id, init)
                     continue
                 if any(abs((h.to_pydatetime() - init).total_seconds()) < 1 for h in complete):
                     continue
@@ -303,11 +311,27 @@ def fetch_latest(lookback_days: int = 3, workers: int = 3,
         from .store import existing_inits, last_attempt_by_init
 
         wanted = [m for m in load_models() if not models or m.model_id in models.split(",")]
+        def _upstream(m, s, e):
+            """Upstream availability for sources with irregular cadence (AIWP GFS-init runs are
+            produced only on alternating cycles). None = listing failed, plan everything."""
+            if m.source != "aiwp":
+                return None
+            try:
+                from datetime import date as _date
+
+                from .sources.aiwp import AiwpSource
+
+                return set(AiwpSource().available_inits(m, _date.fromisoformat(s), _date.fromisoformat(e)))
+            except Exception as exc:  # noqa: BLE001 — a listing hiccup must not stop fetching
+                log.warning("%s: upstream listing failed (%s); planning all candidates", m.model_id, type(exc).__name__)
+                return None
+
         jobs = plan_runs(
             wanted, _now(), lookback_days,
             have=lambda m, s, e: existing_inits(m.model_id, start=s, end=e),
             last_attempt=lambda m, s, e: last_attempt_by_init(m.model_id, start=s, end=e),
             min_retry_h=min_retry_h,
+            upstream=_upstream,
         )
         if not jobs:
             typer.echo("nothing to fetch")
