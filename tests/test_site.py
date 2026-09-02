@@ -1183,6 +1183,9 @@ def test_404_page_is_generated(tmp_path):
     build_site(as_of="2026-08-31", out=tmp_path, scores=None, permalinks=False)
     html = (tmp_path / "404.html").read_text(encoding="utf-8")
     assert "Page not found" in html and "/stations/" in html
+    # the body is markup, not text: it must not arrive double-escaped
+    assert '<a href="/stations/">stations</a>' in html
+    assert "&lt;p&gt;" not in html
 
 
 # ------------------------------------------------------- /diagnostics/ (METHODOLOGY §10.2)

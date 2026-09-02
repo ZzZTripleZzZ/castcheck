@@ -19,6 +19,7 @@ jobs:
       - run: .venv/bin/castcheck truth
       - run: .venv/bin/castcheck truth --date "$(date -u -d '2 days ago' +%F)"   # late/corrected reports
       - run: .venv/bin/castcheck truth-instant                                    # observed T at 00/06/12/18Z, UTC yesterday (NWS API)
+      - run: .venv/bin/castcheck truth-instant --date $(date -u +%F)               # intraday top-up: today's instants that already exist
       - run: .venv/bin/castcheck truth-instant-backfill "$(date -u -d '10 days ago' +%F)" "$(date -u -d '2 days ago' +%F)"   # IEM archive overrides provisional NWS values
       - run: .venv/bin/castcheck truth-qc --start "$(date -u -d '15 days ago' +%F)"   # CLI extremes vs the day's own observations (METHODOLOGY §3.3)
       - name: commit data

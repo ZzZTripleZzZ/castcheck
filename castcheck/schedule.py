@@ -105,9 +105,14 @@ def truth_is_due(station, climo_date: date, now: datetime | None = None) -> bool
 
 
 def instant_due_at(day: date) -> datetime:
-    """The instant at which all four synoptic observations of a UTC day should be archived."""
-    return datetime(day.year, day.month, day.day, 18, tzinfo=UTC) + timedelta(
-        hours=INSTANT_DELAY_H)
+    """The instant at which all four synoptic observations of a UTC day should be archived.
+
+    The observations exist upstream ~INSTANT_DELAY_H after each synoptic hour, but *our* pipeline
+    archives a completed day in the truth pass at 10:30 UTC the following morning (plus an intraday
+    top-up at 16:00 UTC for the hours already past). A day therefore only counts as *due* — and its
+    absence as a gap — once that morning pass has had time to run; before that it is merely pending.
+    """
+    return datetime(day.year, day.month, day.day, tzinfo=UTC) + timedelta(days=1, hours=11, minutes=30)
 
 
 def instant_is_due(day: date, now: datetime | None = None) -> bool:
