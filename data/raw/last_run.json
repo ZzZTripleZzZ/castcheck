@@ -12,33 +12,33 @@
     },
     "build-site": {
       "castcheck_version": "0.3.3",
-      "duration_s": 1470.704,
+      "duration_s": 539.453,
       "exit_code": 0,
-      "finished_at": "2026-09-05T15:24:40+00:00",
-      "last_success_at": "2026-09-05T15:24:40+00:00",
-      "started_at": "2026-09-05T15:00:09+00:00",
+      "finished_at": "2026-09-06T14:08:59+00:00",
+      "last_success_at": "2026-09-06T14:08:59+00:00",
+      "started_at": "2026-09-06T14:00:00+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.3.3",
-      "duration_s": 2260.161,
+      "duration_s": 821.726,
       "exit_code": 0,
-      "finished_at": "2026-09-05T15:24:40+00:00",
-      "last_success_at": "2026-09-05T15:24:40+00:00",
-      "started_at": "2026-09-05T14:47:00+00:00",
+      "finished_at": "2026-09-06T14:08:59+00:00",
+      "last_success_at": "2026-09-06T14:08:59+00:00",
+      "started_at": "2026-09-06T13:55:17+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.3.3",
-      "duration_s": 119.435,
+      "duration_s": 20.042,
       "exit_code": 0,
-      "finished_at": "2026-09-05T14:49:00+00:00",
-      "last_success_at": "2026-09-05T14:49:00+00:00",
-      "started_at": "2026-09-05T14:47:00+00:00",
+      "finished_at": "2026-09-06T13:55:37+00:00",
+      "last_success_at": "2026-09-06T13:55:37+00:00",
+      "started_at": "2026-09-06T13:55:17+00:00",
       "status": "ok",
-      "summary": "8517176 values (full) -> 1789278 daily rows"
+      "summary": "8573756 values (full) -> 1797814 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.3.3",
@@ -54,49 +54,49 @@
       "castcheck_version": "0.3.3",
       "duration_s": 0.0,
       "exit_code": 0,
-      "finished_at": "2026-09-05T13:50:44+00:00",
-      "last_success_at": "2026-09-05T13:50:44+00:00",
-      "started_at": "2026-09-05T13:50:44+00:00",
+      "finished_at": "2026-09-06T14:09:03+00:00",
+      "last_success_at": "2026-09-06T14:09:03+00:00",
+      "started_at": "2026-09-06T14:09:03+00:00",
       "status": "ok",
-      "summary": "deleted 0 of 8 snapshot(s), 0.0 MB; kept 8 (last 90 days + monthly)"
+      "summary": "deleted 0 of 9 snapshot(s), 0.0 MB; kept 9 (last 90 days + monthly)"
     },
     "publish-bluesky": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.111,
+      "duration_s": 4.737,
       "exit_code": 0,
-      "finished_at": "2026-09-05T13:52:02+00:00",
-      "last_success_at": "2026-09-05T13:52:02+00:00",
-      "started_at": "2026-09-05T13:51:58+00:00",
+      "finished_at": "2026-09-06T14:10:17+00:00",
+      "last_success_at": "2026-09-06T14:10:17+00:00",
+      "started_at": "2026-09-06T14:10:13+00:00",
       "status": "ok",
       "summary": "posted as castcheck.zifanzhang.com (289 chars, window=90d)"
     },
     "publish-hf": {
       "castcheck_version": "0.3.3",
-      "duration_s": 6.471,
+      "duration_s": 4.424,
       "exit_code": 0,
-      "finished_at": "2026-09-05T13:51:38+00:00",
-      "last_success_at": "2026-09-05T13:51:38+00:00",
-      "started_at": "2026-09-05T13:51:32+00:00",
+      "finished_at": "2026-09-06T14:09:53+00:00",
+      "last_success_at": "2026-09-06T14:09:53+00:00",
+      "started_at": "2026-09-06T14:09:49+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.3.3",
-      "duration_s": 19.01,
+      "duration_s": 18.402,
       "exit_code": 0,
-      "finished_at": "2026-09-05T13:51:58+00:00",
-      "last_success_at": "2026-09-05T13:51:58+00:00",
-      "started_at": "2026-09-05T13:51:39+00:00",
+      "finished_at": "2026-09-06T14:10:12+00:00",
+      "last_success_at": "2026-09-06T14:10:12+00:00",
+      "started_at": "2026-09-06T14:09:54+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
     "status": {
       "castcheck_version": "0.3.3",
-      "duration_s": 3.516,
+      "duration_s": 2.939,
       "exit_code": 0,
-      "finished_at": "2026-09-05T13:50:44+00:00",
-      "last_success_at": "2026-09-05T13:50:44+00:00",
-      "started_at": "2026-09-05T13:50:40+00:00",
+      "finished_at": "2026-09-06T14:09:03+00:00",
+      "last_success_at": "2026-09-06T14:09:03+00:00",
+      "started_at": "2026-09-06T14:09:00+00:00",
       "status": "ok",
       "summary": "0 gap(s) today"
     },
@@ -152,14 +152,14 @@
     },
     "verify": {
       "castcheck_version": "0.3.3",
-      "duration_s": 668.808,
+      "duration_s": 261.949,
       "exit_code": 0,
-      "finished_at": "2026-09-05T15:00:09+00:00",
-      "last_success_at": "2026-09-05T15:00:09+00:00",
-      "started_at": "2026-09-05T14:49:00+00:00",
+      "finished_at": "2026-09-06T13:59:59+00:00",
+      "last_success_at": "2026-09-06T13:59:59+00:00",
+      "started_at": "2026-09-06T13:55:38+00:00",
       "status": "ok",
-      "summary": "scores=407448 pairwise=2134608 as_of=2026-09-05"
+      "summary": "scores=407448 pairwise=2134608 as_of=2026-09-06"
     }
   },
-  "updated_at": "2026-09-06T13:47:10+00:00"
+  "updated_at": "2026-09-06T14:10:17+00:00"
 }
