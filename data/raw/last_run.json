@@ -102,13 +102,13 @@
     },
     "truth": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.291,
+      "duration_s": 5.407,
       "exit_code": 0,
-      "finished_at": "2026-09-14T20:13:11+00:00",
-      "last_success_at": "2026-09-14T20:13:11+00:00",
-      "started_at": "2026-09-14T20:13:06+00:00",
+      "finished_at": "2026-09-15T15:12:42+00:00",
+      "last_success_at": "2026-09-15T15:12:42+00:00",
+      "started_at": "2026-09-15T15:12:37+00:00",
       "status": "ok",
-      "summary": "2026-09-12: 46 rows, 23 final CLI"
+      "summary": "2026-09-13: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -122,31 +122,31 @@
     },
     "truth-instant": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.227,
+      "duration_s": 4.213,
       "exit_code": 0,
-      "finished_at": "2026-09-14T20:13:20+00:00",
-      "last_success_at": "2026-09-14T20:13:20+00:00",
-      "started_at": "2026-09-14T20:13:16+00:00",
+      "finished_at": "2026-09-15T15:12:52+00:00",
+      "last_success_at": "2026-09-15T15:12:52+00:00",
+      "started_at": "2026-09-15T15:12:48+00:00",
       "status": "ok",
-      "summary": "2026-09-14: 92 instants, 90 with a value (97.8%), gap_gt35min=2"
+      "summary": "2026-09-15: 92 instants, 69 with a value (75.0%), gap_gt35min=21 no_report=2"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.3.3",
-      "duration_s": 113.576,
+      "duration_s": 116.348,
       "exit_code": 0,
-      "finished_at": "2026-09-14T20:15:14+00:00",
-      "last_success_at": "2026-09-14T20:15:14+00:00",
-      "started_at": "2026-09-14T20:13:20+00:00",
+      "finished_at": "2026-09-15T15:14:49+00:00",
+      "last_success_at": "2026-09-15T15:14:49+00:00",
+      "started_at": "2026-09-15T15:12:52+00:00",
       "status": "ok",
-      "summary": "2026-09-04..2026-09-12: 828 instants, 826 with a value (99.8%), gap_gt35min=2 suspect=1, 23 station(s)"
+      "summary": "2026-09-05..2026-09-13: 828 instants, 827 with a value (99.9%), gap_gt35min=1 suspect=1, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.31,
+      "duration_s": 0.318,
       "exit_code": 0,
-      "finished_at": "2026-09-14T20:15:15+00:00",
-      "last_success_at": "2026-09-14T20:15:15+00:00",
-      "started_at": "2026-09-14T20:15:14+00:00",
+      "finished_at": "2026-09-15T15:14:50+00:00",
+      "last_success_at": "2026-09-15T15:14:50+00:00",
+      "started_at": "2026-09-15T15:14:49+00:00",
       "status": "ok",
       "summary": "690 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
@@ -161,5 +161,5 @@
       "summary": "scores=407448 pairwise=2134608 as_of=2026-09-14"
     }
   },
-  "updated_at": "2026-09-15T14:24:48+00:00"
+  "updated_at": "2026-09-15T15:14:50+00:00"
 }
