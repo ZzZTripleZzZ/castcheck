@@ -8,7 +8,7 @@ parquet files.
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -31,10 +31,11 @@ GRAPH_IFS = ModelSpec(model_id="graphcast_ifs", family="GraphCast", source="aiwp
 
 @pytest.fixture(autouse=True)
 def _journal_to_tmp(tmp_path, monkeypatch):
-    """Keep every test's run journal out of the repo's data/ directory."""
+    """Keep every test's run journal (and the empty-fetch ledger) out of the repo's data/ directory."""
     from castcheck import store
 
     monkeypatch.setattr(store, "LAST_RUN_PATH", tmp_path / "last_run.json")
+    monkeypatch.setattr(store, "EMPTY_FETCHES_PATH", tmp_path / "empty_fetches.json")
     return tmp_path / "last_run.json"
 
 
@@ -159,6 +160,48 @@ def test_fetch_latest_exits_nonzero_only_when_every_run_failed(monkeypatch):
     res = runner.invoke(cli.app, ["fetch-latest"])
     assert res.exit_code == 0  # one late upstream file is not a pipeline failure
     assert "present=5520" in res.stdout
+
+
+def test_fetch_latest_does_not_fail_on_runs_upstream_already_failed_to_deliver(monkeypatch):
+    # 2026-09-26: AIWP posted a truncated Aurora file and a checksum-corrupt Pangu file. Once every
+    # healthy run was stored, a pass whose plan held only those two exited 1 — for three days.
+    from castcheck import store
+
+    init = datetime(2026, 9, 26, 0, tzinfo=UTC)
+    now = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    monkeypatch.setattr(cli, "load_models", lambda: [GFS])
+    monkeypatch.setattr(cli, "_now", lambda: now)
+    monkeypatch.setattr(cli, "plan_runs", lambda *a, **k: [(GFS, init), (GFS, init.replace(hour=12))])
+    monkeypatch.setattr(cli, "_fetch_one", lambda m, i, s: (m.model_id, 0, 1886))
+
+    assert runner.invoke(cli.app, ["fetch-latest"]).exit_code == 1  # first time: could be us
+    assert set(store.read_empty_fetches()["gfs"]) == {init.isoformat(), init.replace(hour=12).isoformat()}
+    assert runner.invoke(cli.app, ["fetch-latest"]).exit_code == 0  # same runs again: upstream's
+
+    monkeypatch.setattr(cli, "_fetch_one", lambda m, i, s: (m.model_id, 0 if i.hour else 5520, 0))
+    assert runner.invoke(cli.app, ["fetch-latest"]).exit_code == 0
+    assert set(store.read_empty_fetches()["gfs"]) == {init.replace(hour=12).isoformat()}  # 00Z recovered
+
+
+def test_fetch_latest_throttles_retries_of_runs_that_stored_nothing(monkeypatch):
+    from castcheck import store
+
+    init = datetime(2026, 9, 26, 0, tzinfo=UTC)
+    monkeypatch.setattr("castcheck.store.existing_inits", lambda *a, **k: set())
+    monkeypatch.setattr("castcheck.store.last_attempt_by_init", lambda *a, **k: {})
+    monkeypatch.setattr(cli, "load_models", lambda: [GFS])
+    fetched: list[datetime] = []
+    monkeypatch.setattr(cli, "_fetch_one", lambda m, i, s: (fetched.append(i), (m.model_id, 0, 1886))[1])
+
+    t0 = datetime(2026, 9, 26, 18, tzinfo=UTC)
+    store.write_empty_fetches({"gfs": {init.isoformat(): t0.isoformat()}}, keep_after=t0 - timedelta(days=11))
+    monkeypatch.setattr(cli, "_now", lambda: t0 + timedelta(hours=1))
+    runner.invoke(cli.app, ["fetch-latest", "--lookback-days", "0", "--models", "gfs"])
+    assert init not in fetched  # tried an hour ago; DEFAULT_MIN_RETRY_H has not passed
+
+    monkeypatch.setattr(cli, "_now", lambda: t0 + timedelta(hours=4))
+    runner.invoke(cli.app, ["fetch-latest", "--lookback-days", "0", "--models", "gfs"])
+    assert init in fetched
 
 
 def test_fetch_latest_survives_an_exception_in_one_run(monkeypatch):

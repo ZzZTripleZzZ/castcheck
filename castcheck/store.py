@@ -602,14 +602,48 @@ def record_run(command: str, *, status: str, summary: str = "", started_at: date
         entry.update(extra)
     doc["commands"][command] = entry
     doc["updated_at"] = now.isoformat()
+    _write_json(doc, LAST_RUN_PATH)
+    return entry
+
+
+def _write_json(doc: dict, path: Path) -> None:
+    """Atomic JSON write; a failure is logged and swallowed (these files are bookkeeping)."""
     try:
-        LAST_RUN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=LAST_RUN_PATH.parent,
-                                         prefix=".last_run.", suffix=".json", delete=False) as fh:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.stem}.", suffix=".json", delete=False) as fh:
             json.dump(doc, fh, indent=2, sort_keys=True)
             fh.write("\n")
             tmp = Path(fh.name)
-        os.replace(tmp, LAST_RUN_PATH)
+        os.replace(tmp, path)
     except OSError as exc:  # observability must never break the pipeline
-        log.warning("could not write %s: %s", LAST_RUN_PATH, exc)
-    return entry
+        log.warning("could not write %s: %s", path, exc)
+
+
+# ---------------- empty-fetch ledger ----------------
+
+EMPTY_FETCHES_PATH = DATA_DIR / "raw" / "empty_fetches.json"
+
+
+def read_empty_fetches() -> dict[str, dict[str, str]]:
+    """``{model_id: {init_iso: last_empty_at_iso}}`` for runs whose last fetch stored nothing.
+
+    A run that comes back with zero values writes no shard, so ``last_attempt_by_init`` never sees
+    it and the retry throttle cannot apply. Upstream does publish such runs — AIWP posts the odd
+    truncated or checksum-corrupt netCDF (a 72 MB Aurora file where 2.7 GB belongs) and never fixes
+    it — and without this ledger every pass re-planned them for three days. Corrupt file = empty.
+    """
+    try:
+        doc = json.loads(EMPTY_FETCHES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    return {k: v for k, v in doc.items() if isinstance(v, dict)}
+
+
+def write_empty_fetches(doc: dict[str, dict[str, str]], *, keep_after: datetime) -> None:
+    """Persist the ledger, dropping inits older than `keep_after` (nothing plans that far back)."""
+    cutoff = keep_after.isoformat()
+    pruned = {mid: {i: t for i, t in inits.items() if i >= cutoff} for mid, inits in doc.items()}
+    _write_json({mid: inits for mid, inits in pruned.items() if inits}, EMPTY_FETCHES_PATH)

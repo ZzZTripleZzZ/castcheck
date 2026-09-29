@@ -4,11 +4,12 @@ __pycache__/
 .pytest_cache/
 .cache/
 public/
-# raw/ holds logs and scratch; the run journal is the one file the status page needs, and it must
-# survive between workflow runs, so it is committed (git cannot un-ignore a file inside an ignored
-# directory, hence `data/raw/*` rather than `data/raw/`).
+# raw/ holds logs and scratch. Two files in it must survive between workflow runs, so they are
+# committed: the run journal (read by the status page) and the empty-fetch ledger (read by
+# fetch-latest). Git cannot un-ignore a file inside an ignored directory, hence `data/raw/*`.
 data/raw/*
 !data/raw/last_run.json
+!data/raw/empty_fetches.json
 *.grib2
 *.nc
 *.log

@@ -304,11 +304,26 @@ def fetch_latest(lookback_days: int = 3, workers: int = 3,
                  fail_on_no_data: bool = typer.Option(True, help="exit 1 when every planned run failed")):
     """Fetch every run that should be available by now (last `lookback_days`) and is not stored yet.
 
-    Exit code 0 unless **every** planned run came back empty, which is the signature of a broken
-    pipeline rather than of one late upstream file.
+    Exit code 0 unless **every** planned run came back empty *and* at least two of them failed for
+    the first time — the signature of a broken pipeline. A pass that only re-tries runs upstream
+    already failed to deliver (a truncated AIWP file stays truncated) plus at most one new late file
+    is upstream's problem, not ours; `health` still raises a data gap if nothing lands for 24 h.
     """
     with _journal("fetch-latest") as summary:
-        from .store import existing_inits, last_attempt_by_init
+        import pandas as pd
+
+        from .store import existing_inits, last_attempt_by_init, read_empty_fetches, write_empty_fetches
+
+        empty = read_empty_fetches()
+
+        def _last_attempt(m, s, e):
+            """Stored shards' fetched_at, plus runs whose last fetch stored nothing (no shard)."""
+            seen = dict(last_attempt_by_init(m.model_id, start=s, end=e))
+            for iso, at in empty.get(m.model_id, {}).items():
+                init, t = pd.Timestamp(iso), pd.Timestamp(at)
+                if init not in seen or seen[init] < t:
+                    seen[init] = t
+            return seen
 
         wanted = [m for m in load_models() if not models or m.model_id in models.split(",")]
         def _upstream(m, s, e):
@@ -329,7 +344,7 @@ def fetch_latest(lookback_days: int = 3, workers: int = 3,
         jobs = plan_runs(
             wanted, _now(), lookback_days,
             have=lambda m, s, e: existing_inits(m.model_id, start=s, end=e),
-            last_attempt=lambda m, s, e: last_attempt_by_init(m.model_id, start=s, end=e),
+            last_attempt=_last_attempt,
             min_retry_h=min_retry_h,
             upstream=_upstream,
         )
@@ -338,25 +353,35 @@ def fetch_latest(lookback_days: int = 3, workers: int = 3,
             summary.append("nothing to fetch")
             return
         typer.echo(f"{len(jobs)} run(s) to fetch")
-        failures = 0
+        failures = new_failures = 0
+        started = _now().replace(microsecond=0)
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(_fetch_one, m, init, None): (m.model_id, init) for m, init in jobs}
             for f in as_completed(futs):
                 mid, init = futs[f]
+                ok = False
                 try:
                     _, present, missing = f.result()
                     typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z present={present} missing={missing}")
-                    if present == 0:
-                        failures += 1
-                        log.warning("%s %s: no data (upstream late or unavailable)", mid, init.isoformat())
+                    ok = present > 0
+                    if not ok:
+                        log.warning("%s %s: no data (upstream late, unavailable or corrupt)", mid, init.isoformat())
                 except Exception as e:  # noqa: BLE001 — never let one run kill the batch
-                    failures += 1
                     typer.echo(f"  {mid} {init:%Y-%m-%dT%H}Z ERROR {type(e).__name__}: {e}", err=True)
                     log.exception("%s %s failed", mid, init.isoformat())
+                runs = empty.setdefault(mid, {})
+                if ok:
+                    runs.pop(init.isoformat(), None)
+                else:
+                    failures += 1
+                    new_failures += init.isoformat() not in runs
+                    runs[init.isoformat()] = started.isoformat()
+        write_empty_fetches(empty, keep_after=started - timedelta(days=max(lookback_days, 10) + 1))
         summary.append(f"{len(jobs) - failures}/{len(jobs)} run(s) with data")
         if failures:
-            typer.echo(f"{failures} run(s) had no data (will be retried by later runs / backfill)", err=True)
-        if failures == len(jobs) and fail_on_no_data:
+            typer.echo(f"{failures} run(s) had no data, {new_failures} for the first time "
+                       "(will be retried by later runs / backfill)", err=True)
+        if failures == len(jobs) and new_failures >= 2 and fail_on_no_data:
             raise typer.Exit(1)
 
 
