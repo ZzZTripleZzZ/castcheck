@@ -102,13 +102,13 @@
     },
     "truth": {
       "castcheck_version": "0.3.3",
-      "duration_s": 5.82,
+      "duration_s": 5.272,
       "exit_code": 0,
-      "finished_at": "2026-10-03T19:07:04+00:00",
-      "last_success_at": "2026-10-03T19:07:04+00:00",
-      "started_at": "2026-10-03T19:06:58+00:00",
+      "finished_at": "2026-10-04T15:28:45+00:00",
+      "last_success_at": "2026-10-04T15:28:45+00:00",
+      "started_at": "2026-10-04T15:28:39+00:00",
       "status": "ok",
-      "summary": "2026-10-01: 46 rows, 23 final CLI"
+      "summary": "2026-10-02: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -122,31 +122,31 @@
     },
     "truth-instant": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.557,
+      "duration_s": 3.701,
       "exit_code": 0,
-      "finished_at": "2026-10-03T19:07:14+00:00",
-      "last_success_at": "2026-10-03T19:07:14+00:00",
-      "started_at": "2026-10-03T19:07:10+00:00",
+      "finished_at": "2026-10-04T15:28:54+00:00",
+      "last_success_at": "2026-10-04T15:28:54+00:00",
+      "started_at": "2026-10-04T15:28:50+00:00",
       "status": "ok",
-      "summary": "2026-10-03: 92 instants, 92 with a value (100.0%)"
+      "summary": "2026-10-04: 92 instants, 69 with a value (75.0%), gap_gt35min=14 no_report=9"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.3.3",
-      "duration_s": 54.29,
+      "duration_s": 54.359,
       "exit_code": 0,
-      "finished_at": "2026-10-03T19:08:09+00:00",
-      "last_success_at": "2026-10-03T19:08:09+00:00",
-      "started_at": "2026-10-03T19:07:15+00:00",
+      "finished_at": "2026-10-04T15:29:49+00:00",
+      "last_success_at": "2026-10-04T15:29:49+00:00",
+      "started_at": "2026-10-04T15:28:54+00:00",
       "status": "ok",
-      "summary": "2026-09-23..2026-10-01: 828 instants, 828 with a value (100.0%), suspect=1, 23 station(s)"
+      "summary": "2026-09-24..2026-10-02: 828 instants, 828 with a value (100.0%), suspect=1, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.302,
+      "duration_s": 0.308,
       "exit_code": 0,
-      "finished_at": "2026-10-03T19:08:10+00:00",
-      "last_success_at": "2026-10-03T19:08:10+00:00",
-      "started_at": "2026-10-03T19:08:09+00:00",
+      "finished_at": "2026-10-04T15:29:49+00:00",
+      "last_success_at": "2026-10-04T15:29:49+00:00",
+      "started_at": "2026-10-04T15:29:49+00:00",
       "status": "ok",
       "summary": "691 checked, 1 implausible, 0 revised, 0 cf6, 1 dropped"
     },
@@ -161,5 +161,5 @@
       "summary": "scores=407448 pairwise=2134608 as_of=2026-10-03"
     }
   },
-  "updated_at": "2026-10-04T14:56:07+00:00"
+  "updated_at": "2026-10-04T15:29:49+00:00"
 }
