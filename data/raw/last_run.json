@@ -12,41 +12,41 @@
     },
     "build-site": {
       "castcheck_version": "0.3.3",
-      "duration_s": 597.612,
+      "duration_s": 869.315,
       "exit_code": 0,
-      "finished_at": "2026-10-21T16:07:44+00:00",
-      "last_success_at": "2026-10-21T16:07:44+00:00",
-      "started_at": "2026-10-21T15:57:46+00:00",
+      "finished_at": "2026-10-22T15:09:46+00:00",
+      "last_success_at": "2026-10-22T15:09:46+00:00",
+      "started_at": "2026-10-22T14:55:17+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.3.3",
-      "duration_s": 981.825,
+      "duration_s": 1426.224,
       "exit_code": 0,
-      "finished_at": "2026-10-21T16:07:44+00:00",
-      "last_success_at": "2026-10-21T16:07:44+00:00",
-      "started_at": "2026-10-21T15:51:22+00:00",
+      "finished_at": "2026-10-22T15:09:46+00:00",
+      "last_success_at": "2026-10-22T15:09:46+00:00",
+      "started_at": "2026-10-22T14:46:00+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.3.3",
-      "duration_s": 28.544,
+      "duration_s": 47.572,
       "exit_code": 0,
-      "finished_at": "2026-10-21T15:51:51+00:00",
-      "last_success_at": "2026-10-21T15:51:51+00:00",
-      "started_at": "2026-10-21T15:51:22+00:00",
+      "finished_at": "2026-10-22T14:46:47+00:00",
+      "last_success_at": "2026-10-22T14:46:47+00:00",
+      "started_at": "2026-10-22T14:46:00+00:00",
       "status": "ok",
-      "summary": "11070820 values (full) -> 2173570 daily rows"
+      "summary": "11131172 values (full) -> 2183030 daily rows"
     },
     "fetch-latest": {
       "castcheck_version": "0.3.3",
-      "duration_s": 2.698,
+      "duration_s": 3.177,
       "exit_code": 0,
-      "finished_at": "2026-10-22T14:38:47+00:00",
-      "last_success_at": "2026-10-22T14:38:47+00:00",
-      "started_at": "2026-10-22T14:38:45+00:00",
+      "finished_at": "2026-10-22T14:45:17+00:00",
+      "last_success_at": "2026-10-22T14:45:17+00:00",
+      "started_at": "2026-10-22T14:45:14+00:00",
       "status": "ok",
       "summary": "nothing to fetch"
     },
@@ -102,13 +102,13 @@
     },
     "truth": {
       "castcheck_version": "0.3.3",
-      "duration_s": 9.527,
+      "duration_s": 4.507,
       "exit_code": 0,
-      "finished_at": "2026-10-21T20:00:43+00:00",
-      "last_success_at": "2026-10-21T20:00:43+00:00",
-      "started_at": "2026-10-21T20:00:34+00:00",
+      "finished_at": "2026-10-22T14:45:22+00:00",
+      "last_success_at": "2026-10-22T14:45:22+00:00",
+      "started_at": "2026-10-22T14:45:18+00:00",
       "status": "ok",
-      "summary": "2026-10-19: 46 rows, 23 final CLI"
+      "summary": "2026-10-21: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -122,44 +122,44 @@
     },
     "truth-instant": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.913,
+      "duration_s": 4.424,
       "exit_code": 0,
-      "finished_at": "2026-10-21T20:00:55+00:00",
-      "last_success_at": "2026-10-21T20:00:55+00:00",
-      "started_at": "2026-10-21T20:00:50+00:00",
+      "finished_at": "2026-10-22T14:45:27+00:00",
+      "last_success_at": "2026-10-22T14:45:27+00:00",
+      "started_at": "2026-10-22T14:45:23+00:00",
       "status": "ok",
       "summary": "2026-10-21: 92 instants, 92 with a value (100.0%)"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.3.3",
-      "duration_s": 26.785,
+      "duration_s": 29.306,
       "exit_code": 0,
-      "finished_at": "2026-10-21T20:01:22+00:00",
-      "last_success_at": "2026-10-21T20:01:22+00:00",
-      "started_at": "2026-10-21T20:00:55+00:00",
+      "finished_at": "2026-10-22T14:45:58+00:00",
+      "last_success_at": "2026-10-22T14:45:58+00:00",
+      "started_at": "2026-10-22T14:45:28+00:00",
       "status": "ok",
-      "summary": "2026-10-11..2026-10-19: 828 instants, 826 with a value (99.8%), gap_gt35min=2, 23 station(s)"
+      "summary": "2026-10-12..2026-10-20: 828 instants, 826 with a value (99.8%), gap_gt35min=2, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.185,
+      "duration_s": 0.568,
       "exit_code": 0,
-      "finished_at": "2026-10-21T20:01:23+00:00",
-      "last_success_at": "2026-10-21T20:01:23+00:00",
-      "started_at": "2026-10-21T20:01:22+00:00",
+      "finished_at": "2026-10-22T14:45:59+00:00",
+      "last_success_at": "2026-10-22T14:45:59+00:00",
+      "started_at": "2026-10-22T14:45:58+00:00",
       "status": "ok",
       "summary": "691 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
     "verify": {
       "castcheck_version": "0.3.3",
-      "duration_s": 355.262,
+      "duration_s": 508.904,
       "exit_code": 0,
-      "finished_at": "2026-10-21T15:57:46+00:00",
-      "last_success_at": "2026-10-21T15:57:46+00:00",
-      "started_at": "2026-10-21T15:51:51+00:00",
+      "finished_at": "2026-10-22T14:55:17+00:00",
+      "last_success_at": "2026-10-22T14:55:17+00:00",
+      "started_at": "2026-10-22T14:46:48+00:00",
       "status": "ok",
-      "summary": "scores=407448 pairwise=2134608 as_of=2026-10-21"
+      "summary": "scores=407448 pairwise=2134608 as_of=2026-10-22"
     }
   },
-  "updated_at": "2026-10-22T14:38:47+00:00"
+  "updated_at": "2026-10-22T15:09:46+00:00"
 }
