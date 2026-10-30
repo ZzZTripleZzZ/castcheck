@@ -102,11 +102,11 @@
     },
     "truth": {
       "castcheck_version": "0.3.3",
-      "duration_s": 11.353,
+      "duration_s": 5.844,
       "exit_code": 0,
-      "finished_at": "2026-10-30T16:49:08+00:00",
-      "last_success_at": "2026-10-30T16:49:08+00:00",
-      "started_at": "2026-10-30T16:48:56+00:00",
+      "finished_at": "2026-10-30T20:36:40+00:00",
+      "last_success_at": "2026-10-30T20:36:40+00:00",
+      "started_at": "2026-10-30T20:36:34+00:00",
       "status": "ok",
       "summary": "2026-10-28: 46 rows, 23 final CLI"
     },
@@ -122,31 +122,31 @@
     },
     "truth-instant": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.445,
+      "duration_s": 2.453,
       "exit_code": 0,
-      "finished_at": "2026-10-30T16:49:18+00:00",
-      "last_success_at": "2026-10-30T16:49:18+00:00",
-      "started_at": "2026-10-30T16:49:13+00:00",
+      "finished_at": "2026-10-30T20:36:46+00:00",
+      "last_success_at": "2026-10-30T20:36:46+00:00",
+      "started_at": "2026-10-30T20:36:44+00:00",
       "status": "ok",
-      "summary": "2026-10-30: 92 instants, 68 with a value (73.9%), gap_gt35min=24"
+      "summary": "2026-10-30: 92 instants, 91 with a value (98.9%), gap_gt35min=1"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.3.3",
-      "duration_s": 26.86,
+      "duration_s": 26.818,
       "exit_code": 0,
-      "finished_at": "2026-10-30T16:49:45+00:00",
-      "last_success_at": "2026-10-30T16:49:45+00:00",
-      "started_at": "2026-10-30T16:49:18+00:00",
+      "finished_at": "2026-10-30T20:37:13+00:00",
+      "last_success_at": "2026-10-30T20:37:13+00:00",
+      "started_at": "2026-10-30T20:36:47+00:00",
       "status": "ok",
       "summary": "2026-10-20..2026-10-28: 828 instants, 826 with a value (99.8%), gap_gt35min=2, 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.322,
+      "duration_s": 0.286,
       "exit_code": 0,
-      "finished_at": "2026-10-30T16:49:46+00:00",
-      "last_success_at": "2026-10-30T16:49:46+00:00",
-      "started_at": "2026-10-30T16:49:45+00:00",
+      "finished_at": "2026-10-30T20:37:14+00:00",
+      "last_success_at": "2026-10-30T20:37:14+00:00",
+      "started_at": "2026-10-30T20:37:14+00:00",
       "status": "ok",
       "summary": "691 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
@@ -161,5 +161,5 @@
       "summary": "scores=407448 pairwise=2134608 as_of=2026-10-30"
     }
   },
-  "updated_at": "2026-10-30T17:17:46+00:00"
+  "updated_at": "2026-10-30T20:37:14+00:00"
 }
