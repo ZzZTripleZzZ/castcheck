@@ -12,31 +12,31 @@
     },
     "build-site": {
       "castcheck_version": "0.3.3",
-      "duration_s": 1485.188,
+      "duration_s": 461.076,
       "exit_code": 0,
-      "finished_at": "2026-11-07T16:29:01+00:00",
-      "last_success_at": "2026-11-07T16:29:01+00:00",
-      "started_at": "2026-11-07T16:04:16+00:00",
+      "finished_at": "2026-11-07T16:59:13+00:00",
+      "last_success_at": "2026-11-07T16:59:13+00:00",
+      "started_at": "2026-11-07T16:51:32+00:00",
       "status": "ok",
       "summary": "site written to public"
     },
     "daily": {
       "castcheck_version": "0.3.3",
-      "duration_s": 2491.192,
+      "duration_s": 797.7,
       "exit_code": 0,
-      "finished_at": "2026-11-07T16:29:01+00:00",
-      "last_success_at": "2026-11-07T16:29:01+00:00",
-      "started_at": "2026-11-07T15:47:30+00:00",
+      "finished_at": "2026-11-07T16:59:13+00:00",
+      "last_success_at": "2026-11-07T16:59:13+00:00",
+      "started_at": "2026-11-07T16:45:56+00:00",
       "status": "ok",
       "summary": "derive + verify + build-site"
     },
     "derive": {
       "castcheck_version": "0.3.3",
-      "duration_s": 81.798,
+      "duration_s": 33.729,
       "exit_code": 0,
-      "finished_at": "2026-11-07T15:48:52+00:00",
-      "last_success_at": "2026-11-07T15:48:52+00:00",
-      "started_at": "2026-11-07T15:47:30+00:00",
+      "finished_at": "2026-11-07T16:46:29+00:00",
+      "last_success_at": "2026-11-07T16:46:29+00:00",
+      "started_at": "2026-11-07T16:45:56+00:00",
       "status": "ok",
       "summary": "12066628 values (full) -> 2327382 daily rows"
     },
@@ -52,53 +52,53 @@
     },
     "prune-history": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.001,
+      "duration_s": 0.0,
       "exit_code": 0,
-      "finished_at": "2026-11-06T18:08:00+00:00",
-      "last_success_at": "2026-11-06T18:08:00+00:00",
-      "started_at": "2026-11-06T18:08:00+00:00",
+      "finished_at": "2026-11-07T16:59:18+00:00",
+      "last_success_at": "2026-11-07T16:59:18+00:00",
+      "started_at": "2026-11-07T16:59:18+00:00",
       "status": "ok",
-      "summary": "deleted 0 of 70 snapshot(s), 0.0 MB; kept 70 (last 90 days + monthly)"
+      "summary": "deleted 0 of 71 snapshot(s), 0.0 MB; kept 71 (last 90 days + monthly)"
     },
     "publish-bluesky": {
       "castcheck_version": "0.3.3",
-      "duration_s": 4.813,
+      "duration_s": 6.395,
       "exit_code": 0,
-      "finished_at": "2026-11-06T18:09:37+00:00",
-      "last_success_at": "2026-11-06T18:09:37+00:00",
-      "started_at": "2026-11-06T18:09:32+00:00",
+      "finished_at": "2026-11-07T17:01:03+00:00",
+      "last_success_at": "2026-11-07T17:01:03+00:00",
+      "started_at": "2026-11-07T17:00:57+00:00",
       "status": "ok",
       "summary": "posted as castcheck.zifanzhang.com (289 chars, window=90d)"
     },
     "publish-hf": {
       "castcheck_version": "0.3.3",
-      "duration_s": 10.112,
+      "duration_s": 20.39,
       "exit_code": 0,
-      "finished_at": "2026-11-06T18:09:09+00:00",
-      "last_success_at": "2026-11-06T18:09:09+00:00",
-      "started_at": "2026-11-06T18:08:58+00:00",
+      "finished_at": "2026-11-07T17:00:37+00:00",
+      "last_success_at": "2026-11-07T17:00:37+00:00",
+      "started_at": "2026-11-07T17:00:17+00:00",
       "status": "ok",
       "summary": "pushed to https:/.../castcheck/temperature-verification (https:/.../commit/\u2026)"
     },
     "publish-kaggle": {
       "castcheck_version": "0.3.3",
-      "duration_s": 22.133,
+      "duration_s": 18.971,
       "exit_code": 0,
-      "finished_at": "2026-11-06T18:09:31+00:00",
-      "last_success_at": "2026-11-06T18:09:31+00:00",
-      "started_at": "2026-11-06T18:09:09+00:00",
+      "finished_at": "2026-11-07T17:00:56+00:00",
+      "last_success_at": "2026-11-07T17:00:56+00:00",
+      "started_at": "2026-11-07T17:00:38+00:00",
       "status": "ok",
       "summary": "Dataset version is being created. Please check progress at https:/.../zhangzifan716/castcheck-temperature-forecast-verification"
     },
     "status": {
       "castcheck_version": "0.3.3",
-      "duration_s": 3.642,
+      "duration_s": 3.888,
       "exit_code": 0,
-      "finished_at": "2026-11-06T18:07:59+00:00",
-      "last_success_at": "2026-11-06T18:07:59+00:00",
-      "started_at": "2026-11-06T18:07:56+00:00",
+      "finished_at": "2026-11-07T16:59:18+00:00",
+      "last_success_at": "2026-11-07T16:59:18+00:00",
+      "started_at": "2026-11-07T16:59:14+00:00",
       "status": "ok",
-      "summary": "1 gap(s) today"
+      "summary": "0 gap(s) today"
     },
     "truth": {
       "castcheck_version": "0.3.3",
@@ -152,14 +152,14 @@
     },
     "verify": {
       "castcheck_version": "0.3.3",
-      "duration_s": 923.285,
+      "duration_s": 302.242,
       "exit_code": 0,
-      "finished_at": "2026-11-07T16:04:15+00:00",
-      "last_success_at": "2026-11-07T16:04:15+00:00",
-      "started_at": "2026-11-07T15:48:52+00:00",
+      "finished_at": "2026-11-07T16:51:32+00:00",
+      "last_success_at": "2026-11-07T16:51:32+00:00",
+      "started_at": "2026-11-07T16:46:30+00:00",
       "status": "ok",
       "summary": "scores=407448 pairwise=2134608 as_of=2026-11-07"
     }
   },
-  "updated_at": "2026-11-07T16:39:20+00:00"
+  "updated_at": "2026-11-07T17:01:03+00:00"
 }
