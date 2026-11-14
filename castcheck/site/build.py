@@ -877,18 +877,21 @@ def _display_map(model_idx: dict) -> dict[str, str]:
 def _load_instant_errors(stations, models) -> pd.DataFrame | None:
     """Forecast-minus-observed at the four common instants, for the ``t2`` daily-error chart.
 
-    Derived rather than stored (``derive.instant_errors``), which costs well under a second on the
-    whole archive.  Any failure — no ``truth_instant`` yet, an unreadable shard — returns ``None``
-    and the site simply falls back to the best variable it does have.
+    Derived rather than stored (``derive.instant_errors``), which reads the whole forecast_values
+    archive, so only :data:`~castcheck.derive.DERIVE_VALUE_COLUMNS` are read (10 of 15 columns,
+    ~1.3 GB less peak RSS on the 2026-11 archive; ``verify`` reads the same projection).  Any
+    failure — no ``truth_instant`` yet, an unreadable shard — returns ``None`` and the site simply
+    falls back to the best variable it does have.
     """
     try:
         from .. import store
-        from ..derive import instant_errors
+        from ..derive import DERIVE_VALUE_COLUMNS, instant_errors
 
         ti = store.read_truth_instant()
         if ti is None or not len(ti):
             return None
-        return instant_errors(store.read_forecast_values(), ti, stations, models)
+        return instant_errors(store.read_forecast_values(columns=DERIVE_VALUE_COLUMNS), ti,
+                              stations, models)
     except Exception:  # noqa: BLE001 - the chart is not worth failing a build for
         log.warning("instant errors unavailable; the daily-error chart falls back", exc_info=True)
         return None

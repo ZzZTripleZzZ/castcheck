@@ -570,11 +570,13 @@ def export_api(
         # the t2 series lives in the instantaneous errors, which are derived, not stored
         try:
             from . import store
-            from .derive import instant_errors
+            from .derive import DERIVE_VALUE_COLUMNS, instant_errors
 
             ti = store.read_truth_instant()
             if ti is not None and len(ti):
-                instant = instant_errors(store.read_forecast_values(), ti, stations, models)
+                # the projection `verify` uses: the other five columns are never read by it
+                instant = instant_errors(store.read_forecast_values(columns=DERIVE_VALUE_COLUMNS),
+                                         ti, stations, models)
         except Exception:  # noqa: BLE001  # pragma: no cover - the series is not worth failing on
             instant = None
     if errors is None and daily is not None and truth is not None and len(daily) and len(truth):

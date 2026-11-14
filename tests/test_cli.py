@@ -284,6 +284,8 @@ def test_command_records_its_outcome(_journal_to_tmp, monkeypatch):
     assert entry["last_success_at"] == entry["finished_at"]
     assert entry["castcheck_version"] == __version__
     assert "0 gap(s) today" in entry["summary"]
+    # a runner killed by memory pressure leaves no log, so every entry carries the RSS high-water mark
+    assert isinstance(entry["peak_rss_mb"], float) and 1 < entry["peak_rss_mb"] < 1_000_000
 
 
 def test_journal_keeps_the_last_success_when_a_later_run_fails(_journal_to_tmp, monkeypatch):

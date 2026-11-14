@@ -104,6 +104,23 @@ def setup_logging(verbose: bool = False) -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
+def _peak_rss_mb() -> float | None:
+    """This process's resident-set high-water mark so far, in MB (``None`` where unavailable).
+
+    Journalled with every command because a hosted runner that runs out of memory dies with "lost
+    communication with the server" and no log of its own; the trend of this number across the
+    committed journals is the only early warning. Inside ``daily`` it is cumulative: the value on
+    ``verify`` is the peak of derive+verify, the one on ``daily`` the peak of the whole pipeline.
+    """
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - Windows
+        return None
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # ru_maxrss is bytes on macOS and KiB on Linux
+    return round(rss / 2**20 if sys.platform == "darwin" else rss / 2**10, 1)
+
+
 @contextmanager
 def _journal(command: str):
     """Time a command, print/record a one-line summary, and record failures too.
@@ -136,7 +153,7 @@ def _journal(command: str):
         summary = redact("; ".join(p for p in parts if p), limit=500)
         log.info("%s %s in %.1fs — %s", command, status, dt, summary or "(no summary)")
         record_run(command, status=status, summary=summary, started_at=started, duration_s=dt,
-                   exit_code=code)
+                   exit_code=code, extra={"peak_rss_mb": _peak_rss_mb()})
         try:
             from .sources import _http
 
