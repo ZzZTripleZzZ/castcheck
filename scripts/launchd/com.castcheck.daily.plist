@@ -14,10 +14,10 @@
     <key>HOME</key><string>/Users/zifanzhang</string>
   </dict>
   <key>StartCalendarInterval</key><array>
-    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>45</integer></dict>   <!-- 11:45Z EDT / 12:45Z EST: after the Actions publish run -->
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>   <!-- 22:00Z PDT / 23:00Z PST: after the Actions publish run, which GitHub starts 16-22Z. run_daily.sh exits at once if CI already published today, so this is a fallback, not a second daily run. -->
   </array>
   <!-- launchd runs a missed StartCalendarInterval job as soon as the Mac wakes, so a machine asleep
-       at 07:45 still gets its daily run. -->
+       at 15:00 still gets its daily run. -->
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>/Users/zifanzhang/castcheck/data/raw/launchd.log</string>

@@ -30,6 +30,17 @@ step() {   # step <name> <command...>
 : >"$RUN_LOG"
 git pull --rebase --quiet || true
 
+# Fallback only. GitHub's scheduled publish run starts hours late (16-22Z instead of 11Z), so running
+# unconditionally made this Mac redo the whole ~45 min / 10 GB pipeline nearly every day, ahead of
+# CI. If today's score snapshot is already committed, CI has published today: do nothing. Set
+# CASTCHECK_FORCE_LOCAL=1 to run anyway.
+TODAY_SNAPSHOT="data/scores/history/$(date -u +%F).parquet"
+if [[ -z "${CASTCHECK_FORCE_LOCAL:-}" ]] && git cat-file -e "HEAD:$TODAY_SNAPSHOT" 2>/dev/null; then
+  echo "run_daily: skipped $STAMP ($TODAY_SNAPSHOT already published)" | tee -a "$RUN_LOG"
+  rm -f "$FAILURE_FILE"
+  exit 0
+fi
+
 deploy_snapshot() {  # deploy a snapshot of public/ so a concurrent rebuild cannot pull files from under wrangler
   local snap; snap=$(mktemp -d)/public; mkdir -p "$snap"; rsync -a --delete public/ "$snap"/
   npx --yes wrangler pages deploy "$snap" --project-name castcheck --branch main --commit-dirty=true >/dev/null
