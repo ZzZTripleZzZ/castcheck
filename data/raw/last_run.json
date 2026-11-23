@@ -111,14 +111,14 @@
     },
     "truth": {
       "castcheck_version": "0.3.3",
-      "duration_s": 2.29,
+      "duration_s": 5.107,
       "exit_code": 0,
-      "finished_at": "2026-11-22T21:39:46+00:00",
-      "last_success_at": "2026-11-22T21:39:46+00:00",
-      "peak_rss_mb": 239.3,
-      "started_at": "2026-11-22T21:39:43+00:00",
+      "finished_at": "2026-11-23T22:14:21+00:00",
+      "last_success_at": "2026-11-23T22:14:21+00:00",
+      "peak_rss_mb": 241.5,
+      "started_at": "2026-11-23T22:14:16+00:00",
       "status": "ok",
-      "summary": "2026-11-20: 46 rows, 23 final CLI"
+      "summary": "2026-11-21: 46 rows, 23 final CLI"
     },
     "truth-backfill": {
       "castcheck_version": "0.1.0",
@@ -132,34 +132,34 @@
     },
     "truth-instant": {
       "castcheck_version": "0.3.3",
-      "duration_s": 1.951,
+      "duration_s": 2.162,
       "exit_code": 0,
-      "finished_at": "2026-11-22T21:39:50+00:00",
-      "last_success_at": "2026-11-22T21:39:50+00:00",
-      "peak_rss_mb": 233.5,
-      "started_at": "2026-11-22T21:39:48+00:00",
+      "finished_at": "2026-11-23T22:14:26+00:00",
+      "last_success_at": "2026-11-23T22:14:26+00:00",
+      "peak_rss_mb": 229.4,
+      "started_at": "2026-11-23T22:14:24+00:00",
       "status": "ok",
-      "summary": "2026-11-22: 92 instants, 92 with a value (100.0%)"
+      "summary": "2026-11-23: 92 instants, 90 with a value (97.8%), gap_gt35min=2"
     },
     "truth-instant-backfill": {
       "castcheck_version": "0.3.3",
-      "duration_s": 54.351,
+      "duration_s": 54.37,
       "exit_code": 0,
-      "finished_at": "2026-11-22T21:40:45+00:00",
-      "last_success_at": "2026-11-22T21:40:45+00:00",
-      "peak_rss_mb": 222.9,
-      "started_at": "2026-11-22T21:39:51+00:00",
+      "finished_at": "2026-11-23T22:15:21+00:00",
+      "last_success_at": "2026-11-23T22:15:21+00:00",
+      "peak_rss_mb": 224.9,
+      "started_at": "2026-11-23T22:14:27+00:00",
       "status": "ok",
-      "summary": "2026-11-12..2026-11-20: 828 instants, 828 with a value (100.0%), 23 station(s)"
+      "summary": "2026-11-13..2026-11-21: 828 instants, 828 with a value (100.0%), 23 station(s)"
     },
     "truth-qc": {
       "castcheck_version": "0.3.3",
-      "duration_s": 0.149,
+      "duration_s": 0.218,
       "exit_code": 0,
-      "finished_at": "2026-11-22T21:40:46+00:00",
-      "last_success_at": "2026-11-22T21:40:46+00:00",
-      "peak_rss_mb": 247.6,
-      "started_at": "2026-11-22T21:40:46+00:00",
+      "finished_at": "2026-11-23T22:15:22+00:00",
+      "last_success_at": "2026-11-23T22:15:22+00:00",
+      "peak_rss_mb": 247.7,
+      "started_at": "2026-11-23T22:15:21+00:00",
       "status": "ok",
       "summary": "690 checked, 0 implausible, 0 revised, 0 cf6, 0 dropped"
     },
@@ -175,5 +175,5 @@
       "summary": "scores=407448 pairwise=2134608 as_of=2026-11-22"
     }
   },
-  "updated_at": "2026-11-23T21:41:58+00:00"
+  "updated_at": "2026-11-23T22:15:22+00:00"
 }
