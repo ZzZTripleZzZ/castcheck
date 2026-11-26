@@ -45,14 +45,14 @@
     },
     "fetch-latest": {
       "castcheck_version": "0.3.3",
-      "duration_s": 1.535,
+      "duration_s": 84.25,
       "exit_code": 0,
-      "finished_at": "2026-11-25T19:32:44+00:00",
-      "last_success_at": "2026-11-25T19:32:44+00:00",
-      "peak_rss_mb": 256.3,
-      "started_at": "2026-11-25T19:32:42+00:00",
+      "finished_at": "2026-11-26T01:34:53+00:00",
+      "last_success_at": "2026-11-26T01:34:53+00:00",
+      "peak_rss_mb": 873.6,
+      "started_at": "2026-11-26T01:33:29+00:00",
       "status": "ok",
-      "summary": "nothing to fetch"
+      "summary": "10/10 run(s) with data"
     },
     "prune-history": {
       "castcheck_version": "0.3.3",
@@ -175,5 +175,5 @@
       "summary": "scores=407448 pairwise=2134608 as_of=2026-11-25"
     }
   },
-  "updated_at": "2026-11-26T00:07:36+00:00"
+  "updated_at": "2026-11-26T01:34:53+00:00"
 }
